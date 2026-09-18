@@ -13,7 +13,6 @@ export default function NextApp() {
         subscribe={runtime.subscribe}
         connected={runtime.connected}
         debugEnabled={false}
-        onOpenLegacyChat={() => {}}
       />
     </I18nProvider>
   )

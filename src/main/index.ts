@@ -298,7 +298,7 @@ class AppRuntime {
         for (const window of this.windows) { window.show(); window.focus() }
         return { ok: true }
       case 'wallpaper.start':
-        return { ok: true, status: 'ready', url: this.scene.url, assetPort: 0, bridgePort: 0 }
+        return { ok: true, status: 'ready', url: this.scene.url }
       case 'wallpaper.stop':
       case 'render.stop':
       case 'expression.set_backend':
@@ -434,7 +434,7 @@ class AppRuntime {
       return [[key, String(value ?? '')]]
     }))
     const secrets = Object.fromEntries(['FISH_API_KEY', 'FISH_VOICE_ID'].map(key => [key, { configured: Boolean(this.config[key]), source: 'user', locked: false }]))
-    return { values, sources: {}, locked: {}, secrets, encryptionAvailable: safeStorage.isEncryptionAvailable(), mcpConnections: [], mcpConnectionsLocked: true }
+    return { values, sources: {}, locked: {}, secrets, encryptionAvailable: safeStorage.isEncryptionAvailable() }
   }
 
   private configSnapshot(): Json {

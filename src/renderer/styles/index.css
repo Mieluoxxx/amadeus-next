@@ -673,23 +673,18 @@ html.desktop-work-slice-window #root {
 }
 .scene-composer-icon svg, .scene-composer-send svg { width: 15px; height: 15px; }
 .scene-composer-icon:hover:not(:disabled) { color: var(--text); background: #9bc7b812; }
-.scene-provider-control { position: relative; flex: 0 0 auto; }
-.scene-provider-control select {
-  appearance: none;
-  width: 100px;
+.scene-provider-control { flex: 0 0 auto; }
+.scene-provider-control span {
+  display: inline-block;
   height: 30px;
-  padding: 0 22px 0 8px;
+  line-height: 28px;
+  padding: 0 8px;
   border: 1px solid var(--border);
   border-radius: 7px;
   color: var(--muted);
   background: rgba(159, 203, 189, 0.04);
   font: 11px var(--font-mono);
-  cursor: pointer;
 }
-.scene-provider-control select:hover:not(:disabled) { color: var(--text); }
-.scene-provider-control select:disabled { opacity: 0.4; cursor: default; }
-.scene-provider-control option { background: #13201f; color: var(--text); }
-.scene-provider-control > svg { position: absolute; right: 7px; top: 9px; width: 12px; height: 12px; pointer-events: none; color: var(--muted); }
 .scene-composer-spacer { flex: 1; }
 .scene-session-title { min-width: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10px; padding-left: 6px; }
 .scene-translation-indicator { color: var(--accent); font-size: 11px; }
@@ -728,7 +723,7 @@ html.desktop-work-slice-window #root {
 }
 @container scene-dock (max-width: 400px) {
   .scene-listening-label { display: none !important; }
-  .scene-provider-control select { width: 90px; }
+  .scene-provider-control span { width: 90px; }
   .scene-composer-toolbar { gap: 4px; }
 }
 @container scene-dock (max-height: 140px) {
@@ -737,8 +732,7 @@ html.desktop-work-slice-window #root {
   .scene-composer-input { min-height: 22px; max-height: 44px; padding: 0 3px; font-size: 12px; }
   .scene-composer-toolbar { flex-basis: 28px; }
   .scene-composer-icon { height: 28px; flex-basis: 28px; }
-  .scene-composer-send, .scene-provider-control select { height: 28px; }
-  .scene-provider-control > svg { top: 8px; }
+  .scene-composer-send, .scene-provider-control span { height: 28px; }
   .scene-composer-context { flex-basis: 22px; }
   .scene-context-chip > button { height: 20px; }
 }
@@ -746,7 +740,7 @@ html.desktop-work-slice-window #root {
   .scene-conversation { padding: 2px; gap: 2px; }
   .scene-composer { padding: 2px 4px; }
   .scene-composer-toolbar { flex-basis: 26px; }
-  .scene-composer-icon, .scene-composer-send, .scene-provider-control select { height: 26px; }
+  .scene-composer-icon, .scene-composer-send, .scene-provider-control span { height: 26px; }
   .scene-composer-context { flex-basis: 20px; }
   .scene-context-chip > button { height: 18px; }
 }
@@ -860,7 +854,6 @@ html.desktop-work-slice-window #root {
 :is(.scene-crt-panel, .scene-dock-frame) select option::checkmark { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); content: '✓'; color: #97d5c5; }
 :is(.scene-crt-panel, .scene-dock-frame) select::picker-icon { content: ''; width: 6px; height: 6px; margin-left: auto; flex: none; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(45deg); color: var(--muted); }
 :is(.scene-crt-panel, .scene-dock-frame) select:open::picker-icon { transform: translateY(1px) rotate(225deg); }
-.scene-provider-control select::picker-icon { display: none; }
 .scene-crt-panel :is(button, select, input, textarea, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .scene-transcript-scroll {
   margin-top: 8px;

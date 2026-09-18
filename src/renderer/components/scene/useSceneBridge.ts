@@ -89,8 +89,6 @@ export function validateSceneUrl(rawUrl: string): { url: string; assetOrigin: st
     if (parsed.pathname !== '/render/web/wallpaper_engine.html') return null
     const port = Number(parsed.port)
     if (!Number.isInteger(port) || port <= 0 || port > 65535) return null
-    const bridgePort = Number(parsed.searchParams.get('bridgePort'))
-    if (!Number.isInteger(bridgePort) || bridgePort <= 0 || bridgePort > 65535) return null
     return { url: parsed.toString(), assetOrigin: `http://127.0.0.1:${port}` }
   } catch {
     return null
@@ -168,9 +166,6 @@ export function useSceneBridge({
     // value this hook chose rather than one the page could pick itself.
     const token = sceneLoadToken()
     const sceneUrl = new URL(validated.url)
-    // Work and Artifacts live in the main window, including when this view
-    // reuses a desktop host whose URL still enables the wallpaper canvas.
-    sceneUrl.searchParams.set('sliceHost', 'electron')
     sceneUrl.searchParams.set(SCENE_LOAD_TOKEN_PARAM, token)
     urlRef.current = sceneUrl.toString()
     tokenRef.current = token

@@ -81,7 +81,6 @@ export declare global {
       path: string
       detail: string
     }>
-    openElectronSlice: (bridge: { assetPort: number; bridgePort: number; assetVersion?: string; sliceBounds?: { x: number; y: number; width: number; height: number } }) => Promise<boolean>
     closeElectronSlice: () => Promise<boolean>
     openMacWallpaper: (url: string) => Promise<boolean>
     closeMacWallpaper: () => Promise<boolean>

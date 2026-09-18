@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react'
 import FluentIcon, { type FluentIconName } from './FluentIcon'
-import McpConnections, { type McpConnectionSummary } from './McpConnections'
 import ChatAvatarSettings from './ChatAvatarSettings'
 import { translateDynamic, translateSetting, useI18n, type MessageKey } from '../i18n'
 import { Switch } from '@/components/ui/switch'
@@ -9,28 +8,20 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { createRestartScheduler, providerCredentialDecision } from './settingsStartupApply'
-import { CHAT_PROVIDER_OPTIONS } from '@/lib/chatProviders'
 import { visualProviderOptions } from './scene/visualAttachment'
 
 interface Props {
   send: (method: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
   subscribe: (method: string, fn: (p: Record<string, unknown>) => void) => () => void
-  /** Debug-only escape hatch. When provided the Settings nav gains a section
-   * that leaves Settings for the legacy chat shell. */
-  onOpenLegacyChat?: () => void
 }
 
-type SettingsSection = 'general' | 'models' | 'asr' | 'tts' | 'providers' | 'mcp' | 'skills' | 'legacy'
+type SettingsSection = 'general' | 'models' | 'asr' | 'tts'
 
 const SECTION_BG: Record<SettingsSection, string> = {
   general: 'bg-[#0071e3]',
   models: 'bg-[#af52de]',
   asr: 'bg-[#ff2d55]',
   tts: 'bg-[#34c759]',
-  providers: 'bg-[#ff9500]',
-  mcp: 'bg-[#30b0c7]',
-  skills: 'bg-[#5e5ce6]',
-  legacy: 'bg-[#8e8e93]',
 }
 
 // Which settings card holds each remote recognizer. They differ in protocol — the
@@ -119,8 +110,6 @@ interface DesktopSettingsSnapshot {
   locked: Record<string, boolean>
   secrets: Record<string, { configured: boolean; source: string; locked: boolean }>
   encryptionAvailable: boolean
-  mcpConnections: McpConnectionSummary[]
-  mcpConnectionsLocked: boolean
 }
 
 type UiMessage = { key: MessageKey; fallback?: string; values?: Record<string, unknown> }
@@ -608,9 +597,8 @@ function BoundaryNote({ title, children }: { title: string; children: ReactNode 
   )
 }
 
-export default function SettingsPage({ send, subscribe, onOpenLegacyChat }: Props) {
+export default function SettingsPage({ send, subscribe }: Props) {
   const { locale, setLocale, t, formatNumber } = useI18n()
-  const nextRuntime = Boolean((window as unknown as { __SALIERI_NEXT__?: boolean }).__SALIERI_NEXT__)
   const [section, setSection] = useState<SettingsSection>('general')
   const [config, setConfig] = useState<Record<string, unknown>>({})
   const [providerAvailability, setProviderAvailability] = useState<ProviderAvailability[]>([])
@@ -895,18 +883,6 @@ export default function SettingsPage({ send, subscribe, onOpenLegacyChat }: Prop
     { id: 'asr', label: t('settings.section.asr'), icon: 'Microphone' },
     { id: 'tts', label: t('settings.section.tts'), icon: 'Play' },
   ]
-  if (!nextRuntime) {
-    sectionDefinitions.push(
-      { id: 'providers', label: t('settings.section.providers'), icon: 'Work' },
-      { id: 'mcp', label: t('settings.section.mcp'), icon: 'CommandPrompt' },
-      { id: 'skills', label: t('settings.section.skills'), icon: 'Album' },
-    )
-  }
-  // The legacy shell is a debug escape hatch, not a runtime capability: it only
-  // appears where the host can actually leave the scene for it.
-  if (onOpenLegacyChat && !nextRuntime) {
-    sectionDefinitions.push({ id: 'legacy', label: t('scene.legacy_entry'), icon: 'CommandPrompt' })
-  }
 
   return (
     <div className="settings-scroll-area flex-1 overflow-y-auto" tabIndex={0}>
@@ -984,8 +960,6 @@ export default function SettingsPage({ send, subscribe, onOpenLegacyChat }: Prop
                 <SettingsGroup title={t('settings.group.chat_voice')}>
                   {/* The panel remounts whenever it is reopened, so `config` is empty until the fetch lands. The interface language the renderer is already using is the only true value available then; an English literal would misreport the active choice. */}
                   <ComboCard icon="Language" title={t('settings.label.interface_language')} value={val('presentation_locale', locale)} onChange={value => void handleChange('presentation_locale', value)} options={[{ value: 'en-US', label: t('settings.option.english') }, { value: 'zh-CN', label: t('settings.option.chinese') }, { value: 'ja-JP', label: t('settings.option.japanese') }]} />
-                  {!nextRuntime && <SwitchCard icon="Language" title={t('settings.label.chat_translation')} checked={bool('chat_translation_subtitles_enabled')} onChange={value => handleChange('chat_translation_subtitles_enabled', value)} />}
-                  {!nextRuntime && <ComboCard icon="Language" title={t('settings.label.wallpaper_caption')} value={val('wallpaper_caption_mode', 'translated')} onChange={value => handleChange('wallpaper_caption_mode', value)} options={['translated', 'source', 'bilingual', 'off']} />}
                 </SettingsGroup>
 
                 <SettingsGroup title={t('settings.group.chat_appearance')}>
@@ -1006,21 +980,13 @@ export default function SettingsPage({ send, subscribe, onOpenLegacyChat }: Prop
             {section === 'models' ? (
               <div className="flex flex-col settings-section-content">
                 <SettingsGroup title={t('settings.group.main_model')}>
-                  <ComboCard icon="Robot" title={t('settings.label.current_model')} value={val('llm_provider', 'deepseek')} onChange={value => handleChange('llm_provider', value)} options={[...CHAT_PROVIDER_OPTIONS]} />
+                  <InfoCard icon="Robot" title={t('settings.label.current_model')} value={val('llm_provider', 'pi')} />
                 </SettingsGroup>
 
                 <SettingsGroup title={t('settings.group.active_connections')}>
                   <ConfigurationCollection groups={activeModelConnections} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_active_connection')} />
                 </SettingsGroup>
 
-                {!nextRuntime && <SettingsGroup title={t('settings.group.vision')}>
-                  <SwitchCard icon="Camera" title={t('settings.label.vision_context')} checked={bool('vision_enabled')} onChange={handleVisionEnabled} />
-                  <ComboCard icon="Video" title={t('settings.label.vision_mode')} value={val('vision_mode', 'off')} onChange={value => handleChange('vision_mode', value)} options={['off', 'on_demand', 'watching', 'self_aware']} disabled={!bool('vision_enabled')} />
-                  <ComboCard icon="Video" title={t('settings.label.vision_scope')} value={displayedVisionScope(val('vision_scope', 'full_screen'))} onChange={value => handleChange('vision_scope', value)} options={[...VISION_SCOPES]} disabled={!bool('vision_enabled')} />
-                  <ComboCard icon="Robot" title={t('settings.label.vision_provider')} value={val('vision_provider', 'auto')} onChange={value => handleChange('vision_provider', value)} options={visualProviderOptions(t('settings.option.auto'))} disabled={!bool('vision_enabled')} />
-                  <ComboCard icon="Photo" title={t('settings.label.vision_size')} value={val('vision_max_long_side', '960')} onChange={value => handleChange('vision_max_long_side', Number(value))} options={['640', '960', '1280', '1600']} disabled={!bool('vision_enabled')} />
-                  <ComboCard icon="Photo" title={t('settings.label.vision_quality')} value={val('vision_jpeg_quality', '68')} onChange={value => handleChange('vision_jpeg_quality', Number(value))} options={['50', '68', '80', '90']} disabled={!bool('vision_enabled')} />
-                </SettingsGroup>}
 
                 <details className="settings-secondary-disclosure">
                   <summary>{t('settings.other_connections')}</summary>
@@ -1068,10 +1034,6 @@ export default function SettingsPage({ send, subscribe, onOpenLegacyChat }: Prop
             {section === 'tts' ? (
               <div className="flex flex-col settings-section-content">
 
-                {!nextRuntime && <SettingsGroup title={t('settings.group.runtime_presentation')}>
-                  <ComboCard icon="Tiles" title={t('settings.label.tts_mode')} value={val('tts_mode', 'parallel')} onChange={value => handleChange('tts_mode', value)} options={[{ value: 'cuda_graph', label: t('settings.option.cuda_graph') }, { value: 'parallel', label: t('settings.option.parallel') }]} disabled={val('tts_backend', 'gpt_sovits') !== 'gpt_sovits'} />
-                  <ComboCard icon="Language" title={t('settings.label.tts_language')} value={val('tts_output_language', 'ja')} onChange={value => handleChange('tts_output_language', value)} options={[{ value: 'ja', label: t('settings.option.japanese') }, { value: 'en', label: t('settings.option.english') }]} />
-                </SettingsGroup>}
 
                 <SettingsGroup title={t('settings.group.voice_output')}>
                   <ConfigurationCollection groups={activeOutputGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_active_connection')} />
@@ -1088,54 +1050,6 @@ export default function SettingsPage({ send, subscribe, onOpenLegacyChat }: Prop
               </div>
             ) : null}
 
-            {section === 'providers' ? (
-              <div className="flex flex-col settings-section-content">
-                <SettingsGroup title={t('settings.group.work_providers')}>
-                  <ConfigurationCollection groups={providerConfiguration} desktop={desktop} availability={providerAvailability} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-                </SettingsGroup>
-              </div>
-            ) : null}
-
-            {section === 'mcp' ? (
-              <div className="flex flex-col settings-section-content">
-                <SettingsGroup title={t('settings.group.mcp')}>
-                  <McpConnections
-                    connections={desktop?.mcpConnections || []}
-                    locked={Boolean(desktop?.mcpConnectionsLocked)}
-                    providers={providerManifests}
-                    restartPending={restartPending}
-                    send={send}
-                    onSettingsChanged={settings => setDesktop(settings as unknown as DesktopSettingsSnapshot)}
-                    onRestartRequired={() => setRestartPending(true)}
-                  />
-                </SettingsGroup>
-                {sharedMcpServers.length ? (
-                  <SettingsGroup title={t('settings.group.capabilities')}>
-                    {sharedMcpServers.map(({ packageInfo, contribution }) => <CapabilityCard key={`${packageInfo.id}-${contribution.kind}-${contribution.id}`} contribution={contribution} packageInfo={packageInfo} consumers={capabilityConsumers(contribution)} />)}
-                  </SettingsGroup>
-                ) : null}
-              </div>
-            ) : null}
-
-            {section === 'skills' ? (
-              <div className="flex flex-col settings-section-content">
-                <SettingsGroup title={t('settings.group.capabilities')}>
-                  {sharedSkills.map(({ packageInfo, contribution }) => <CapabilityCard key={`${packageInfo.id}-${contribution.kind}-${contribution.id}`} contribution={contribution} packageInfo={packageInfo} consumers={capabilityConsumers(contribution)} />)}
-                  {!sharedSkills.length ? <div className="text-[10.5px]" style={{ color: 'var(--muted)' }}>{t('settings.no_skills')}</div> : null}
-                </SettingsGroup>
-              </div>
-            ) : null}
-
-            {section === 'legacy' ? (
-              <div className="flex flex-col settings-section-content" data-testid="settings-legacy">
-                <BoundaryNote title={t('scene.legacy_title')}>{t('scene.legacy_description')}</BoundaryNote>
-                <div>
-                  <Button data-testid="open-legacy-chat" onClick={() => onOpenLegacyChat?.()}>
-                    {t('scene.legacy_open')}
-                  </Button>
-                </div>
-              </div>
-            ) : null}
 
             {saving ? <div className="settings-feedback text-[11px] animate-pulse" style={{ color: 'var(--accent)' }}>{t('settings.saving', undefined, { key: saving })}</div> : null}
             {error ? <div className="settings-feedback text-[11px] rounded-md p-3" style={{ color: '#b42318', background: '#FEF3F2' }}>{error.fallback ?? t(error.key, undefined, error.values)}</div> : null}

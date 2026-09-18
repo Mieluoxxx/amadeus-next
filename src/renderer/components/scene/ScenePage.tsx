@@ -64,13 +64,11 @@ export default function ScenePage({
   subscribe,
   connected,
   debugEnabled,
-  onOpenLegacyChat,
 }: {
   send: SendFn
   subscribe: SubscribeFn
   connected: boolean
   debugEnabled: boolean
-  onOpenLegacyChat: () => void
 }) {
   const { t } = useI18n()
   const session = useSceneSession({ send, subscribe, connected })
@@ -329,8 +327,6 @@ export default function ScenePage({
       asrListening={session.asrListening}
       streaming={session.streaming}
       sessionTitle={session.activeSession?.title || ''}
-      provider={session.provider}
-      onProviderChange={session.changeProvider}
       translationEnabled={session.translationEnabled}
       attachment={pendingAttachment}
       onClearAttachment={() => setPendingAttachment(null)}
@@ -525,7 +521,6 @@ export default function ScenePage({
            onFocusWorkItem={workItemId => { void focusWorkItem(workItemId).then(() => approval.refresh()) }}
           auxView={auxView}
           debugEnabled={debugEnabled}
-          onOpenLegacyChat={onOpenLegacyChat}
           onClose={() => setPanel(null)}
           connected={connected}
           send={send}
@@ -618,7 +613,6 @@ function ScenePanelFrame({
   onFocusWorkItem,
   auxView,
   debugEnabled,
-  onOpenLegacyChat,
   onClose,
   connected,
   send,
@@ -635,7 +629,6 @@ function ScenePanelFrame({
   onFocusWorkItem: (workItemId: string) => void
   auxView: AuxView
   debugEnabled: boolean
-  onOpenLegacyChat: () => void
   onClose: () => void
   connected: boolean
   send: SendFn
@@ -719,7 +712,7 @@ function ScenePanelFrame({
         {kind === 'more' && (
           <>
             <div className="flex min-h-0 flex-1 flex-col overflow-auto border-t border-[var(--border)] p-3" data-testid="scene-aux">
-              {auxView === 'settings' && <SettingsPage send={send} subscribe={subscribe} onOpenLegacyChat={debugEnabled ? onOpenLegacyChat : undefined} />}
+              {auxView === 'settings' && <SettingsPage send={send} subscribe={subscribe} />}
               {auxView === 'workboard' && (
                 <>
                   <SceneWorkActions

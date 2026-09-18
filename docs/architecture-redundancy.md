@@ -3,20 +3,27 @@
 状态：**A 档与 B 档已执行完成**（基线 commit `57cafb4`，全部改动可 `git diff` 复核）。
 C 档与合规项未动。
 
-清理结果：
+清理结果（自基线 `57cafb4` 起的累计）：
 
 ```
-9 files changed, 198 insertions(+), 7997 deletions(-)
+22 files changed, 365 insertions(+), 8958 deletions(-)
 ```
+
+整体删除的文件（4 个）：
+
+- `resources/render/web/crt_canvas_surface.js`
+- `resources/assets/audio/sfx/computer_use_keyboard_loop.wav` + `.LICENSE.txt`
+- `src/renderer/components/McpConnections.tsx`
+- `src/renderer/lib/chatProviders.ts`
 
 | 文件 | 前 | 后 | 处置 |
 |---|---|---|---|
 | `resources/render/web/crt_canvas_surface.js` | 5,198 | **0** | 整个文件删除 |
-| `resources/render/web/wallpaper_scene.js` | 2,445 | 663 | 删 scenarioRuntime / keyboardSfx / 运行时环境光生成器 / characterRuntime |
+| `resources/render/web/wallpaper_scene.js` | 2,445 | 659 | 删 scenarioRuntime / keyboardSfx / 运行时环境光生成器 / characterRuntime |
 | `resources/render/web/renderer.js` | 1,825 | 1,016 | 删 SpriteForgeRuntime fallback / Live2DRenderer / SubtitleOverlay / 旧 WS bridge |
-| `src/renderer/i18n/index.tsx` | 515 | 504 | 删 155 个孤儿键（373 个键值对），SETTING_COPY 对齐主进程 schema |
+| `src/renderer/i18n/index.tsx` | 515 | 481 | 删 224 个孤儿键，SETTING_COPY 对齐主进程 schema |
+| `src/renderer/components/SettingsPage.tsx` | 1,147 | 977 | 删 `!nextRuntime` 全部分支 + providers/mcp/skills/legacy section |
 | `src/renderer/components/WorkPage.tsx` | 1,788 | 1,815 | mock 夹具改为 DEV 守卫的动态导入 |
-| `resources/assets/audio/sfx/computer_use_keyboard_loop.*` | — | — | 删除（2 个文件，含 wav） |
 
 验证：`npm run typecheck` ✓ · `npm test` 31/31 ✓ · `npm run build` ✓ ·
 `npm run test:electron` ✓（真实 IPC + PCM 播放 + 表情 cue + drain + stale 拒绝）。
@@ -34,6 +41,42 @@ C 档与合规项未动。
 ```
 
 **TS/TSX 侧没有不可达模块。**冗余集中在 `resources/render/web/` 的 JS 层与契约失配的壳层。
+
+## 第二批 · legacy 宿主残留（已执行）
+
+第一批清完后仍留有“服务已退役的 standalone 宿主”的适配层与 React 壳。
+
+### HTML 适配层
+
+`sceneHost.ts` 曾用三个字符串 `.replace()` 改写 `wallpaper_engine.html`
+（插入 `/next/scene.js`、把 bridge 替成 `/next/start.js`、给前者设 `type=module`）。
+这种“用正则改 HTML”的契约很脆：任何格式变动都会静默失效。
+
+处置：把这些直接写进 html 的 `SCRIPTS` 数组与 `loadAt`；`sceneHost.ts` 不再改写 HTML（只保留生成 `/next/start.js` 的路由），并删除 `bridgePort`/`sliceHost` 查询参数、`assetPort`/`bridgePort` 响应字段、`validateSceneUrl` 里对应的必需性校验，以及 `env.d.ts` 中无消费者的 `openElectronSlice`。
+
+### React legacy 壳
+
+preload 恒设 `window.__SALIERI_NEXT__ = true`，所以 `!nextRuntime` 恒为 `false`。
+这意味着 `SettingsPage` 里所有 `!nextRuntime` 分支（providers / mcp / skills / legacy
+四个 section、chat_translation、wallpaper_caption、vision、runtime_presentation
+四个设置组）**永不渲染**。
+
+处置：
+- `NextApp`/`ScenePage`/`SettingsPage` 的 `onOpenLegacyChat` 全链路删除（含 `scene.legacy_*` 文案）。
+- `!nextRuntime` 分支与四个不可达 section 全部删除。
+- `McpConnections.tsx` 删除：它只接收主进程恒为 `[]` + `locked: true` 的数据；
+  主进程对应的 `mcpConnections`/`mcpConnectionsLocked` 响应字段一并删除。
+- `chatProviders.ts` 删除：`CHAT_PROVIDER_OPTIONS` 只有 `Pi` 一项，却渲染成
+  可选下拉框。改为静态展示（SceneDock 用 span + CSS 调整，Settings 用 InfoCard）。
+  `provider` 状态**保留**，因为 `chat.send` 仍会传它；只删了无人触发的
+  `changeProvider`。
+
+### 资产供给
+
+环境光预烘焙层、subtitle frame、角色包都被 `.gitignore` 排除。已在
+`resources/README.md` 明确写明为新克隆的前置条件，不再声称“clone 即可跑”。
+
+---
 
 ## A 档 · 已执行
 
@@ -135,15 +178,10 @@ renderer.js 提供:       getPixiApp / setSpriteViewportBounds / setSpriteViewpo
 | `FluentIcon.tsx` | 只是 lucide-react 的命名适配层，没有引入第二套图标依赖 |
 | `chat.error.*` i18n 键 | 运行时由 `code.startsWith('chat.error.')` 拼接，静态扫描看不到引用 |
 
-## 未执行 · 需要产品决策
+## 待决策项
 
-| 项 | 行数 | 现状 | 选择 |
-|---|---|---|---|
-| MCP 连接编辑器 | `McpConnections.tsx` 561 | `main/index.ts:437` 永远返回 `mcpConnections: [], mcpConnectionsLocked: true` | 接真实数据源，或不在 Settings 里挂载 |
-| Provider 选择器 | `lib/chatProviders.ts` 24 | `CHAT_PROVIDER_OPTIONS` 只有一项 `Pi`，却渲染成下拉框；主进程也不消费 `llm_provider` | README 明确"不增加 provider registry"，单选项应改成静态状态或删 |
-
-这两项是"半实现的功能"而非"不可达的代码"，删除会移除 UI 入口而不只是死代码，
-因此留给主人决定。
+无。此前列为“半实现”的两项（MCP 编辑器、单选项 provider 选择器）已在第二批删除，
+它们依赖的主进程字段也一并移除。
 
 ## 仅剩的清理项（非架构）
 

@@ -606,31 +606,6 @@ export function useSceneSession({
     }
   }, [messages, send, translationEnabled])
 
-  const changeProvider = useCallback(async (value: string) => {
-    const requestId = ++providerRequestRef.current
-    const previous = provider
-    setProvider(value)
-    try {
-      const response = await send('system.set_config', { values: { llm_provider: value } })
-      if (requestId !== providerRequestRef.current) return
-      if (response.ok === false) throw new Error(String(response.error || 'provider change rejected'))
-      const values = response.values && typeof response.values === 'object'
-        ? response.values as Record<string, unknown>
-        : response
-      if (values.llm_provider !== undefined) setProvider(String(values.llm_provider))
-    } catch {
-      if (requestId !== providerRequestRef.current) return
-      setProvider(previous)
-      setMessages(previousMessages => [...previousMessages, {
-        id: crypto.randomUUID(),
-        role: 'system',
-        text: '提供方切换失败，已恢复原设置。',
-        sessionId: activeSessionRef.current || undefined,
-        local: true,
-      }])
-    }
-  }, [provider, send])
-
   useEffect(() => { draftRef.current = draft }, [draft])
 
   useEffect(() => {
@@ -1009,7 +984,6 @@ export function useSceneSession({
     translationKey: chatTranslationKey,
     sessionChange,
     error: operationError,
-    changeProvider,
     completions,
     loadSession,
     createSession,

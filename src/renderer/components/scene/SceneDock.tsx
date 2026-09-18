@@ -1,14 +1,13 @@
 import { useRef } from 'react'
-import { ChevronDown, ImagePlus, Mic, MicOff, Send, X } from 'lucide-react'
+import { ImagePlus, Mic, MicOff, Send, X } from 'lucide-react'
 import { useI18n } from '../../i18n'
-import { CHAT_PROVIDER_OPTIONS } from '../../lib/chatProviders'
 import type { VisualAttachment } from './visualAttachment'
 
 /** The floating scene composer. Draft ownership stays in the session so
  * opening and closing panels cannot lose an edit. */
 export default function SceneDock({
   connected, draft, onDraftChange, onSubmit, onToggleMic, asrListening, streaming,
-  sessionTitle, provider, onProviderChange,
+  sessionTitle,
   translationEnabled,
   attachment, onClearAttachment, onPickAttachment, canAttach,
 }: {
@@ -20,8 +19,6 @@ export default function SceneDock({
   asrListening: boolean
   streaming: boolean
   sessionTitle: string
-  provider: string
-  onProviderChange: (value: string) => void
   translationEnabled: boolean
   attachment: VisualAttachment | null
   onClearAttachment: () => void
@@ -90,19 +87,8 @@ export default function SceneDock({
           >
             <ImagePlus />
           </button>
-          <div className="scene-provider-control">
-            <select
-              value={provider}
-              onChange={event => { void onProviderChange(event.target.value) }}
-              disabled={!connected}
-              aria-label={t('chat.provider')}
-              data-testid="scene-provider"
-            >
-              {CHAT_PROVIDER_OPTIONS.map(({ value, label }) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
-            <ChevronDown aria-hidden="true" />
+          <div className="scene-provider-control" data-testid="scene-provider" title={t('chat.provider')}>
+            <span>Pi</span>
           </div>
           {translationEnabled && <span className="scene-translation-indicator" title={t('settings.label.chat_translation')} aria-label={t('settings.label.chat_translation')}>译</span>}
           {sessionTitle && <span className="scene-session-title" title={sessionTitle}>{sessionTitle}</span>}

@@ -35,9 +35,10 @@
       var SCRIPTS = [
         "/render/web/vendor/pixi.min.js",
         "/render/web/vendor/pixi-basis-ktx2.global.js",
+        "/next/scene.js",
         "/render/web/renderer.js",
         "/render/web/wallpaper_scene.js",
-        "/render/web/wallpaper_engine_bridge.js"
+        "/next/start.js"
       ];
       var CACHE_BUST = String(Date.now());
 
@@ -48,6 +49,7 @@
         if (src.indexOf("/render/web/vendor/") !== 0) {
           src += "?v=" + CACHE_BUST;
         }
+        if (src.indexOf("/next/") === 0) s.type = "module";
         s.src = src;
         s.onload = function () { loadAt(i + 1); };
         s.onerror = function () {

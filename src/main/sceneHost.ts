@@ -23,15 +23,6 @@ export class SceneHost {
         response.end('window.dispatchEvent(new Event("salieri:scene-ready"));')
         return
       }
-      if (url.pathname === '/render/web/wallpaper_engine.html') {
-        const html = readFileSync(path.join(this.root, 'render/web/wallpaper_engine.html'), 'utf8')
-          .replace('"/render/web/renderer.js",', '"/next/scene.js", "/render/web/renderer.js",')
-          .replace('"/render/web/wallpaper_engine_bridge.js"', '"/next/start.js"')
-          .replace('s.src = src;', 'if (src.startsWith("/next/scene.js")) s.type = "module"; s.src = src;')
-        response.setHeader('Content-Type', 'text/html; charset=utf-8')
-        response.end(html)
-        return
-      }
       const roots: [string, string][] = [['/next/', this.bundle], ['/character/', this.characterRoot], ['/render/web/', path.join(this.root, 'render/web')], ['/assets/', path.join(this.root, 'assets')]]
       const route = roots.find(([prefix]) => url.pathname.startsWith(prefix))
       const file = route && safeFilePath(route[1], url.pathname.slice(route[0].length))
@@ -55,7 +46,7 @@ export class SceneHost {
     this.characterRoot = process.env.SALIERI_NEXT_CHARACTER_ROOT || path.join(root, 'assets/spriteforge/runtime/kurisu')
   }
   get origin(): string { return `http://127.0.0.1:${this.port}` }
-  get url(): string { return `${this.origin}/render/web/wallpaper_engine.html?bridgePort=${this.port}&sliceHost=electron` }
+  get url(): string { return `${this.origin}/render/web/wallpaper_engine.html` }
   async start(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       this.server.once('error', reject)
