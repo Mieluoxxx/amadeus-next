@@ -11,8 +11,20 @@ import WorkDetailDrawer from './work/WorkDetailDrawer'
 import AuipExperienceCard from './work/AuipExperienceCard'
 import type { AttentionRequest, AuipExperienceProjection, ProviderInspectionDetails, OverlayMode, ProviderEvent, ProviderRun, WorkDockItem, WorkPageProps, WorkProjection } from './work/types'
 import { attentionRequestsFromEnvelope } from './work/attentionProjection'
-import { getMockWorkboardFrame, MOCK_STAGE_INDEX } from './work/mockWorkboardPlayback'
-import { mockWorkTurnFixture } from './work/mockWorkTurn.fixture'
+import type { getMockWorkboardFrame, MOCK_STAGE_INDEX } from './work/mockWorkboardPlayback'
+import type { mockWorkTurnFixture } from './work/mockWorkTurn.fixture'
+
+/**
+ * Development-only playback fixture. It is loaded through an
+ * `import.meta.env.DEV` guarded dynamic import: the production build replaces
+ * that flag with `false` and eliminates the guarded effect below, so the
+ * fixture strings never ship in the renderer bundle.
+ */
+type MockPlaybackApi = {
+  turn: (typeof mockWorkTurnFixture)['turn']
+  getFrame: typeof getMockWorkboardFrame
+  stageIndex: typeof MOCK_STAGE_INDEX
+}
 import { buildProjectStateMap, providerRunToWorkTurn } from './work/workModels'
 import {
   attentionActionLabel,
@@ -200,6 +212,21 @@ export default function WorkPage({ send, subscribe, connected, embedded = false,
   const planDockPinnedRef = useRef(false)
   const [crtInsideMode] = useState(() => !embedded && (forceCrtMode || localStorage.getItem('amadeus.work.crtInsideMode') === '1'))
   const [mockElapsedMs, setMockElapsedMs] = useState(0)
+  const [mockApi, setMockApi] = useState<MockPlaybackApi | null>(null)
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || !demoPlaybackRequested) return
+    let cancelled = false
+    void Promise.all([import('./work/mockWorkboardPlayback'), import('./work/mockWorkTurn.fixture')]).then(([playback, fixture]) => {
+      if (cancelled) return
+      setMockApi({
+        turn: fixture.mockWorkTurnFixture.turn,
+        getFrame: playback.getMockWorkboardFrame,
+        stageIndex: playback.MOCK_STAGE_INDEX,
+      })
+    })
+    return () => { cancelled = true }
+  }, [demoPlaybackRequested])
   const mockPlaybackOffsetRef = useRef(0)
   const mockPlaybackStartedAtRef = useRef(Date.now())
   const projectionPanelRef = useRef<HTMLDivElement | null>(null)
@@ -283,15 +310,15 @@ export default function WorkPage({ send, subscribe, connected, embedded = false,
   const hasAttention = Boolean(activeAttention || attentionError || activeRun?.error || activeDetails?.error || activeDetails?.busy || workActionError || workItemNeedsAttention(activeWorkItem))
   // Product empty/offline states must stay truthful. The old animated fixture
   // remains available only through an explicit development URL.
-  const useMockPlayback = demoPlaybackRequested && !activeRun && !workProjection
+  const useMockPlayback = demoPlaybackRequested && !!mockApi && !activeRun && !workProjection
 
   const activeTurn = useMemo(() => providerRunToWorkTurn(activeRun, activeDetails, { cwd, provider }), [activeDetails, activeRun, cwd, provider])
-  const displayTurn = useMemo(() => useMockPlayback ? mockWorkTurnFixture.turn : activeTurn, [activeTurn, useMockPlayback])
+  const displayTurn = useMemo(() => useMockPlayback && mockApi ? mockApi.turn : activeTurn, [activeTurn, mockApi, useMockPlayback])
   const workTurns = useMemo(() => {
-    if (useMockPlayback) return [mockWorkTurnFixture.turn]
+    if (useMockPlayback && mockApi) return [mockApi.turn]
     if (runs.length === 0) return [activeTurn]
     return runs.map(run => providerRunToWorkTurn(run, details[run.run_id], { cwd, provider }))
-  }, [activeTurn, cwd, details, provider, runs, useMockPlayback])
+  }, [activeTurn, cwd, details, mockApi, provider, runs, useMockPlayback])
   const projectMap = useMemo(() => buildProjectStateMap(workTurns, displayTurn.id), [displayTurn.id, workTurns])
   const filteredWorkItems = useMemo(() => {
     if (!workProjection) return []
@@ -315,8 +342,8 @@ export default function WorkPage({ send, subscribe, connected, embedded = false,
   )
   const workCountSummary = useMemo(() => workCountsLabel(workProjection, runs), [runs, workProjection])
   const compactSignals = displayTurn.signals.filter(signal => signal.importance !== 'ambient').slice(-3)
-  const mockFrame = useMemo(() => useMockPlayback ? getMockWorkboardFrame(mockElapsedMs) : undefined, [mockElapsedMs, useMockPlayback])
-  const mockStageIndex = mockFrame ? MOCK_STAGE_INDEX.findIndex(stage => stage.mode === mockFrame.mode) : -1
+  const mockFrame = useMemo(() => mockApi && useMockPlayback ? mockApi.getFrame(mockElapsedMs) : undefined, [mockApi, mockElapsedMs, useMockPlayback])
+  const mockStageIndex = mockFrame ? (mockApi?.stageIndex ?? []).findIndex(stage => stage.mode === mockFrame.mode) : -1
   const displayTitle = mockFrame?.title || activeWorkItem?.title || displayTurn.title
   const displayKicker = mockFrame?.kicker || (activeWorkItem
     ? [activeWorkItem.state, activeWorkItem.activity?.phase || activeWorkItem.execution, activeWorkItem.completion, activeWorkItem.attention !== 'none' ? activeWorkItem.attention : ''].filter(Boolean).join(' / ')
@@ -1491,7 +1518,7 @@ export default function WorkPage({ send, subscribe, connected, embedded = false,
               <div className="crt-turn-kicker">{displayKicker}</div>
               {mockFrame && (
                 <div className="crt-stage-index" aria-label="Work turn stage index">
-                  {MOCK_STAGE_INDEX.map((stage, index) => (
+                  {(mockApi?.stageIndex ?? []).map((stage, index) => (
                     <button
                       key={stage.mode}
                       type="button"

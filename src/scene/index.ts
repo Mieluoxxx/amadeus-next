@@ -180,7 +180,6 @@ function receive(event: VoiceEvent): void {
   if (!sameTurn(key, event)) return
   if (event.type === 'activity') {
     dispatch({ type: 'activity', activity: event.activity, random: Math.random() })
-    host.wallpaperApp.setAsrStatus({ status: event.activity === 'listening' ? 'listening' : 'idle' })
   } else if (event.type === 'text') {
     text += event.value.text
     timeline.append(event.value.text, event.value.cues)

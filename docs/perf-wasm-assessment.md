@@ -33,7 +33,11 @@
 | Markdown / diff 渲染 | React + `markdownLite` | DOM + 字符串 | 否 | 非数值负载 |
 | msgpack / JSON | `@msgpack/msgpack`、`JSON` | 文本规模 | 否 | 同上 |
 
-## 2. 本次审查发现的主要浪费：运行时重新生成环境光遮罩
+## 2. 本次审查发现的主要浪费：运行时重新生成环境光遮罩 —— **已删除**
+
+> 状态：已在同批清理中删除。`_buildAmbientFromBackground` 整体移除，改由
+> `setAmbientHigh(payload.ambientUrl)` 消费主进程本就提供的预烘焙图。
+> 详见 `docs/architecture-redundancy.md`。以下保留原始分析作为记录。
 
 `wallpaper_scene.js:2224-2315` 是本次审查发现的**主要 JS 逐像素循环**（不宣称是唯一一处）：
 

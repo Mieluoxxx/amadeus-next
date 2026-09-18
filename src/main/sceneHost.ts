@@ -75,8 +75,7 @@ export class SceneHost {
         ambientUrl: `${this.origin}/assets/images/amadeus_ambient_high_blend.png`,
         ambientLowUrl: `${this.origin}/assets/images/amadeus_ambient_low_blend.png`,
         subtitleFrameUrl: `${this.origin}/assets/images/subtitle_frame_big.png`,
-        keyboardSfxUrl: `${this.origin}/assets/audio/sfx/computer_use_keyboard_loop.wav`,
-        defaultSubtitleEnabled: true, crtConfig, scenario: { enabled: false },
+        crtConfig,
       },
     }
   }
