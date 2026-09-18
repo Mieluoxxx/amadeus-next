@@ -45,4 +45,3 @@ contextBridge.exposeInMainWorld('amadeus', {
   closeWorkOverlay: () => Promise.resolve(false),
 })
 
-contextBridge.exposeInMainWorld('__SALIERI_NEXT__', true)

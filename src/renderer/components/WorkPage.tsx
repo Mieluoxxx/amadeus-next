@@ -536,25 +536,21 @@ export default function WorkPage({ send, subscribe, connected, embedded = false,
     setAuipLaunchFeedback(undefined)
     try {
       const prepared = await send('auip.attach.prepare', { artifact_id: artifactId, mode })
-      const launchUrl = String(prepared.launch_url || '')
+      // The Next host does not launch AUIP applications: preload bridges no
+      // launcher and the main process does not handle auip.attach.prepare, so a
+      // prepared descriptor cannot be opened from here. Surface the host's own
+      // error instead of claiming a launch that never happened.
+      if (prepared.ok === false) throw new Error(String(prepared.error || 'This host cannot open AUIP applications.'))
       const artifactRef = String(prepared.artifact_ref || '')
-      const hostSurfaceId = String(prepared.host_surface_id || '')
-      const workItemId = String(prepared.work_item_id || '')
-      if (!launchUrl) throw new Error('The host did not return an AUIP launch descriptor.')
       if (!artifactRef) throw new Error('The host did not bind the AUIP launch to an artifact.')
-      if (!hostSurfaceId) throw new Error('The host did not bind an AUIP surface identity.')
       setAuipExperience({
         artifactRef,
         title: 'AUIP application',
         status: 'connecting',
       })
-      const opened = await window.amadeus?.openAuipApp(launchUrl, hostSurfaceId, workItemId)
-      if (!opened?.ok) {
-        throw new Error(opened?.detail || 'The desktop host refused the AUIP launch URL.')
-      }
       setAuipLaunchFeedback({
         status: 'success',
-        message: 'Application opened. Its one-time Attach ticket is waiting for registration.',
+        message: 'Application prepared. This host has no AUIP launcher to open it.',
       })
     } catch (error) {
       setAuipExperience(undefined)

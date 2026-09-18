@@ -230,7 +230,6 @@ export function useSceneSession({
   const observerNotesRef = useRef<Set<string>>(new Set())
   const translationGenerationRef = useRef(0)
   const translationRequestedRef = useRef<Set<string>>(new Set())
-  const providerRequestRef = useRef(0)
 
   const applySessionPayload = useCallback((payload: Record<string, unknown>, options: { notify?: boolean } = {}) => {
     if (Array.isArray(payload.sessions)) setSessions(normalizeSessions(payload.sessions))
@@ -566,19 +565,18 @@ export function useSceneSession({
   // Provider selection mirrors the chat page so both surfaces send the same model.
   useEffect(() => {
     if (!connected) return
-    const applyConfig = (payload: Record<string, unknown>, external = false) => {
+    const applyConfig = (payload: Record<string, unknown>) => {
       const values = payload.values && typeof payload.values === 'object'
         ? payload.values as Record<string, unknown>
         : payload
       if (values.llm_provider !== undefined) {
-        if (external) providerRequestRef.current += 1
         setProvider(String(values.llm_provider))
       }
       if (values.chat_translation_subtitles_enabled !== undefined) {
         setTranslationEnabled(values.chat_translation_subtitles_enabled === true)
       }
     }
-    const unsubscribe = subscribe('system.config', payload => applyConfig(payload, true))
+    const unsubscribe = subscribe('system.config', payload => applyConfig(payload))
     send('system.get_config', {}).then(payload => applyConfig(payload)).catch(() => {})
     return () => unsubscribe()
   }, [connected, send, subscribe])

@@ -57,10 +57,7 @@ export const STATUS_TRAY_MAX_WIDTH = 420
  * over the scene, not a layout column, so it never touches the frame.
  */
 export const PANEL_MARGIN = 12
-
 /** Keep at least this share of the window for the scene when an overlay is open. */
-const MIN_FREE_RATIO = 0.4
-
 export type ScenePanelKind = 'transcript' | 'more'
 
 export type SceneRegion = { x: number; y: number; width: number; height: number }
@@ -446,7 +443,7 @@ export function resolveSceneLayout(
     ? { ...ranked[0].arranged, covered: ranked[0].covered }
     : fallbackArrangement(scene, overlays)
 
-  const { fit, cabinet, covered } = arrangement
+  const { fit, cabinet } = arrangement
   const panelOverlay = overlays.find(overlay => overlay.kind === panel) || null
   const dockOverlay = overlays.find(overlay => overlay.kind === 'dock') || null
   if (panelOverlay && dockOverlay) {

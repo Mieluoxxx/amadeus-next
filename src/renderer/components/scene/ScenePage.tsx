@@ -63,12 +63,10 @@ export default function ScenePage({
   send,
   subscribe,
   connected,
-  debugEnabled,
 }: {
   send: SendFn
   subscribe: SubscribeFn
   connected: boolean
-  debugEnabled: boolean
 }) {
   const { t } = useI18n()
   const session = useSceneSession({ send, subscribe, connected })
@@ -520,7 +518,6 @@ export default function ScenePage({
            focusedWorkItemError={focusedWorkItemError}
            onFocusWorkItem={workItemId => { void focusWorkItem(workItemId).then(() => approval.refresh()) }}
           auxView={auxView}
-          debugEnabled={debugEnabled}
           onClose={() => setPanel(null)}
           connected={connected}
           send={send}
@@ -612,7 +609,6 @@ function ScenePanelFrame({
   focusedWorkItemError,
   onFocusWorkItem,
   auxView,
-  debugEnabled,
   onClose,
   connected,
   send,
@@ -628,7 +624,6 @@ function ScenePanelFrame({
   focusedWorkItemError: string
   onFocusWorkItem: (workItemId: string) => void
   auxView: AuxView
-  debugEnabled: boolean
   onClose: () => void
   connected: boolean
   send: SendFn

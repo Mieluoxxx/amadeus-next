@@ -12,7 +12,6 @@ export default function NextApp() {
         send={runtime.send}
         subscribe={runtime.subscribe}
         connected={runtime.connected}
-        debugEnabled={false}
       />
     </I18nProvider>
   )

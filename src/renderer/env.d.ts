@@ -1,67 +1,21 @@
 /// <reference types="vite/client" />
 
 export declare global {
-  interface WorkPreviewDescriptor {
-    previewId: string
-    workItemId: string
-    attemptId: string
-    title: string
-    url: string
-    revision: number
-    contentRevision: number
-    status: string
-    error: string
-    lifecycle: string
-    artifactRef: string
-    appSessionId: string
-    hostSurfaceId: string
-    presentedAppSessionId?: string
-    presentedHostSurfaceId?: string
-    presentationPhase?: 'preview' | 'auip-preloading' | 'auip-attached' | 'auip-closing' | 'auip-conflict' | 'auip-ended'
-  }
-
-  interface WorkPreviewIpcResult {
-    ok: boolean
-    detail: string
-    descriptor?: WorkPreviewDescriptor
-  }
-
+  /**
+   * The optional preload bridge. This mirrors exactly what
+   * `src/preload/index.ts` exposes on `window.amadeus`; the Electron host stubs
+   * the members a Next-only runtime has no independent owner for.
+   */
   interface AmadeusAPI {
-    wallpaperHost: 'electron-slice' | 'macos-companion' | 'web'
+    wallpaperHost: 'macos-companion'
     platform: string
-    minimizeWindow: () => Promise<boolean>
-    toggleMaximizeWindow: () => Promise<boolean>
-    closeWindow: () => Promise<boolean>
-    onWindowMaximizeChanged: (listener: (maximized: boolean) => void) => () => void
-    getBackendConnection: () => Promise<{
-      url: string
-      protocols: string[]
-      instanceNonce: string
-      authScheme: string
-    } | null>
-    restartBackend: () => Promise<{ restarted: boolean; reason?: string }>
     getDesktopSettings: () => Promise<Record<string, unknown> | null>
     updateDesktopSettings: (update: {
       values?: Record<string, string | boolean | null>
       secrets?: Record<string, string | null>
     }) => Promise<{ ok: boolean; error?: string; settings?: Record<string, unknown> }>
-    upsertMcpConnection: (update: {
-      connection: {
-        id?: string
-        name: string
-        enabled?: boolean
-        transport: 'stdio' | 'http'
-        providerIds?: string[]
-        command?: string
-        arguments?: string[]
-        cwd?: string
-        url?: string
-        bearerTokenEnvVar?: string
-      }
-      environment?: Record<string, string | null>
-      clearEnvironment?: boolean
-    }) => Promise<{ ok: boolean; error?: string; settings?: Record<string, unknown> }>
-    removeMcpConnection: (connectionId: string) => Promise<{ ok: boolean; error?: string; settings?: Record<string, unknown> }>
+    restartBackend: () => Promise<{ restarted: boolean; reason?: string }>
+    focusMainWindow: () => Promise<boolean>
     getChatAvatars: () => Promise<{ user: string; assistant: string } | null>
     selectChatAvatar: (role: 'user' | 'assistant') => Promise<{
       ok: boolean
@@ -74,29 +28,8 @@ export declare global {
       error?: string
       avatars?: { user: string; assistant: string }
     }>
-    focusMainWindow: () => Promise<boolean>
-    selectProjectDirectory: () => Promise<{
-      ok: boolean
-      cancelled: boolean
-      path: string
-      detail: string
-    }>
-    closeElectronSlice: () => Promise<boolean>
-    openMacWallpaper: (url: string) => Promise<boolean>
-    closeMacWallpaper: () => Promise<boolean>
-    onMacWallpaperExited: (listener: (detail: string) => void) => () => void
-    openAuipApp: (launchUrl: string, hostSurfaceId?: string, workItemId?: string) => Promise<{ ok: boolean; detail: string }>
-    closeAuipApp: (hostSurfaceId: string, appSessionId?: string) => Promise<{ ok: boolean; status: string; detail: string }>
-    openWorkPreview: (descriptor: Record<string, unknown>) => Promise<WorkPreviewIpcResult>
-    updateWorkPreview: (descriptor: Record<string, unknown>) => Promise<WorkPreviewIpcResult>
-    getWorkPreview: (previewId: string) => Promise<WorkPreviewIpcResult>
-    reloadWorkPreview: (previewId: string) => Promise<WorkPreviewIpcResult>
-    closeWorkPreview: (previewId: string) => Promise<WorkPreviewIpcResult>
-    setWorkPreviewBounds: (previewId: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<boolean>
-    onWorkPreviewDescriptor: (listener: (descriptor: WorkPreviewDescriptor) => void) => () => void
-    onWorkPreviewLoadState: (listener: (state: Record<string, unknown>) => void) => () => void
-    onWorkPreviewCloseRequested: (listener: (state: Record<string, unknown>) => void) => () => void
-    notifyTaskComplete: (payload: {
+    /** Preload accepts this payload and currently ignores it. */
+    notifyTaskComplete: (payload?: {
       key: string
       title: string
       body: string

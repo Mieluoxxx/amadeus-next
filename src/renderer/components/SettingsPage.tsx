@@ -2,13 +2,11 @@ import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } fro
 import FluentIcon, { type FluentIconName } from './FluentIcon'
 import ChatAvatarSettings from './ChatAvatarSettings'
 import { translateDynamic, translateSetting, useI18n, type MessageKey } from '../i18n'
-import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { createRestartScheduler, providerCredentialDecision } from './settingsStartupApply'
-import { visualProviderOptions } from './scene/visualAttachment'
 
 interface Props {
   send: (method: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
@@ -61,49 +59,6 @@ interface ConfigurationGroup {
   fields: StartupField[]
 }
 
-interface ProviderAvailability {
-  provider_id: string
-  configured: boolean
-  ready: boolean
-  registered: boolean
-  reason: string
-  version?: string
-}
-
-interface ProviderManifest {
-  provider_id: string
-  display_name: string
-  runtime_kind: string
-  capabilities?: { capability_projections?: string[] }
-}
-
-interface CapabilityBinding {
-  surface: string
-  projection: string
-  enabled: boolean
-}
-
-interface CapabilityContribution {
-  kind: 'provider' | 'mcp_server' | 'skill' | 'auip_app'
-  id: string
-  summary: string
-  available: boolean
-  health: string
-  health_detail?: string
-  consumer_scope?: string
-  bindings?: CapabilityBinding[]
-  requirements?: string[]
-  metadata?: Record<string, unknown>
-}
-
-interface CapabilityPackage {
-  id: string
-  version: string
-  source: string
-  trust: string
-  contributions: CapabilityContribution[]
-}
-
 interface DesktopSettingsSnapshot {
   values: Record<string, string>
   sources: Record<string, 'environment' | 'user' | 'dotenv' | 'default'>
@@ -133,17 +88,8 @@ const PROVIDER_SECRET_KEYS: Record<string, string> = {
   'google-gemini': 'GEMINI_API_KEY',
 }
 
-// Scopes the runtime can capture on a supported platform. Window capture needs
-// the Win32 window helpers, so listing current_window or selected_window here
-// would offer a choice that can only fall back to the full screen.
-const VISION_SCOPES = ['full_screen', 'wallpaper_surface', 'region'] as const
-
 // A store written by an earlier version may hold a window scope. Show the full
 // screen it resolves to instead of rendering a select with no matching option.
-function displayedVisionScope(value: string): string {
-  return (VISION_SCOPES as readonly string[]).includes(value) ? value : 'full_screen'
-}
-
 // A connection card saves field by field. Wait for that burst to finish so one
 // restart covers every field: the backend reads the store when it spawns.
 const AUTO_RESTART_DEBOUNCE_MS = 1000
@@ -207,20 +153,6 @@ function CardIcon({ name }: { name: FluentIconName }) {
       </div>
       <div style={{ width: 12, flexShrink: 0 }} />
     </>
-  )
-}
-
-function SwitchCard({ icon, title, checked, onChange }: {
-  icon: FluentIconName; title: string; checked: boolean; onChange: (v: boolean) => void
-}) {
-  return (
-    <CardShell>
-      <CardIcon name={icon} />
-      <div className="flex-1 min-w-0 pr-4">
-        <div className="text-[13px] font-semibold text-[#1d1d1f] leading-snug">{title}</div>
-      </div>
-      <Switch checked={checked} onCheckedChange={onChange} />
-    </CardShell>
   )
 }
 
@@ -420,20 +352,17 @@ function StartupFieldRow({ field, desktop, onSave }: {
   )
 }
 
-function ConfigurationCard({ group, desktop, availability, onSave, defaultOpen }: {
+function ConfigurationCard({ group, desktop, onSave, defaultOpen }: {
   group: ConfigurationGroup
   desktop: DesktopSettingsSnapshot | null
-  availability?: ProviderAvailability
   onSave: (field: StartupField, value: string | boolean | null, secret: boolean) => Promise<void>
   defaultOpen?: boolean
 }) {
   const { locale, t } = useI18n()
-  const statusOk = group.status_ok ?? (availability ? availability.ready && availability.registered : Boolean(group.configured))
-  const statusText = availability
-    ? statusOk ? t('settings.status.registered') : availability.reason || t('settings.status.unavailable')
-    : group.status
-      ? translateDynamic(locale, 'settings.status', group.status, group.status.replaceAll('_', ' ').replace(/^./, value => value.toUpperCase()))
-      : group.configured ? t('settings.status.configured') : t('settings.status.needs_setup')
+  const statusOk = group.status_ok ?? Boolean(group.configured)
+  const statusText = group.status
+    ? translateDynamic(locale, 'settings.status', group.status, group.status.replaceAll('_', ' ').replace(/^./, value => value.toUpperCase()))
+    : group.configured ? t('settings.status.configured') : t('settings.status.needs_setup')
   const groupLabel = translateSetting(locale, 'group', group.id, group.label)
   const [expanded, setExpanded] = useState(defaultOpen ?? Boolean(group.active || !statusOk))
   const header = (
@@ -517,10 +446,9 @@ function OverviewCard({ icon, label, value, detail, ok = true, onClick }: {
   )
 }
 
-function ConfigurationCollection({ groups, desktop, availability, onSave, empty }: {
+function ConfigurationCollection({ groups, desktop, onSave, empty }: {
   groups: ConfigurationGroup[]
   desktop: DesktopSettingsSnapshot | null
-  availability?: ProviderAvailability[]
   onSave: (field: StartupField, value: string | boolean | null, secret: boolean) => Promise<void>
   empty: string
 }) {
@@ -532,43 +460,10 @@ function ConfigurationCollection({ groups, desktop, availability, onSave, empty 
           key={group.id}
           group={group}
           desktop={desktop}
-          availability={availability?.find(item => item.provider_id === group.id)}
           onSave={onSave}
         />
       ))}
     </>
-  )
-}
-
-function CapabilityCard({ contribution, packageInfo, consumers }: {
-  contribution: CapabilityContribution
-  packageInfo: CapabilityPackage
-  consumers: string[]
-}) {
-  const { t } = useI18n()
-  const bindings = (contribution.bindings || []).filter(binding => binding.enabled)
-  return (
-    <CardShell vertical>
-      <div className="flex items-start gap-2.5">
-        <div className="flex items-center justify-center mt-0.5" style={{ width: 22, color: 'var(--muted)' }}>
-          <FluentIcon name={contribution.kind === 'skill' ? 'Work' : 'CommandPrompt'} size={15} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-[12px] font-[650]" style={{ color: 'var(--text)' }}>{contribution.id}</span>
-            <span className="text-[9px] uppercase tracking-wide" style={{ color: 'var(--muted)' }}>{contribution.kind === 'mcp_server' ? t('settings.kind.mcp') : t('settings.kind.skill')}</span>
-          </div>
-          <div className="text-[10.5px] mt-0.5" style={{ color: 'var(--muted)', lineHeight: '15px' }}>{contribution.summary}</div>
-        </div>
-        <StatusPill ok={contribution.available}>{contribution.available ? t('settings.status.available') : contribution.health}</StatusPill>
-      </div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-2.5 pt-2.5 text-[9.5px]" style={{ borderTop: '1px solid rgba(17,24,39,0.075)', color: 'var(--muted)' }}>
-        <div><span className="font-[600]">{t('settings.capability.consumers')}</span> {consumers.length ? consumers.join(', ') : t('settings.capability.no_binding')}</div>
-        <div><span className="font-[600]">{t('settings.capability.scope')}</span> {t('settings.status.work_providers_only')}</div>
-        <div><span className="font-[600]">{t('settings.capability.projection')}</span> {bindings.map(item => item.projection).join(', ') || t('settings.capability.none')}</div>
-        <div><span className="font-[600]">{t('settings.capability.source')}</span> {packageInfo.source} · {packageInfo.trust}</div>
-      </div>
-    </CardShell>
   )
 }
 
@@ -581,29 +476,10 @@ function SettingsGroup({ title, children }: { title: string; children: ReactNode
   )
 }
 
-function BoundaryNote({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div
-      className="rounded-lg"
-      style={{
-        padding: '10px 12px',
-        border: '1px solid rgba(0,120,212,0.18)',
-        background: 'rgba(0,120,212,0.035)',
-      }}
-    >
-      <div className="text-[11.5px] font-[650]" style={{ color: 'var(--text)', lineHeight: '16px' }}>{title}</div>
-      <div className="text-[10.5px] mt-0.5" style={{ color: 'var(--muted)', lineHeight: '15px' }}>{children}</div>
-    </div>
-  )
-}
-
 export default function SettingsPage({ send, subscribe }: Props) {
   const { locale, setLocale, t, formatNumber } = useI18n()
   const [section, setSection] = useState<SettingsSection>('general')
   const [config, setConfig] = useState<Record<string, unknown>>({})
-  const [providerAvailability, setProviderAvailability] = useState<ProviderAvailability[]>([])
-  const [providerManifests, setProviderManifests] = useState<ProviderManifest[]>([])
-  const [capabilityPackages, setCapabilityPackages] = useState<CapabilityPackage[]>([])
   const [desktop, setDesktop] = useState<DesktopSettingsSnapshot | null>(null)
   const [saving, setSaving] = useState<string | null>(null)
   const [restartPending, setRestartPending] = useState(false)
@@ -633,13 +509,6 @@ export default function SettingsPage({ send, subscribe }: Props) {
     })
     Promise.all([
       send('system.get_config', {}).then(response => setConfig((response.values as Record<string, unknown>) ?? response)),
-      send('provider.list', {}).then(response => {
-        setProviderAvailability(Array.isArray(response.provider_availability) ? response.provider_availability as unknown as ProviderAvailability[] : [])
-        setProviderManifests(Array.isArray(response.provider_manifests) ? response.provider_manifests as unknown as ProviderManifest[] : [])
-      }),
-      send('capability.list', { include_disabled: true }).then(response => {
-        setCapabilityPackages(Array.isArray(response.packages) ? response.packages as unknown as CapabilityPackage[] : [])
-      }),
       refreshDesktop(),
     ]).catch(reason => setError(reason instanceof Error ? { key: 'settings.loading_error', fallback: reason.message } : { key: 'settings.loading_error' }))
     return unsubscribe
@@ -765,23 +634,7 @@ export default function SettingsPage({ send, subscribe }: Props) {
     }
   }, [t, scheduleAutoRestart])
 
-  const handleVisionEnabled = useCallback(async (value: boolean) => {
-    const currentMode = String(config.vision_mode ?? 'off')
-    const nextMode = value && currentMode === 'off' ? 'on_demand' : currentMode
-    setSaving('vision_enabled')
-    setError(null)
-    try {
-      const response = await send('system.set_config', { values: { vision_enabled: value, vision_mode: value ? nextMode : 'off' } })
-      setConfig((response.values as Record<string, unknown>) ?? response)
-    } catch (reason) {
-      setError(reason instanceof Error ? { key: 'settings.update_error', fallback: reason.message, values: { key: 'vision' } } : { key: 'settings.update_error', values: { key: 'vision' } })
-    } finally {
-      setSaving(null)
-    }
-  }, [send, config, t])
-
   const val = (key: string, fallback: string) => String(config[key] ?? fallback)
-  const bool = (key: string) => Boolean(config[key])
   const visualPack = asRecord(config.visual_asset_pack)
   const visualPackInstalled = Boolean(visualPack.installed)
   const visualPackState = String(visualPack.state ?? 'not_installed')
@@ -807,36 +660,9 @@ export default function SettingsPage({ send, subscribe }: Props) {
 
   const modelConnections = asConfigurationGroups(config.model_connections)
   const modelRoles = asConfigurationGroups(config.model_roles)
-  const providerConfiguration = asConfigurationGroups(config.work_provider_configuration)
   const voiceConfiguration = asConfigurationGroups(config.voice_configuration)
   const avatarConfiguration = asConfigurationGroups(config.avatar_configuration)
-  const sharedSkills = useMemo(() => capabilityPackages.flatMap(packageInfo =>
-    (packageInfo.contributions || [])
-      .filter(contribution => contribution.kind === 'skill')
-      .map(contribution => ({ packageInfo, contribution })),
-  ), [capabilityPackages])
-  const sharedMcpServers = useMemo(() => capabilityPackages.flatMap(packageInfo =>
-    (packageInfo.contributions || [])
-      .filter(contribution => contribution.kind === 'mcp_server' && packageInfo.source !== 'desktop:mcp-registry')
-      .map(contribution => ({ packageInfo, contribution })),
-  ), [capabilityPackages])
 
-  const capabilityConsumers = useCallback((contribution: CapabilityContribution): string[] => {
-    const projections = new Set((contribution.bindings || []).filter(binding => binding.enabled).map(binding => binding.projection))
-    const selectedProviderIds = Array.isArray(contribution.metadata?.provider_ids)
-      ? new Set((contribution.metadata.provider_ids as unknown[]).map(value => String(value)))
-      : null
-    const consumers = providerManifests
-      .filter(manifest => (!selectedProviderIds || selectedProviderIds.has(manifest.provider_id))
-        && (manifest.capabilities?.capability_projections || []).some(projection => projections.has(projection)))
-      .map(manifest => manifest.display_name || manifest.provider_id)
-    if (contribution.kind === 'mcp_server') {
-      const ownProvider = String(contribution.metadata?.provider_id || '')
-      const manifest = providerManifests.find(item => item.provider_id === ownProvider)
-      if (manifest) consumers.push(manifest.display_name || manifest.provider_id)
-    }
-    return [...new Set(consumers)]
-  }, [providerManifests])
 
   const activeModelConnections = modelConnections.filter(group => group.active)
   const currentModelStatus = activeModelConnections.find(group => group.active)

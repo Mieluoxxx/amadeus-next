@@ -18,6 +18,5 @@ declare global {
 
   interface Window {
     salieriNext: SalieriNextBridge
-    __SALIERI_NEXT__?: boolean
   }
 }

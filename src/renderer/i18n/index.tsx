@@ -175,40 +175,40 @@ const EN = {
   'settings.option.english': 'English',
   'settings.option.chinese': '简体中文',
   'settings.option.japanese': '日本語',
-  'settings.option.cuda_graph': 'CUDA Graph ×1',
-  'settings.option.parallel': 'Parallel ×2',
+
+
   'settings.option.auto': 'Automatic',
-  'settings.option.on_demand': 'On demand',
-  'settings.option.watching': 'Watching',
-  'settings.option.self_aware': 'Self-aware',
-  'settings.option.wallpaper_surface': 'Wallpaper surface',
-  'settings.option.region': 'Region',
-  'settings.option.buffered': 'Buffered WAV · compatible',
-  'settings.option.openai_sse': 'OpenAI SSE · streaming PCM',
-  'settings.option.off': 'Off', 'settings.option.source': 'Source', 'settings.option.bilingual': 'Bilingual', 'settings.option.translated': 'Translated',
-  'settings.option.deepseek': 'DeepSeek', 'settings.option.openai': 'OpenAI', 'settings.option.gemini': 'Gemini',
+
+
+
+
+
+
+
+  'settings.option.source': 'Source',
+  'settings.option.deepseek': 'DeepSeek',
   'settings.status.registered': 'Registered', 'settings.status.active': 'ACTIVE',
-  'settings.status.unavailable': 'Unavailable',
+
   'settings.status.configured': 'Configured',
   'settings.status.needs_setup': 'Needs setup',
-  'settings.status.available': 'Available',
-  'settings.status.disabled': 'Disabled',
+
+
   'settings.status.not_installed': 'Not installed',
   'settings.status.remote': 'Remote',
-  'settings.status.enabled': 'Enabled',
-  'settings.status.no_access': 'No access',
+
+
   'settings.status.none': 'None',
-  'settings.status.not_bound': 'Not bound',
-  'settings.status.no_active_binding': 'No active Provider binding',
-  'settings.status.work_providers_only': 'Work Providers only',
-  'settings.kind.mcp': 'MCP',
-  'settings.kind.skill': 'Skill',
-  'settings.capability.consumers': 'Consumers:',
-  'settings.capability.scope': 'Scope:',
-  'settings.capability.projection': 'Projection:',
-  'settings.capability.source': 'Source:',
-  'settings.capability.no_binding': 'No active Provider binding',
-  'settings.capability.none': 'None',
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -307,8 +307,8 @@ const ZH: Messages = {
   'settings.label.current_model': '当前模型配置',
   'settings.avatar.user': '你的头像', 'settings.avatar.user_detail': '显示在你的消息旁', 'settings.avatar.assistant': '红莉栖头像', 'settings.avatar.assistant_detail': '显示在 Amadeus 回复旁', 'settings.avatar.opening': '正在打开…', 'settings.avatar.replace': '替换', 'settings.avatar.choose': '选择图片', 'settings.avatar.restore': '恢复默认 {name}', 'settings.avatar.note': '应用会在本地资源中保存居中的 PNG 副本，不会修改原始文件。', 'settings.avatar.load_error': '无法加载聊天头像', 'settings.avatar.save_error': '无法保存头像', 'settings.avatar.restore_error': '无法恢复默认头像',
 
-  'settings.option.english': 'English', 'settings.option.chinese': '简体中文', 'settings.option.japanese': '日本語', 'settings.option.cuda_graph': 'CUDA Graph ×1', 'settings.option.parallel': '并行 ×2', 'settings.option.auto': '自动', 'settings.option.on_demand': '按需', 'settings.option.watching': '监看', 'settings.option.self_aware': '自感知', 'settings.option.wallpaper_surface': '壁纸表面', 'settings.option.region': '区域', 'settings.option.buffered': '缓冲 WAV · 兼容', 'settings.option.openai_sse': 'OpenAI SSE · 流式 PCM',
-  'settings.status.registered': '已注册', 'settings.status.unavailable': '不可用', 'settings.status.configured': '已配置', 'settings.status.needs_setup': '需要设置', 'settings.status.available': '可用', 'settings.status.disabled': '已禁用', 'settings.status.not_installed': '未安装', 'settings.status.remote': '远程', 'settings.status.enabled': '已启用', 'settings.status.no_access': '无访问权限', 'settings.status.none': '无', 'settings.status.not_bound': '未绑定', 'settings.status.no_active_binding': '没有活动的提供方绑定', 'settings.status.work_providers_only': '仅限工作提供方', 'settings.kind.mcp': 'MCP', 'settings.kind.skill': '技能', 'settings.capability.consumers': '使用方：', 'settings.capability.scope': '范围：', 'settings.capability.projection': '投影：', 'settings.capability.source': '来源：', 'settings.capability.no_binding': '没有活动的提供方绑定', 'settings.capability.none': '无',
+  'settings.option.english': 'English', 'settings.option.chinese': '简体中文', 'settings.option.japanese': '日本語', 'settings.option.auto': '自动',
+  'settings.status.registered': '已注册', 'settings.status.configured': '已配置', 'settings.status.needs_setup': '需要设置', 'settings.status.not_installed': '未安装', 'settings.status.remote': '远程', 'settings.status.none': '无',
   'settings.status.active': '活动',
 
   'chat.error.decode_image': '无法解码图片', 'chat.error.read_image': '无法读取图片', 'chat.error.choose_image': '请选择图片文件。', 'chat.error.canvas': '画布不可用。', 'chat.error.send_failed': '发送失败：后端不可达', 'chat.error.attach_image': '无法附加图片', 'chat.error.create_session': '无法创建会话', 'chat.error.create_project_chat': '无法创建项目聊天', 'chat.error.select_project_directory': '无法选择项目目录', 'chat.error.create_project': '无法创建项目', 'chat.error.load_project_apps': '无法加载项目应用', 'chat.error.load_draft_apps': '无法加载最近的 Draft 应用', 'chat.error.open_artifact_chat': '无法打开 Artifact 对话', 'chat.error.prepare_auip': '无法准备 AUIP 应用', 'chat.error.launch_descriptor': '主机未返回完整的 AUIP 启动描述。', 'chat.error.host_refused': '桌面主机拒绝了 AUIP 应用。', 'chat.error.promote_draft_app': '无法提升 Draft 应用', 'chat.error.move_chat': '无法移动聊天', 'chat.error.promote_draft': '无法提升 Draft', 'chat.error.delete_session': '无法删除会话', 'chat.error.rename_session': '无法重命名会话',
@@ -353,8 +353,8 @@ const JA: Messages = {
   'settings.asset.installed': 'インストール済み', 'settings.asset.incomplete': '不完全', 'settings.asset.invalid': '無効なパッケージ', 'settings.asset.not_installed': '未インストール', 'settings.asset.visual_content': '環境レイヤー、字幕、シナリオメディア、壁紙音声アセットが利用できます。', 'settings.asset.visual_optional': 'オプションです。内蔵壁紙、Chat、Work、ヘッドレスモードはなくても利用できます。', 'settings.asset.character_optional': 'オプションです。このパッケージがなくても Chat、Work、ヘッドレスモードは利用できます。', 'settings.label.visual_pack': 'ビジュアルランタイムパック', 'settings.label.character_pack': '紅莉栖キャラクターパック',
   'settings.asset.visual_attention': 'オプションのビジュアルパックに要確認事項があります：{detail}', 'settings.asset.character_attention': 'オプションパッケージが不完全です：{detail}', 'settings.asset.clips': 'クリップ', 'settings.validation_failed': '検証に失敗しました', 'settings.restart_error': 'バックエンドの再起動に失敗しました', 'settings.restart_unowned': 'このバックエンドは本アプリが起動したものではないため、ここから再起動できません。起動した場所で再起動してください。', 'settings.provider_needs_key': '{provider} の API キーが未設定です。下で入力すると反映されます。',
   'settings.label.interface_language': 'インターフェース言語', 'settings.label.chat_translation': 'チャット翻訳字幕', 'settings.label.current_model': '現在のモデルプロファイル',
-  'settings.option.english': 'English', 'settings.option.chinese': '简体中文', 'settings.option.japanese': '日本語', 'settings.option.cuda_graph': 'CUDA Graph ×1', 'settings.option.parallel': '並列 ×2', 'settings.option.auto': '自動', 'settings.option.on_demand': 'オンデマンド', 'settings.option.watching': '監視', 'settings.option.self_aware': '自己認識', 'settings.option.wallpaper_surface': '壁紙サーフェス', 'settings.option.region': '範囲', 'settings.option.custom': 'カスタム', 'settings.option.buffered': 'バッファー WAV · 互換', 'settings.option.openai_sse': 'OpenAI SSE · ストリーミング PCM',
-  'settings.status.registered': '登録済み', 'settings.status.unavailable': '利用不可', 'settings.status.configured': '設定済み', 'settings.status.needs_setup': '設定が必要', 'settings.status.available': '利用可能', 'settings.status.disabled': '無効', 'settings.status.not_installed': '未インストール', 'settings.status.remote': 'リモート', 'settings.status.enabled': '有効', 'settings.status.no_access': 'アクセスなし', 'settings.status.none': 'なし', 'settings.status.not_bound': '未バインド', 'settings.status.no_active_binding': '有効な Provider バインドなし', 'settings.status.work_providers_only': 'Work Provider のみ', 'settings.kind.mcp': 'MCP', 'settings.kind.skill': 'Skill', 'settings.capability.consumers': '利用者：', 'settings.capability.scope': '範囲：', 'settings.capability.projection': '投影：', 'settings.capability.source': 'ソース：', 'settings.capability.no_binding': '有効な Provider バインドなし', 'settings.capability.none': 'なし',
+  'settings.option.english': 'English', 'settings.option.chinese': '简体中文', 'settings.option.japanese': '日本語', 'settings.option.auto': '自動',
+  'settings.status.registered': '登録済み', 'settings.status.configured': '設定済み', 'settings.status.needs_setup': '設定が必要', 'settings.status.not_installed': '未インストール', 'settings.status.remote': 'リモート', 'settings.status.none': 'なし',
   'settings.status.active': '有効',
 
   'chat.error.decode_image': '画像をデコードできません', 'chat.error.read_image': '画像を読み込めません', 'chat.error.choose_image': '画像ファイルを選択してください。', 'chat.error.canvas': 'キャンバスを利用できません。', 'chat.error.send_failed': '送信失敗：バックエンドに接続できません', 'chat.error.attach_image': '画像を添付できません', 'chat.error.create_session': 'セッションを作成できません', 'chat.error.create_project_chat': 'Project チャットを作成できません', 'chat.error.select_project_directory': 'Project ディレクトリを選択できません', 'chat.error.create_project': 'Project を作成できません', 'chat.error.load_project_apps': 'Project アプリを読み込めません', 'chat.error.load_draft_apps': '最近の Draft アプリを読み込めません', 'chat.error.open_artifact_chat': 'Artifact 会話を開けません', 'chat.error.prepare_auip': 'AUIP アプリを準備できません', 'chat.error.launch_descriptor': 'Host が完全な AUIP 起動記述子を返しませんでした。', 'chat.error.host_refused': 'デスクトップ Host が AUIP アプリを拒否しました。', 'chat.error.promote_draft_app': 'Draft アプリを Project に昇格できません', 'chat.error.move_chat': 'チャットを移動できません', 'chat.error.promote_draft': 'Draft を Project に昇格できません', 'chat.error.delete_session': 'セッションを削除できません', 'chat.error.rename_session': 'セッション名を変更できません',

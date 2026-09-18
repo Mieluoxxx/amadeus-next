@@ -6,7 +6,7 @@ C 档与合规项未动。
 清理结果（自基线 `57cafb4` 起的累计）：
 
 ```
-22 files changed, 365 insertions(+), 8958 deletions(-)
+29 files changed, 586 insertions(+), 9317 deletions(-)
 ```
 
 整体删除的文件（4 个）：
@@ -19,11 +19,15 @@ C 档与合规项未动。
 | 文件 | 前 | 后 | 处置 |
 |---|---|---|---|
 | `resources/render/web/crt_canvas_surface.js` | 5,198 | **0** | 整个文件删除 |
-| `resources/render/web/wallpaper_scene.js` | 2,445 | 659 | 删 scenarioRuntime / keyboardSfx / 运行时环境光生成器 / characterRuntime |
+| `resources/render/web/wallpaper_scene.js` | 2,445 | 663 | 删 scenarioRuntime / keyboardSfx / 运行时环境光生成器 / characterRuntime |
 | `resources/render/web/renderer.js` | 1,825 | 1,016 | 删 SpriteForgeRuntime fallback / Live2DRenderer / SubtitleOverlay / 旧 WS bridge |
-| `src/renderer/i18n/index.tsx` | 515 | 481 | 删 224 个孤儿键，SETTING_COPY 对齐主进程 schema |
-| `src/renderer/components/SettingsPage.tsx` | 1,147 | 977 | 删 `!nextRuntime` 全部分支 + providers/mcp/skills/legacy section |
-| `src/renderer/components/WorkPage.tsx` | 1,788 | 1,815 | mock 夹具改为 DEV 守卫的动态导入 |
+| `src/renderer/components/SettingsPage.tsx` | 1,147 | 887 | 删 `!nextRuntime` 全部分支、providers/mcp/skills/legacy section、13 处死声明 |
+| `src/renderer/i18n/index.tsx` | 515 | 504 | EN 412→151 键，三语孤儿 0 |
+| `src/renderer/env.d.ts` | 114 | 46 | 对齐 preload 实际暴露的桥 |
+| `src/renderer/components/WorkPage.tsx` | 1,788 | 1,811 | mock 夹具改 DEV 动态导入；删除指向不存在桥的 AUIP 启动调用 |
+| `src/renderer/components/scene/visualAttachment.ts` | 135 | 116 | 删孤儿导出 `visualProviderOptions` |
+| `src/renderer/components/scene/useSceneSession.ts` | 1,023 | 990 | 删只写不读的 `providerRequestRef` 及其 external 管道 |
+| `src/main/index.ts` | 681 | 675 | 删 `render.start`/`render.stop`/`expression.set_backend`/`capability.list` |
 
 验证：`npm run typecheck` ✓ · `npm test` 31/31 ✓ · `npm run build` ✓ ·
 `npm run test:electron` ✓（真实 IPC + PCM 播放 + 表情 cue + drain + stale 拒绝）。
@@ -75,6 +79,89 @@ preload 恒设 `window.__SALIERI_NEXT__ = true`，所以 `!nextRuntime` 恒为 `
 
 环境光预烘焙层、subtitle frame、角色包都被 `.gitignore` 排除。已在
 `resources/README.md` 明确写明为新克隆的前置条件，不再声称“clone 即可跑”。
+
+---
+
+## 第三批 · 删除后的死代码与声明对齐
+
+第二批清完后，用 `npx tsc --noEmit --noUnusedLocals --noUnusedParameters` 做死代码发现
+（`tsconfig` 本身未开启这两项，所以这是一次性扫描而非新增约束）。
+
+### 新暴露的死声明（SettingsPage 为主）
+
+删除 capability/MCP/vision 界面后，其依赖链整条变成死代码：
+
+- `visualProviderOptions` / `VISION_SCOPES` / `displayedVisionScope` / `handleVisionEnabled`
+- `SwitchCard`（唯一调用者是删掉的 vision 组）
+- `CapabilityCard` / `BoundaryNote`（能力与边界卡片）
+- `providerManifests` / `capabilityPackages` / `providerAvailability` 三个状态
+  —— 连带其唯一的 `provider.list` / `capability.list` 请求也删除
+- `sharedSkills` / `sharedMcpServers` / `capabilityConsumers` / `providerConfiguration`
+- 类型 `ProviderAvailability` / `ProviderManifest` / `CapabilityPackage` /
+  `CapabilityContribution` / `CapabilityBinding`
+- `ConfigurationCard`/`ConfigurationCollection` 的 `availability` 形参：它从未被任何
+  调用点传过（preload 不提供 provider 可用性列表），整条链路无害但一直是死的
+
+其余文件：`sceneLayout` 的 `MIN_FREE_RATIO` 与一个未用的 `covered` 解构；
+`characterPack` 循环里未用的 `id`；`ScenePage` 的 `debugEnabled` prop
+（连带 `NextApp` 的传参）。
+
+### 桥声明与实际不符
+
+`src/renderer/env.d.ts` 声明了一个远比现实宽的 `AmadeusAPI`（窗口控制、后端连接、
+MCP 增删、项目目录选择、`closeElectronSlice`、`openMacWallpaper`、全套 WorkPreview
+成员）。preload 实际只暴露 13 个成员。已把声明收缩到 preload 的真实面，
+并删除无人引用的 `WorkPreviewDescriptor` / `WorkPreviewIpcResult`。
+
+### `__SALIERI_NEXT__`
+
+preload 写入该标记、`types.d.ts` 声明它，但**唯一读者**是 SettingsPage 里刚删掉的
+`nextRuntime`。两侧一并删除。
+
+### 无人调用的 IPC
+
+`chat.abort`（有真实实现）与 `window.focus`（preload 使用）保留。
+`render.start` / `render.stop` / `expression.set_backend`（空实现，无调用者）与
+`capability.list`（返回硬编码 `{ packages: [] }`，唯一调用者已删）删除。
+
+### AUIP 启动路径
+
+`WorkPage` 的 AUIP 启动流程调用 `window.amadeus?.openAuipApp(...)`，而 preload
+**从未暴露**该方法；且主进程没有 `auip.attach.prepare` 处理器，`send()` 会返回
+`unsupported_method`。因此该流程必然失败，且失败信息是误导性的
+（“The host did not return an AUIP launch descriptor”）。已删除指向虚拟桥的调用，
+改为把主进程返回的错误原样上报（`update_error` 语义不变）。
+
+**遗留发现（未修）**：有 19 个 renderer 调用的方法主进程未实现（`auip.*`、
+`attention.*`、`provider.cancel/diff/status`、`work.accept/archive/focus/...` 等），
+主进程统一返回 `unsupported_method:<method>`。它们是 **work 管理面板的未实现后端**，
+不是不可达代码，删除等于移除整个 work 面板，因此保留并在此记录。
+
+### i18n 再扫描
+
+删除上述界面后重新扫描，去掉了 8 个真孤儿键（`settings.kind.*`、
+`settings.capability.*`），以及 57 条**不可达的动态键值**：
+`settings.option.*` 15 个（`cuda_graph`/`parallel`/`on_demand`/`watching`/`self_aware`/
+`wallpaper_surface`/`region`/`buffered`/`openai_sse`/`off`/`bilingual`/`translated`/
+`openai`/`gemini`/`custom`）与 `settings.status.*` 8 个，它们只被已删的选项数组或
+已删的可用性分支消费。
+
+最终：EN 151 / ZH 149 / JA 149 个键（原 412×3）；三语孤儿 **0**；
+被静态引用但缺失的键 **0**；ZH/JA 无回退缺口。仅 `chat.error.*` 作为运行时拼接族保留。
+
+### 其它清理
+
+- `dist/amadeus-assets/`（含 `crt_canvas_surface.js`、`electron_slice.html`、
+  `wallpaper.html`、`wallpaper_engine_bridge.js` 等已删文件的陈旧副本）与空目录
+  `dist/wasm/` 删除。`dist/` 是未跟踪的构建产物，`projectRoot()` 只解析
+  `process.resourcesPath` 或 `resources/`，因此删除不影响运行。
+- `resources/assets/audio/` 随键盘音效一并清空（该目录只剩被删的 wav）。
+- Provider 标签的 CSS 从 `select` 改为 `span`：改用 inline-flex 垂直居中，
+  去掉写死的 `line-height: 28px`（在 `max-height: 110px` 断点下会错位），
+  并删除对静态标签无意义的 `width: 90px` 断点规则。
+- `wallpaper_engine.html` 不再依赖宿主改写：脚本表内直接写 `/next/scene.js`（`type="module"`）
+  与 `/next/start.js`，`sceneHost.ts` 的三个 `.replace()` 与 `bridgePort`/`sliceHost`
+  参数一并删除。
 
 ---
 
@@ -180,8 +267,12 @@ renderer.js 提供:       getPixiApp / setSpriteViewportBounds / setSpriteViewpo
 
 ## 待决策项
 
-无。此前列为“半实现”的两项（MCP 编辑器、单选项 provider 选择器）已在第二批删除，
-它们依赖的主进程字段也一并移除。
+无产品决策阻塞项：MCP 编辑器、单选项 provider 选择器、standalone 宿主适配层
+均已在第二/三批删除。
+
+仅剩一项需主人确认的非阻塞项（见上文“遗留发现”）：
+19 个 renderer 调用、主进程未实现的 IPC 方法属于 work 管理面板的未实现后端，
+是保留待实现还是连同面板一起移除。
 
 ## 仅剩的清理项（非架构）
 

@@ -27,7 +27,7 @@
 | 语音识别 | `native/SpeechRecognizer.swift` | 连续麦克风 | 否（反向） | 已是原生，改 WASM 是降级 |
 | PCM Int16→Float32 + 末位字节拼接 | `src/scene/index.ts` 的 `pcm()` | 24kHz 下每块约数百~2400 样本，纯算术 | 否 | 边界拷贝（`postMessage` transfer）比循环本身更贵 |
 | Worklet 混音 + RMS | `src/scene/audioWorklet.ts`（70 行） | 每 128 帧一次拷贝 + 累加，`sampleRate/30` 上报 | 否 | 迁 WASM 不会引入额外消息边界（本就在音频渲染线程内），但工作量只有 128 帧拷贝 + RMS 累加，迁移成本高于收益 |
-| 环境光遮罩生成 | `wallpaper_scene.js:2224` `_buildAmbientFromBackground` | **280,026 px 逐像素 JS 循环 + 2 次全画布 blur** | **否** | 见 §2：应删/预烘焙，而不是加速 |
+| 环境光遮罩生成 | `wallpaper_scene.js` `_buildAmbientFromBackground` | **280,026 px 逐像素 JS 循环 + 2 次全画布 blur** | **否** | 已删（见 §2），改由预烘焙资源承担 |
 | 场景逐帧（扫描线 / 辉光） | `wallpaper_scene.js:2143` `tick` → `_drawGlow` / `_drawScanlineNoise` | 每帧 `clear()` + 重建 Graphics，约 100–230 段线 | 否 | GPU 几何，WASM 帮不上；该做的是缓存几何/纹理 |
 | 角色状态机 / EMO 词法 / 对齐时间轴 | `src/shared/character.ts`、`presentation.ts` | 微秒级、字符串规模 | 否 | 体量离热点差几个数量级 |
 | Markdown / diff 渲染 | React + `markdownLite` | DOM + 字符串 | 否 | 非数值负载 |
@@ -72,12 +72,18 @@
 
 ## 3. 连热点都算不上的地方（已核实，避免误判）
 
+> **历史记录注记**：本节及 §2 写于清理之前，其中涉及的
+> `crt_canvas_surface.js`、`scenarioRuntime`、`keyboardSfx`、Live2D 前景路径与
+> 旧 WS bridge **已在本轮清理中整体删除**（详见 `docs/architecture-redundancy.md`）。
+> 保留这些分析是因为它们的结论（这些都不需要 WASM）仍然成立，且其中的
+> “纹理流水线防卡顿切片”与“扫描线/辉光逐帧重建”两项仍在生产代码中。
+
 - **扫描线/辉光逐帧重建**：`_drawScanlineNoise` 每帧 `clear()` 后按 `bounds.height/3`
   重画。默认窗口 1100×800 下 CRT 高度约 291–377 CSS px → **约 100–125 段**；
   2560×1440 全屏（scale≈1.53）→ **约 226 段**。量级就是亚毫秒到 1–2 ms，
   真正的成本在 Pixi 每帧重新细分+上传顶点缓冲。只有窗口再大一个数量级才值得改成
   缓存纹理或自定义 shader，且仍与 WASM 无关。
-- **`crt_canvas_surface.js`（5197 行）在 Electron 路径中功能未实例化**：场景 URL 带
+- **`crt_canvas_surface.js`（5197 行）在 Electron 路径中功能未实例化**（历史）：场景 URL 带
   `sliceHost=electron`（`useSceneBridge.ts:173`）→ `_externalCanvasHost = true`
   （`wallpaper_scene.js:1777`）→ 1786 行的 `createCrtCanvasSurface()` 永不调用。
   注意它**不是**死文件：仍会被下载、解析，注册 IIFE（`window.createCrtCanvasSurface = ...`）
@@ -117,7 +123,7 @@ ONNX Runtime、WebGPU 在多数场景下比 WASM 更划算；WASM 只在沙箱/�
 ## 5. 如果要先测再改，按这个顺序
 
 1. **先修 §2 的 ambient 字段/资源发布策略**——这是本次唯一已确认的可执行问题。
-2. Electron 场景不再加载 `crt_canvas_surface.js`（纯省下载与解析）。
+2. ~~Electron 场景不再加载 `crt_canvas_surface.js`（纯省下载与解析）~~ —— 已完成：该文件已整体删除。
 3. 用 Chrome Performance 实测会话切换 / 表情爆发时 KTX2 转码的尖峰；**确认阻塞后**
    再考虑 Worker 化（转码本身已是 WASM，OffscreenCanvas 不是转码的必需条件）。
 4. 只有在 profile 显示 Pixi Graphics 逐帧重建确实显著时，才把扫描线/辉光改成

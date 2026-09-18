@@ -23,25 +23,6 @@ export function supportsDirectImage(provider: unknown): boolean {
   return MULTIMODAL_CHAT_PROVIDERS.has(String(provider ?? '').trim().toLowerCase())
 }
 
-/**
- * The `vision_provider` vocabulary. `auto` defers to the Main Chat provider;
- * the remaining entries are exactly the ids the runtime can attach a frame to,
- * so no listed choice can silently leave vision unavailable.
- */
-export function visualProviderOptions(autoLabel: string): Array<{ value: string; label: string }> {
-  const ids = ['openai-responses', 'openai-completions', 'anthropic-messages', 'google-gemini']
-  const labels: Record<string, string> = {
-    'openai-responses': 'OpenAI-Responses',
-    'openai-completions': 'OpenAI-Completions',
-    'anthropic-messages': 'Anthropic-Messages',
-    'google-gemini': 'Google-Gemini',
-  }
-  return [
-    { value: 'auto', label: autoLabel },
-    ...ids.filter(id => MULTIMODAL_CHAT_PROVIDERS.has(id)).map(id => ({ value: id, label: labels[id] })),
-  ]
-}
-
 export type VisualAttachment = {
   name: string
   mime: string

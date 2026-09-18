@@ -300,11 +300,7 @@ class AppRuntime {
       case 'wallpaper.start':
         return { ok: true, status: 'ready', url: this.scene.url }
       case 'wallpaper.stop':
-      case 'render.stop':
-      case 'expression.set_backend':
         return { ok: true }
-      case 'render.start':
-        return { ok: true, url: this.scene.url }
       case 'system.get_config':
         return { values: this.configSnapshot() }
       case 'system.set_config':
@@ -315,8 +311,6 @@ class AppRuntime {
         return this.updateDesktopSettings(params)
       case 'provider.list':
         return { provider_availability: [{ provider_id: 'pi', configured: !this.pi.error, ready: !this.pi.error, registered: true, reason: this.pi.error || 'ready' }], provider_manifests: [{ provider_id: 'pi', display_name: 'Pi', runtime_kind: 'embedded' }] }
-      case 'capability.list':
-        return { packages: [] }
       case 'session.list':
         return this.sessionPayload()
       case 'session.create':

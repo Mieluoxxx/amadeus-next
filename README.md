@@ -26,11 +26,18 @@ dev`. The intended sibling layout is `amadeus-space/Salieri/` and
 To create the macOS arm64 zip, run `npm run package:mac:zip`. The generated app is
 unsigned until a Developer ID certificate is supplied.
 
-Runtime resources are included in `resources/`: the complete character pack,
-room images, sound effect, renderer scripts, texture decoders, and CRT geometry.
-Development reads that directory; the macOS app bundles it as `amadeus-assets`.
-No external asset path is needed. The scene/settings components, localization,
-and styles are owned locally under `src/renderer/`.
+Runtime resources live under `resources/`, which the macOS app bundles as
+`amadeus-assets`: the character pack, room images, ambient layers, subtitle
+frame, renderer scripts, texture decoders, and CRT geometry. Development reads
+that directory directly, so no external asset path is needed once the directory
+is populated.
+
+Some of those media are deliberately not tracked by Git (the ambient layers,
+the subtitle frame, and the whole character pack), so **a fresh clone must be
+given the asset payload before a complete scene can run**. See
+`resources/README.md` for what is missing and how the runtime degrades without
+it. The scene/settings components, localization, and styles are owned locally
+under `src/renderer/`.
 
 The Fish credentials can be configured in the environment (`FISH_API_KEY`,
 `FISH_VOICE_ID`, and optionally `FISH_API_MODEL`) or in the scene settings.
@@ -51,10 +58,12 @@ messages through a validated MessageChannel; it does not schedule animation.
 Every turn has a session ID, turn ID, and generation. Switching sessions,
 stopping, or losing the scene invalidates old audio and callbacks.
 
-`src/shared/character.ts` contains the pure graph transition and one character
-behavior table. The existing Pixi drawing, lazy texture loading, authored clip
-timing, and mouth masks are reused. The main process loads all pack resources
-through `src/main/characterPack.ts`; no Python animation runtime is required.
+`src/scene/index.ts` runs the character state machine (transitions live in
+`src/shared/character.ts`) and drives the Pixi sprite driver in
+`resources/render/web/renderer.js` through an injected factory. The existing
+Pixi drawing, lazy texture loading, authored clip timing, and mouth masks are
+reused. The main process loads all pack resources through
+`src/main/characterPack.ts`; no Python animation runtime is required.
 
 Pi can annotate a phrase with `[EMO preset=smile]`. The incremental parser strips
 valid annotations before display and synthesis, preserves literal code, and

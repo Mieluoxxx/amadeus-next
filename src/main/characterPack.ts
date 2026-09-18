@@ -51,7 +51,7 @@ export function loadCharacter(root: string, urlPrefix: string): CharacterDefinit
       ;(result.edges[edge.from] ||= []).push({ to: edge.to, weight: edge.prob })
     }
     for (const [behavior, spec] of Object.entries(performances)) {
-      for (const [id, node] of Object.entries(result.nodes)) {
+      for (const node of Object.values(result.nodes)) {
         if (spec.entry.includes(node.label)) { node.kind = 'entry'; node.behavior = behavior }
         if (spec.speech.includes(node.label)) { node.kind = 'speech'; node.behavior = behavior }
       }

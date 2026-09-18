@@ -675,15 +675,18 @@ html.desktop-work-slice-window #root {
 .scene-composer-icon:hover:not(:disabled) { color: var(--text); background: #9bc7b812; }
 .scene-provider-control { flex: 0 0 auto; }
 .scene-provider-control span {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
   height: 30px;
-  line-height: 28px;
   padding: 0 8px;
   border: 1px solid var(--border);
   border-radius: 7px;
   color: var(--muted);
   background: rgba(159, 203, 189, 0.04);
   font: 11px var(--font-mono);
+  white-space: nowrap;
 }
 .scene-composer-spacer { flex: 1; }
 .scene-session-title { min-width: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10px; padding-left: 6px; }
@@ -723,7 +726,6 @@ html.desktop-work-slice-window #root {
 }
 @container scene-dock (max-width: 400px) {
   .scene-listening-label { display: none !important; }
-  .scene-provider-control span { width: 90px; }
   .scene-composer-toolbar { gap: 4px; }
 }
 @container scene-dock (max-height: 140px) {
