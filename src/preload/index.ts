@@ -44,4 +44,3 @@ contextBridge.exposeInMainWorld('amadeus', {
   openWorkOverlay: () => Promise.resolve(false),
   closeWorkOverlay: () => Promise.resolve(false),
 })
-

@@ -6,7 +6,7 @@ C 档与合规项未动。
 清理结果（自基线 `57cafb4` 起的累计）：
 
 ```
-29 files changed, 586 insertions(+), 9317 deletions(-)
+29 files changed, 602 insertions(+), 9317 deletions(-)
 ```
 
 整体删除的文件（4 个）：
@@ -18,7 +18,7 @@ C 档与合规项未动。
 
 | 文件 | 前 | 后 | 处置 |
 |---|---|---|---|
-| `resources/render/web/crt_canvas_surface.js` | 5,198 | **0** | 整个文件删除 |
+| `resources/render/web/crt_canvas_surface.js` | 5,197 | **0** | 整个文件删除 |
 | `resources/render/web/wallpaper_scene.js` | 2,445 | 663 | 删 scenarioRuntime / keyboardSfx / 运行时环境光生成器 / characterRuntime |
 | `resources/render/web/renderer.js` | 1,825 | 1,016 | 删 SpriteForgeRuntime fallback / Live2DRenderer / SubtitleOverlay / 旧 WS bridge |
 | `src/renderer/components/SettingsPage.tsx` | 1,147 | 887 | 删 `!nextRuntime` 全部分支、providers/mcp/skills/legacy section、13 处死声明 |
@@ -26,7 +26,7 @@ C 档与合规项未动。
 | `src/renderer/env.d.ts` | 114 | 46 | 对齐 preload 实际暴露的桥 |
 | `src/renderer/components/WorkPage.tsx` | 1,788 | 1,811 | mock 夹具改 DEV 动态导入；删除指向不存在桥的 AUIP 启动调用 |
 | `src/renderer/components/scene/visualAttachment.ts` | 135 | 116 | 删孤儿导出 `visualProviderOptions` |
-| `src/renderer/components/scene/useSceneSession.ts` | 1,023 | 990 | 删只写不读的 `providerRequestRef` 及其 external 管道 |
+| `src/renderer/components/scene/useSceneSession.ts` | 1,023 | 995 | 删只写不读的 `providerRequestRef` 及其 external 管道 |
 | `src/main/index.ts` | 681 | 675 | 删 `render.start`/`render.stop`/`expression.set_backend`/`capability.list` |
 
 验证：`npm run typecheck` ✓ · `npm test` 31/31 ✓ · `npm run build` ✓ ·
@@ -80,6 +80,16 @@ preload 恒设 `window.__SALIERI_NEXT__ = true`，所以 `!nextRuntime` 恒为 `
 环境光预烘焙层、subtitle frame、角色包都被 `.gitignore` 排除。已在
 `resources/README.md` 明确写明为新克隆的前置条件，不再声称“clone 即可跑”。
 
+第三批提交 `a369665` 自身：`17 files changed, 188 insertions(+), 363 deletions(-)`。
+
+三批分布：
+
+| 提交 | 文件 | 增 | 删 |
+|---|---|---|---|
+| `8b04949` 场景 legacy 路径 | 11 | 310 | 8,178 |
+| `99619cd` 宿主适配层与 React 壳 | 16 | 142 | 814 |
+| `a369665` 死声明与桥对齐 | 17 | 188 | 363 |
+
 ---
 
 ## 第三批 · 删除后的死代码与声明对齐
@@ -132,10 +142,41 @@ preload 写入该标记、`types.d.ts` 声明它，但**唯一读者**是 Settin
 （“The host did not return an AUIP launch descriptor”）。已删除指向虚拟桥的调用，
 改为把主进程返回的错误原样上报（`update_error` 语义不变）。
 
-**遗留发现（未修）**：有 19 个 renderer 调用的方法主进程未实现（`auip.*`、
-`attention.*`、`provider.cancel/diff/status`、`work.accept/archive/focus/...` 等），
-主进程统一返回 `unsupported_method:<method>`。它们是 **work 管理面板的未实现后端**，
-不是不可达代码，删除等于移除整个 work 面板，因此保留并在此记录。
+### 遗留发现（需主人定夺，未动）
+
+主进程 `request()` 的 `default` 分支对所有未列出的方法统一返回
+`{ ok: false, error: 'unsupported_method:<method>' }`。当前有 **19 个方法、22 个调用点**
+落在这个分支上：
+
+| 方法 | 调用点 |
+|---|---|
+| `attention.list` | `WorkPage.tsx:720` |
+| `attention.resolve` | `WorkPage.tsx:942` |
+| `auip.attach.prepare` | `WorkPage.tsx:538` |
+| `auip.leave` | `WorkPage.tsx:1320` |
+| `auip.mode.set` | `WorkPage.tsx:1306` |
+| `auip.step` | `WorkPage.tsx:1313` |
+| `provider.cancel` | `WorkPage.tsx:1059` |
+| `provider.diff` | `WorkPage.tsx:575` |
+| `provider.status` | `WorkPage.tsx:1081` |
+| `work.accept` | `WorkPage.tsx:906` |
+| `work.archive` | `WorkPage.tsx:924` |
+| `work.focus` | `WorkPage.tsx:600`、`781`、`818`，`ScenePage.tsx:205` |
+| `work.project.state` | `WorkPage.tsx:886` |
+| `work.promote` | `WorkPage.tsx:868` |
+| `work.reopen` | `WorkPage.tsx:844` |
+| `work.resume` | `WorkPage.tsx:991` |
+| `work.retry` | `WorkPage.tsx:966` |
+| `work.start` | `WorkPage.tsx:1031` |
+
+注意这不是“不可达代码”：这些控件在 UI 上可点、可到达，只是后端从未实现。
+删除它们等于移除整个 work 管理面板（共 18/22 个调用点），而 `work.focus` 还被
+场景页（`ScenePage.tsx:205`）使用，影响面超出 WorkPage。
+
+因此**未动**，需要主人二选一：
+
+1. **移除这些控件及其依赖的类型/文案**（work 面板仅保留已实现的只读部分）；
+2. **保留为未来实现的契约**，但应至少让失败可见（现在多数调用静默吞掉 `ok:false`）。
 
 ### i18n 再扫描
 
@@ -270,9 +311,9 @@ renderer.js 提供:       getPixiApp / setSpriteViewportBounds / setSpriteViewpo
 无产品决策阻塞项：MCP 编辑器、单选项 provider 选择器、standalone 宿主适配层
 均已在第二/三批删除。
 
-仅剩一项需主人确认的非阻塞项（见上文“遗留发现”）：
-19 个 renderer 调用、主进程未实现的 IPC 方法属于 work 管理面板的未实现后端，
-是保留待实现还是连同面板一起移除。
+仅剩一项需主人确认的非阻塞项：§第三批“遗留发现”列出的 19 个
+“renderer 调用、主进程未实现”的 IPC 方法（work 管理面板与 AUIP 的未实现后端）。
+要么按下文选项 1 移除控件，要么按下文选项 2 保留契约。
 
 ## 仅剩的清理项（非架构）
 
