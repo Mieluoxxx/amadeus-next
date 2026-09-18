@@ -3,7 +3,7 @@
 状态：**A 档与 B 档已执行完成**（基线 commit `57cafb4`，全部改动可 `git diff` 复核）。
 C 档与合规项未动。
 
-清理结果（自基线 `57cafb4` 起的累计）：
+清理结果（代码提交，基线 `57cafb4` → `a369665`；本文档自身的增行不在内）：
 
 ```
 29 files changed, 602 insertions(+), 9317 deletions(-)
