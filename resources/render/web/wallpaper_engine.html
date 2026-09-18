@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Amadeus Wallpaper Engine Scene</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      /* The asset server is rooted at the project root, so the fallback art is
+         addressed from there. A relative "../assets/..." resolved to
+         /render/assets/... and 404'd both in the desktop host and in the
+         in-window scene. */
+      background: #05070b url("/assets/images/amadeus_desktop_wallpaper.png") center/cover no-repeat;
+    }
+    #canvas-container {
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+    /* 确保 Pixi 创建的 canvas 不遮挡 body 背景图 */
+    #canvas-container canvas {
+      background: transparent !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+
+  <script>
+    (function () {
+      window.__DISABLE_RENDERER_SUBTITLE__ = true;
+      window.__DISABLE_RENDERER_WS__ = true;
+      var live2dValue = String(new URLSearchParams(window.location.search).get("live2d") || "").toLowerCase();
+      var live2dCompatEnabled = ["1", "true", "yes", "on"].indexOf(live2dValue) >= 0;
+      var SCRIPTS = [
+        "/render/web/vendor/pixi.min.js",
+        "/render/web/vendor/pixi-basis-ktx2.global.js"
+      ];
+      if (live2dCompatEnabled) {
+        SCRIPTS.push(
+          "/render/web/vendor/live2dcubismcore.min.js",
+          "/render/web/vendor/pixi-live2d-display.cubism4.min.js"
+        );
+      }
+      SCRIPTS.push(
+        "/render/web/renderer.js",
+        "/render/web/crt_canvas_surface.js",
+        "/render/web/wallpaper_scene.js",
+        "/render/web/wallpaper_engine_bridge.js"
+      );
+      var CACHE_BUST = String(Date.now());
+
+      function loadAt(i) {
+        if (i >= SCRIPTS.length) return;
+        var s = document.createElement("script");
+        var src = SCRIPTS[i];
+        if (src.indexOf("/render/web/vendor/") !== 0) {
+          src += "?v=" + CACHE_BUST;
+        }
+        s.src = src;
+        s.onload = function () { loadAt(i + 1); };
+        s.onerror = function () {
+          console.error("[WallpaperEngineLoader] failed to load: " + SCRIPTS[i]);
+          loadAt(i + 1);
+        };
+        document.head.appendChild(s);
+      }
+
+      loadAt(0);
+    })();
+  </script>
+
+  <script>
+    // Embedded readiness reporter.
+    //
+    // When the Amadeus main window embeds this page in an iframe, the parent
+    // cannot inspect this document (different origin). The parent therefore
+    // needs an explicit signal that the scene actually rendered, not just that
+    // the URL loaded. The probe below is the same condition the macOS desktop
+    // host already uses, so "ready" keeps one definition.
+    (function () {
+      if (window.parent === window) return;
+      var attempts = 0;
+      var reported = false;
+      // Readiness must mean "the scene actually rendered": the background
+      // texture is valid, the authored CRT polygon produced bounds, and the
+      // Pixi canvas exists with a non-zero box. A visible iframe element, or a
+      // canvas that never got a texture, is not a rendered scene.
+      function ready() {
+        var app = window.wallpaperApp;
+        if (!app || !app.scene) return false;
+        var scene = app.scene;
+        var bounds = scene._crtBounds;
+        if (!bounds || !(bounds.width > 0) || !(bounds.height > 0)) return false;
+        var texture = scene.bg && scene.bg.texture;
+        if (!texture || !texture.baseTexture || texture.baseTexture.valid !== true) return false;
+        if (!scene.backgroundUrl) return false;
+        var canvas = document.querySelector("#canvas-container canvas");
+        if (!canvas) return false;
+        var box = canvas.getBoundingClientRect();
+        return box.width > 0 && box.height > 0;
+      }
+      // The parent generates a per-load token and appends it to this page's URL.
+      // Echoing it back lets the parent reject a delayed message from an earlier
+      // load, which shares the same origin and the same frame identity.
+      var loadToken = "";
+      try {
+        loadToken = String(new URLSearchParams(window.location.search).get("sceneLoadToken") || "");
+      } catch (err) {
+        loadToken = "";
+      }
+      // "The scene rendered" and "the character is drawn" are separate facts and
+      // are reported separately. The scene can be perfect while the character
+      // sprite has no valid texture yet; the user asked for the character to be
+      // always visible, so the parent must be able to tell the difference rather
+      // than assume a rendered room means Amadeus is there.
+      // "Is Amadeus drawn?" is about the sprite's live Pixi state, not the URL
+      // or the scene: the sprite must be visible, not transparent, and holding a
+      // valid texture whose source has real pixels. Display size is derived from
+      // that texture (the renderer sets scale, not width/height), so the texture
+      // dimensions are what prove there is something to see.
+      function characterDrawn() {
+        var renderer = window.renderApp;
+        var spriteRenderer = renderer && renderer._sprite;
+        var sprite = spriteRenderer && spriteRenderer.sprite;
+        if (!sprite) return false;
+        if (sprite.visible === false) return false;
+        if (!(Number(sprite.alpha) > 0)) return false;
+        var texture = sprite.texture;
+        if (!texture) return false;
+        var base = texture.baseTexture;
+        if (!base || base.valid !== true || base.destroyed === true) return false;
+        var source = base.resource;
+        var sourceWidth = source ? Number(source.width || source.naturalWidth || 0) : 0;
+        var sourceHeight = source ? Number(source.height || source.naturalHeight || 0) : 0;
+        var width = Number(texture.width || base.width || sourceWidth || 0);
+        var height = Number(texture.height || base.height || sourceHeight || 0);
+        return width > 1 && height > 1;
+      }
+      function report(status) {
+        if (reported && status === "ready") return;
+        if (status === "ready") reported = true;
+        // What the page last told its parent. Cheap, non-sensitive, and the only
+        // way to tell "the character is absent" apart from "the report never
+        // happened" when something looks wrong in the window.
+        try {
+          window.__sceneLastReport = {
+            status: status,
+            character: characterDrawn(),
+            token: loadToken,
+            at: Date.now(),
+          };
+        } catch (err) {
+          /* diagnostics must never break the page */
+        }
+        try {
+          window.parent.postMessage(
+            {
+              source: "amadeus-scene",
+              status: status,
+              sceneLoadToken: loadToken,
+              character: characterDrawn(),
+            },
+            "*"
+          );
+        } catch (err) {
+          /* the parent may already be gone */
+        }
+      }
+      function poll() {
+        attempts += 1;
+        if (ready()) {
+          report("ready");
+          return;
+        }
+        if (attempts >= 120) {
+          report("failed");
+          return;
+        }
+        window.setTimeout(poll, 100);
+      }
+      window.addEventListener("error", function () { report("failed"); });
+      poll();
+
+      // Frames arrive after the scene is ready, so the character's appearance is
+      // a later event the parent still needs. Report on change only.
+      var lastCharacter = null;
+      window.setInterval(function () {
+        if (!reported) return;
+        var drawn = characterDrawn();
+        if (drawn === lastCharacter) return;
+        lastCharacter = drawn;
+        report("character");
+      }, 500);
+    })();
+  </script>
+</body>
+</html>
