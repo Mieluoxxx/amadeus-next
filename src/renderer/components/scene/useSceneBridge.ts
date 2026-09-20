@@ -300,6 +300,7 @@ export function useSceneBridge({
       return
     }
     void start()
+    const unsubscribeReload = subscribe('scene.reload', () => { void startRef.current() })
     const unsubscribeReady = subscribe('wallpaper.ready', () => {
       // The host announced readiness; if this hook has no validated URL yet,
       // ask again. Read the URL from a ref so the handler never acts on a stale
@@ -316,6 +317,7 @@ export function useSceneBridge({
       void startRef.current()
     })
     return () => {
+      unsubscribeReload()
       unsubscribeReady()
       unsubscribeExited()
     }

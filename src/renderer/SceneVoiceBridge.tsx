@@ -15,7 +15,7 @@ export default function SceneVoiceBridge({ runtime }: { runtime: NextRuntime }) 
     const disconnect = () => {
       connection++; ready = false
       port?.close(); port = null
-      if (frame) void send('scene.lost').catch(() => {})
+      if (frame) void send('scene.lost', { token }).catch(() => {})
       frame = null
     }
     const connect = (event: MessageEvent) => {
@@ -34,10 +34,11 @@ export default function SceneVoiceBridge({ runtime }: { runtime: NextRuntime }) 
         if (current !== connection) return
         const value = message.data
         if (value?.type === 'connected') {
-          void send('scene.ready').then(result => {
+          void send('scene.ready', { token: loadToken }).then(result => {
             if (current !== connection || !isTurnKey(result.key)) return
             ready = true
             port?.postMessage({ ...result.key, type: 'reset' })
+            if (result.text) port?.postMessage({ ...result.key, type: 'text', value: { text: String(result.text), cues: [] } })
           }).catch(reason => setError(String(reason)))
         } else if (value?.type === 'lost') disconnect()
         else if (isTurnKey(value) && 'type' in value && typeof value.type === 'string' && ['playing', 'buffering', 'ended', 'error'].includes(value.type)) {
@@ -58,12 +59,21 @@ export default function SceneVoiceBridge({ runtime }: { runtime: NextRuntime }) 
       } else port.postMessage(event)
     })
     const removeError = subscribe('tts.error', payload => setError(String(payload.error || '语音播放不可用')))
+    const removeReload = subscribe('runtime.reload', payload => {
+      if (payload.status === 'error') setError(String(payload.error || 'Runtime reload failed'))
+      else if (payload.status === 'ready') setError('')
+    })
     const observer = new MutationObserver(() => {
       if (frame && (!frame.isConnected || new URL(frame.src).searchParams.get('sceneLoadToken') !== token)) disconnect()
     })
     observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] })
     window.addEventListener('message', connect)
-    return () => { observer.disconnect(); remove(); removeError(); window.removeEventListener('message', connect); disconnect() }
+    const existingFrame = document.querySelector<HTMLIFrameElement>('iframe[data-testid="scene-frame"]')
+    if (existingFrame?.src) {
+      const url = new URL(existingFrame.src)
+      existingFrame.contentWindow?.postMessage({ type: 'salieri.probe', sceneLoadToken: url.searchParams.get('sceneLoadToken') }, url.origin)
+    }
+    return () => { observer.disconnect(); remove(); removeError(); removeReload(); window.removeEventListener('message', connect); disconnect() }
   }, [send, subscribe])
   return error ? <div role="status" style={{ position: 'fixed', bottom: 12, left: 12, zIndex: 100, maxWidth: '80%', padding: 8, color: '#ffd8cd', background: '#221c20ed' }}>{error}</div> : null
 }

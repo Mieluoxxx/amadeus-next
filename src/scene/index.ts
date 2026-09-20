@@ -24,6 +24,7 @@ let calibration: Calibration = { mouthGain: 8, silenceThreshold: 0.08, syncOffse
 let context: AudioContext | null = null
 let worklet: AudioWorkletNode | null = null
 let preparing: Promise<void> | null = null
+let audioEpoch = 0
 let pending: { generation: number; samples: Float32Array<ArrayBuffer> }[] = []
 let inputEnded = false
 let trailingByte: number | null = null
@@ -36,6 +37,7 @@ Object.defineProperty(host, '__salieriPlayback', { get: () => ({
   status: playbackStatus, audioState: context?.state, audioTime: context?.currentTime,
   outputTime: context?.getOutputTimestamp?.().contextTime, pending: pending.length,
   reports: reports.length, inputEnded, failed, workletReady: !!worklet, generation: key?.generation,
+  calibration: { ...calibration },
 }) })
 
 function diagnostic(message: string): void {
@@ -88,7 +90,17 @@ function failAudio(error: unknown): void {
   if (failed) return
   failed = true; speech = false
   pending = []; reports = []; trailingByte = null
-  worklet?.port.postMessage({ type: 'reset', generation: key?.generation ?? -1 })
+  audioEpoch++
+  const previousContext = context
+  if (worklet) {
+    worklet.onprocessorerror = null
+    worklet.port.onmessage = null
+    worklet.port.close()
+    worklet.disconnect()
+  }
+  worklet = null; context = null; preparing = null
+  if (previousContext && previousContext.state !== 'closed') void previousContext.close().catch(() => {})
+  document.getElementById('salieri-enable-audio')?.remove()
   sprite?.setMouth(0)
   dispatch({ type: 'reset' })
   diagnostic(`语音播放不可用：${String(error)}`)
@@ -96,9 +108,7 @@ function failAudio(error: unknown): void {
 }
 
 async function prepareAudio(): Promise<void> {
-  const resume = async () => {
-    if (!context) return
-    const audio = context
+  const resume = async (audio: AudioContext) => {
     const resumed = new Promise<void>((resolve, reject) => {
       const changed = () => {
         if (audio.state === 'running' || audio.state === 'closed') {
@@ -110,38 +120,45 @@ async function prepareAudio(): Promise<void> {
       void audio.resume().then(changed, error => { audio.removeEventListener('statechange', changed); reject(error) })
       changed()
     })
-    if (context.state === 'suspended' && !document.getElementById('salieri-enable-audio')) {
+    if (audio.state === 'suspended' && !document.getElementById('salieri-enable-audio')) {
       const button = document.createElement('button')
       button.id = 'salieri-enable-audio'; button.textContent = '启用声音'
       Object.assign(button.style, { position: 'absolute', bottom: '12px', right: '12px', padding: '10px', zIndex: '101' })
-      button.onclick = () => { void context?.resume().catch(failAudio) }
+      button.onclick = () => { void audio.resume().catch(error => { if (context === audio) failAudio(error) }) }
       document.body.append(button)
-      context.addEventListener('statechange', () => { if (context?.state === 'running') button.remove() })
+      audio.addEventListener('statechange', () => { if (audio.state === 'running' || audio.state === 'closed') button.remove() })
     }
     await resumed
   }
-  if (worklet) { await resume(); return }
+  if (worklet && context) { await resume(context); return }
   if (preparing) return preparing
-  preparing = (async () => {
-    context = new AudioContext({ sampleRate: 24000 })
-    if (context.sampleRate !== 24000) throw new Error('The audio device did not accept 24 kHz playback')
+  const epoch = audioEpoch
+  const audio = new AudioContext({ sampleRate: 24000 })
+  context = audio
+  const preparation = (async () => {
+    if (audio.sampleRate !== 24000) throw new Error('The audio device did not accept 24 kHz playback')
     // Activate before loading the worklet: a suspended context can defer its render thread.
-    await resume()
-    await context.audioWorklet.addModule('/next/audio-worklet.js')
-    worklet = new AudioWorkletNode(context, 'salieri-pcm')
-    worklet.connect(context.destination)
-    worklet.onprocessorerror = () => failAudio('Audio processor stopped')
+    await resume(audio)
+    if (epoch !== audioEpoch) return
+    await audio.audioWorklet.addModule('/next/audio-worklet.js')
+    if (epoch !== audioEpoch) return
+    worklet = new AudioWorkletNode(audio, 'salieri-pcm')
+    worklet.connect(audio.destination)
+    worklet.onprocessorerror = () => { if (epoch === audioEpoch) failAudio('Audio processor stopped') }
     worklet.port.onmessage = event => {
-      if (!key || event.data.generation !== key.generation || failed) return
+      if (epoch !== audioEpoch || !key || event.data.generation !== key.generation || failed || !speech) return
       if (event.data.type === 'error') { failAudio(event.data.error); return }
       reports.push(event.data)
     }
     worklet.port.postMessage({ type: 'reset', generation: key?.generation ?? -1 })
     for (const item of pending.splice(0)) if (item.generation === key?.generation && !failed) worklet.port.postMessage({ type: 'pcm', generation: item.generation, buffer: item.samples.buffer }, [item.samples.buffer])
     if (inputEnded) worklet.port.postMessage({ type: 'end', generation: key?.generation })
-    await resume()
+    await resume(audio)
+    const notice = document.getElementById('salieri-diagnostic')
+    if (epoch === audioEpoch && notice?.textContent?.startsWith('语音播放不可用：')) notice.remove()
   })()
-  try { await preparing } finally { preparing = null }
+  preparing = preparation
+  try { await preparation } finally { if (preparing === preparation) preparing = null }
 }
 
 function pcm(bytes: Uint8Array): void {
@@ -159,6 +176,12 @@ function pcm(bytes: Uint8Array): void {
 
 function receive(event: VoiceEvent): void {
   if (!isTurnKey(event)) return
+  if (event.type === 'calibration') {
+    if (!sameTurn(key, event)) return
+    calibration = event.calibration
+    for (const [label, config] of Object.entries(definition.mouths)) sprite.loadMouthConfig(label, { ...config, silenceThreshold: calibration.silenceThreshold })
+    return
+  }
   if (event.type === 'begin' || event.type === 'reset') {
     if (key && event.generation < key.generation) return
     key = { sessionId: event.sessionId, turnId: event.turnId, generation: event.generation }
@@ -172,7 +195,8 @@ function receive(event: VoiceEvent): void {
       for (const [label, config] of Object.entries(definition.mouths)) sprite.loadMouthConfig(label, { ...config, silenceThreshold: calibration.silenceThreshold })
       if (speech) {
         dispatch({ type: 'playback', status: 'waiting', now: performance.now() })
-        void prepareAudio().catch(failAudio)
+        const epoch = audioEpoch
+        void prepareAudio().catch(error => { if (epoch === audioEpoch && sameTurn(key, event)) failAudio(error) })
       }
     }
     return
@@ -192,7 +216,16 @@ function receive(event: VoiceEvent): void {
     inputEnded = true
     if (trailingByte !== null) { failAudio('Truncated PCM sample'); return }
     worklet?.port.postMessage({ type: 'end', generation: key?.generation })
-  } else if (event.type === 'error') failAudio(event.error)
+  } else if (event.type === 'error') {
+    if (event.diagnostic?.provider !== 'fish') { failAudio(event.error); return }
+    // A producer failure is already reported by the main process. Stop speech without
+    // destroying a healthy audio processor or echoing it back as a playback failure.
+    speech = false; inputEnded = true; pending = []; reports = []; trailingByte = null
+    worklet?.port.postMessage({ type: 'reset', generation: key?.generation ?? -1 })
+    sprite?.setMouth(0)
+    dispatch({ type: 'reset' })
+    playbackStatus = 'error'
+  }
 }
 
 function tick(): void {
@@ -244,7 +277,13 @@ window.addEventListener('salieri:scene-ready', () => {
     if (definition.diagnostics.length) diagnostic(definition.diagnostics.join('；'))
     const token = new URLSearchParams(location.search).get('sceneLoadToken')
     window.addEventListener('message', event => {
-      if (event.source !== window.parent || event.data?.type !== 'salieri.connect' || !token || event.data.sceneLoadToken !== token || !event.ports[0] || port) return
+      if (event.source !== window.parent || !token || event.data?.sceneLoadToken !== token) return
+      if (event.data.type === 'salieri.probe') {
+        window.parent.postMessage({ source: 'amadeus-scene', status: 'voice-ready', sceneLoadToken: token }, '*')
+        return
+      }
+      if (event.data.type !== 'salieri.connect' || !event.ports[0]) return
+      port?.close()
       port = event.ports[0]
       port.onmessage = message => receive(message.data)
       port.start()
@@ -255,4 +294,4 @@ window.addEventListener('salieri:scene-ready', () => {
   })().catch(error => diagnostic(String(error)))
 }, { once: true })
 
-window.addEventListener('pagehide', () => { port?.postMessage({ type: 'lost' }); port?.close(); void context?.close() })
+window.addEventListener('pagehide', () => { audioEpoch++; port?.postMessage({ type: 'lost' }); port?.close(); void context?.close() })

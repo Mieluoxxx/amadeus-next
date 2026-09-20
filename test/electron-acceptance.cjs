@@ -1,6 +1,8 @@
 const { app } = require('electron')
-const { mkdtempSync } = require('node:fs')
+const { mkdtempSync, writeFileSync, readFileSync, mkdirSync } = require('node:fs')
 const { writeFile } = require('node:fs/promises')
+const { createServer } = require('node:http')
+const { once } = require('node:events')
 const { pathToFileURL } = require('node:url')
 const path = require('node:path')
 const os = require('node:os')
@@ -8,10 +10,28 @@ const assert = require('node:assert/strict')
 
 const project = path.resolve(__dirname, '..')
 app.setPath('userData', mkdtempSync(path.join(os.tmpdir(), 'salieri-acceptance-')))
+process.env.PI_CODING_AGENT_DIR = path.join(app.getPath('userData'), 'pi-agent')
+mkdirSync(process.env.PI_CODING_AGENT_DIR)
+process.env.PI_OFFLINE = '1'
 delete process.env.SALIERI_NEXT_PROJECT_ROOT
 delete process.env.SALIERI_NEXT_CHARACTER_ROOT
 delete process.env.FISH_API_KEY
-const deadline = setTimeout(() => { console.error('Electron acceptance timed out'); app.exit(1) }, 45000)
+const deadline = setTimeout(() => { console.error('Electron acceptance timed out'); app.exit(1) }, 60000)
+const requests = []
+let releaseHeld
+const modelServer = createServer(async (request, response) => {
+  let body = ''
+  for await (const chunk of request) body += chunk
+  const value = JSON.parse(body)
+  requests.push(value)
+  const userContent = value.messages.findLast(message => message.role === 'user')?.content
+  const userText = typeof userContent === 'string' ? userContent : (userContent || []).map(part => part.text || '').join('')
+  if (userText === 'hold-for-reload') await new Promise(resolve => { releaseHeld = resolve })
+  const retained = value.messages.some(message => message.role === 'assistant' && message.content === 'saved-marker')
+  response.writeHead(200, { 'Content-Type': 'text/event-stream' })
+  const frame = (delta, finish_reason = null) => `data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', model: value.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`
+  response.end(frame({ role: 'assistant', content: retained ? 'context-retained' : 'saved-marker' }) + frame({}, 'stop') + 'data: [DONE]\n\n')
+})
 const wait = async (probe, message, timeout = 15000) => {
   const start = Date.now()
   while (Date.now() - start < timeout) {
@@ -27,8 +47,112 @@ app.on('browser-window-created', (_event, window) => {
   })
   window.webContents.once('did-finish-load', () => {
     void (async () => {
-      const frame = await wait(() => window.webContents.mainFrame.frames.find(f => f.url.includes('wallpaper_engine.html')), 'Scene iframe missing')
+      let frame = await wait(() => window.webContents.mainFrame.frames.find(f => f.url.includes('wallpaper_engine.html')), 'Scene iframe missing')
       await wait(() => frame.executeJavaScript('!!window.__salieriCharacter && !!window.__sceneLastReport?.character'), 'Character did not render')
+      const ui = script => window.webContents.executeJavaScript(script)
+      await ui('document.querySelector(\'[data-testid="scene-open-more"]\').click()')
+      await wait(() => ui('document.querySelectorAll(".settings-section-nav button").length === 4'), 'Settings did not open')
+      assert.equal(await ui('!!document.querySelector(\'[data-testid="runtime-reload"]\')'), false, 'Runtime maintenance must not be exposed in settings')
+      assert.doesNotMatch(await ui('document.querySelector(".settings-page-shell").textContent'), /运行时热重载|重新加载资源|恢复 Pi 进程|恢复语音助手/)
+      await ui('document.querySelectorAll(".settings-section-nav button")[3].click()')
+      await wait(() => ui('!!document.querySelector(".settings-field-row input[type=password]")'), 'Fish settings missing')
+      await ui(`(() => {
+        const input = document.querySelector('.settings-field-row input[type=password]')
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'acceptance-fixture-key')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })()`)
+      await wait(() => ui('!!document.querySelector(".settings-field-row button:not(:disabled)")'), 'Save action missing')
+      await ui('document.querySelector(".settings-field-row button:not(:disabled)").click()')
+      await wait(() => ui(`window.salieriNext.request('system.get_config').then(result =>
+        result.values.voice_configuration.find(group => group.id === 'speech_synthesis').configured)`), 'Fish key was not applied live')
+      // The old UI schedules a backend restart one second after every save.
+      await new Promise(resolve => setTimeout(resolve, 1200))
+      assert.equal(await ui('!!document.querySelector(".settings-restart-banner")'), false, 'Saving live settings must not request a backend restart')
+      assert.equal(await ui('document.querySelector(".settings-main .settings-feedback")?.textContent || ""'), '')
+      assert.equal(await ui('window.salieriNext.request("system.get_config").then(result => "FISH_API_KEY" in result.values)'), false, 'Public config must not expose the API key')
+      for (const model of ['s1', 's2.1-pro-free']) {
+        assert.ok(await ui(`Array.from(document.querySelector('.settings-main select').options).some(option => option.value === ${JSON.stringify(model)})`), `Fish model option missing: ${model}`)
+        await ui(`document.querySelector('.settings-main select').value = ${JSON.stringify(model)}; document.querySelector('.settings-main select').dispatchEvent(new Event('change', { bubbles: true }))`)
+        await wait(() => ui(`window.salieriNext.request('system.get_config').then(result => result.values.FISH_API_MODEL === ${JSON.stringify(model)})`), 'Fish model was not applied live')
+      }
+      await ui('document.querySelectorAll(".settings-section-nav button")[2].click()')
+      await wait(() => ui('!!document.querySelector(".settings-field-row select")'), 'Recognition language missing')
+      await ui('document.querySelector(".settings-field-row select").value = "en-US"; document.querySelector(".settings-field-row select").dispatchEvent(new Event("change", { bubbles: true }))')
+      await wait(() => ui(`window.salieriNext.request('system.get_config').then(result =>
+        result.values.voice_configuration.find(group => group.id === 'asr_local').fields[0].value === 'en-US')`), 'Recognition language snapshot did not update')
+      await ui('document.querySelectorAll(".settings-section-nav button")[3].click()')
+      await wait(() => ui('!!document.querySelector(".settings-field-row input[type=password]")'), 'Fish settings did not reopen')
+      assert.equal(await ui('document.querySelector(".settings-main select").value'), 's2.1-pro-free', 'The free model selection must survive reopening settings')
+      await ui('document.querySelector(".settings-field-row button").click()')
+      await wait(() => ui(`window.salieriNext.request('system.get_config').then(result =>
+        !result.values.voice_configuration.find(group => group.id === 'speech_synthesis').configured)`), 'Clearing the key was not applied live')
+      await ui('document.querySelector(\'[data-testid="scene-open-more"]\').click()')
+      console.log('PASS: settings save, model/language changes and key clearing apply live without a backend restart')
+      const chat = async (text, turnId) => {
+        const result = await ui(`window.salieriNext.request('chat.send', {text:${JSON.stringify(text)},turn_id:${JSON.stringify(turnId)}})`)
+        assert.equal(result.ok, true)
+        return wait(() => ui(`window.salieriNext.request('session.list').then(result => result.messages.find(message => message.role === 'assistant' && message.turn_id === ${JSON.stringify(turnId)})?.text)`), 'Local Pi reply missing')
+      }
+      assert.equal(await chat('remember this', 'persist-first'), 'saved-marker')
+      const models = await ui('window.salieriNext.request("pi.models")')
+      assert.equal(models.current, 'fixture/fixture-model')
+      assert.equal((await ui('window.salieriNext.request("pi.model.set", {model:"fixture/fixture-alternate"})')).current, 'fixture/fixture-alternate')
+      assert.equal((await ui('window.salieriNext.request("pi.model.set", {model:"fixture/fixture-alternate",thinkingLevel:"high"})')).thinkingLevel, 'high')
+      await ui('document.querySelector(\'[data-testid="scene-open-more"]\').click()')
+      await wait(() => ui('document.querySelectorAll(".settings-section-nav button").length === 4'), 'Settings did not reopen')
+      await ui('document.querySelectorAll(".settings-section-nav button")[1].click()')
+      await wait(() => ui('document.querySelectorAll(".settings-main select").length === 2'), 'Model and thinking controls must remain available')
+      assert.doesNotMatch(await ui('document.querySelector(".settings-main").textContent'), /当前模型连接|其他模型连接|高级模型角色|当前没有选中的活动连接|没有用户管理的连接设置/)
+      assert.deepEqual(await ui('Array.from(document.querySelectorAll(".settings-main select"), select => select.value)'), ['fixture/fixture-alternate', 'high'])
+      await ui('document.querySelector(\'[data-testid="scene-open-more"]\').click()')
+      const workerPids = () => app.getAppMetrics().filter(metric => metric.name === 'Salieri Pi Runtime').map(metric => metric.pid)
+      const before = workerPids()
+      assert.equal(before.length, 1)
+      const modelsFile = path.join(process.env.PI_CODING_AGENT_DIR, 'models.json')
+      const savedModels = readFileSync(modelsFile, 'utf8')
+      writeFileSync(modelsFile, '{')
+      await ui('window.salieriNext.request("runtime.reload", {targets:["pi-worker"]})')
+      await wait(() => ui('window.salieriNext.request("runtime.status").then(result => result.status === "error")'), 'Invalid replacement configuration was not rejected')
+      assert.ok(workerPids().includes(before[0]), 'Failed initialization must leave the old Pi alive')
+      writeFileSync(modelsFile, savedModels)
+      assert.equal((await ui('window.salieriNext.request("pi.models")')).current, 'fixture/fixture-alternate')
+      assert.equal((await ui('window.salieriNext.request("runtime.reload", {targets:["pi-worker"]})')).ok, true)
+      await wait(() => ui('window.salieriNext.request("runtime.status").then(result => result.status === "ready" || (result.status === "error" && Promise.reject(new Error(result.error))))'), 'Pi did not recover')
+      await wait(() => !workerPids().includes(before[0]), 'Old Pi process was not retired')
+      const restoredModel = await ui('window.salieriNext.request("pi.models")')
+      assert.equal(restoredModel.current, 'fixture/fixture-alternate')
+      assert.equal(restoredModel.thinkingLevel, 'high')
+      assert.equal(await chat('what did you remember?', 'persist-second'), 'context-retained')
+      assert.equal(requests.length, 2, 'Restart must not replay requests')
+      const pid = process.pid
+      const oldUrl = frame.url
+      await ui('document.querySelector(\'[data-testid="scene-open-more"]\').click()')
+      await wait(() => ui('!!document.querySelector(".settings-page-shell")'), 'Settings did not reopen')
+      assert.equal((await ui('window.salieriNext.request("runtime.reload", {targets:["pi","scene"]})')).ok, true)
+      await wait(() => ui('window.salieriNext.request("runtime.status").then(result => result.status === "ready" || (result.status === "error" && Promise.reject(new Error(result.error))))'), 'Resource reload failed')
+      frame = await wait(() => window.webContents.mainFrame.frames.find(f => f.url.includes('wallpaper_engine.html') && f.url !== oldUrl), 'Scene generation was not replaced')
+      await wait(() => frame.executeJavaScript('!!window.__salieriCharacter'), 'Character missing after reload')
+      assert.equal(process.pid, pid, 'Resource reload must not restart the main process')
+      assert.equal(await chat('still there?', 'persist-third'), 'context-retained')
+      assert.equal(requests.length, 3)
+      await ui('document.querySelector(\'[data-testid="scene-open-more"]\').click()')
+      console.log('PASS: real Pi session survives worker replacement and resource reload; no request replay; fresh scene handshake')
+      const heldReply = chat('hold-for-reload', 'held-reply')
+      await wait(() => releaseHeld, 'Fixture request was not held')
+      const queued = await ui('window.salieriNext.request("runtime.reload", {targets:["pi"]})')
+      assert.equal(queued.status, 'queued')
+      assert.equal((await ui('window.salieriNext.request("chat.send", {text:"must not run"})')).ok, false)
+      releaseHeld()
+      assert.equal(await heldReply, 'context-retained')
+      await wait(() => ui('window.salieriNext.request("runtime.status").then(result => result.status === "ready" || (result.status === "error" && Promise.reject(new Error(result.error))))'), 'Queued Pi reload failed')
+      assert.equal(requests.length, 4)
+      console.log('PASS: a real in-flight Pi reply drains before reload; new requests are rejected rather than replayed')
+      await frame.executeJavaScript(`(() => {
+        const NativeNode = window.AudioWorkletNode
+        window.AudioWorkletNode = class extends NativeNode {
+          constructor(...args) { super(...args); window.__acceptanceWorklet = this }
+        }
+      })()`)
       // Production IPC -> React MessageChannel -> real scene -> AudioWorklet.
       const key = { sessionId: 'acceptance', turnId: 'audio', generation: 1000 }
       const send = params => window.webContents.send('next.event', { method: 'voice.event', params: { ...key, ...params } })
@@ -43,6 +167,9 @@ app.on('browser-window-created', (_event, window) => {
         await wait(() => frame.executeJavaScript('window.__salieriPlayback.status === "playing"'), 'Audio did not begin')
         const state = await frame.executeJavaScript('window.__salieriCharacter')
         assert.equal(state.emotion, 'smile')
+        send({ type: 'calibration', calibration: { mouthGain: 12, silenceThreshold: 0.1, syncOffsetMs: 150 } })
+        await wait(() => frame.executeJavaScript('window.__salieriPlayback.calibration.mouthGain === 12'), 'Calibration did not update during playback')
+        assert.equal(await frame.executeJavaScript('window.__salieriPlayback.generation'), 1000)
         await writeFile('/tmp/salieri-electron-speaking.png', (await window.webContents.capturePage()).toPNG())
         await wait(() => frame.executeJavaScript('window.__salieriPlayback.status === "ended"'), 'Playback did not drain')
         await wait(() => frame.executeJavaScript('window.__salieriCharacter.label === "smile"'), 'Missing smile exit')
@@ -55,6 +182,29 @@ app.on('browser-window-created', (_event, window) => {
         assert.equal(await frame.executeJavaScript('window.__salieriCharacter.playback'), 'quiet')
         assert.equal(await frame.executeJavaScript('window.wallpaperApp.scene._speakingGate'), 0)
         console.log('PASS: production Electron bridge, real PCM playback, smile cue, drain, post-speech exit, stale generation')
+        send({ type: 'error', generation: 1002, error: 'Fish handshake failed [payment_required, HTTP 402]: Check API billing.',
+          diagnostic: { provider: 'fish', phase: 'handshake', code: 'payment_required', httpStatus: 402 } })
+        await wait(() => ui('document.body.textContent.includes("payment_required, HTTP 402")'), 'Detailed Fish failure was not shown')
+        await wait(() => frame.executeJavaScript('window.__salieriPlayback.status === "error"'), 'Fish failure did not stop speech')
+        assert.equal(await frame.executeJavaScript('window.__salieriPlayback.workletReady'), true, 'A remote Fish error must not be misclassified as a local audio processor failure')
+        await frame.executeJavaScript('window.__acceptanceWorklet.onprocessorerror()')
+        assert.equal(await frame.executeJavaScript('window.__salieriPlayback.workletReady'), false, 'A failed processor must be discarded')
+        send({ type: 'begin', generation: 1003, speech: true, calibration: { mouthGain: 8, silenceThreshold: 0.08, syncOffsetMs: 0 } })
+        send({ type: 'audio', generation: 1003, pcm })
+        await wait(() => frame.executeJavaScript('window.__salieriPlayback.generation === 1003 && window.__salieriPlayback.status === "playing"'), 'Audio did not recover locally')
+        assert.equal(await frame.executeJavaScript('!!document.getElementById("salieri-diagnostic")'), false)
+        send({ type: 'reset', generation: 1004 })
+        console.log('PASS: failed AudioWorklet recovers on the next turn without reloading the scene or Pi')
+        const piBeforePreload = workerPids()
+        process.env.SALIERI_NEXT_DEV = '1'
+        const loaded = once(window.webContents, 'did-finish-load')
+        await ui('window.salieriNext.request("dev.reload", {targets:["preload"]})')
+        await loaded
+        await wait(() => ui('window.salieriNext.request("runtime.status").then(result => result.status === "ready")'), 'Preload/window reload did not rebind the scene')
+        assert.deepEqual(workerPids(), piBeforePreload)
+        assert.equal((await ui('window.salieriNext.request("session.list")')).messages.at(-1).text, 'context-retained')
+        assert.equal((await ui('window.salieriNext.request("pi.models")')).current, 'fixture/fixture-alternate')
+        console.log('PASS: preload/window replacement keeps the Pi process, selected model and conversation')
       } catch (error) {
         console.error(await frame.executeJavaScript('({character:window.__salieriCharacter,playback:window.__salieriPlayback,diagnostic:document.getElementById("salieri-diagnostic")?.textContent})'))
         throw error
@@ -69,4 +219,11 @@ app.on('browser-window-created', (_event, window) => {
     })
   })
 })
-app.whenReady().then(() => import(pathToFileURL(path.join(project, 'dist/main/index.js')).href))
+app.whenReady().then(async () => {
+  await new Promise(resolve => modelServer.listen(0, '127.0.0.1', resolve))
+  writeFileSync(path.join(process.env.PI_CODING_AGENT_DIR, 'models.json'), JSON.stringify({ providers: { fixture: {
+    api: 'openai-completions', apiKey: 'fixture', baseUrl: `http://127.0.0.1:${modelServer.address().port}/v1`, models: [{ id: 'fixture-model' }, { id: 'fixture-alternate', reasoning: true }],
+  } } }))
+  writeFileSync(path.join(process.env.PI_CODING_AGENT_DIR, 'settings.json'), JSON.stringify({ defaultProvider: 'fixture', defaultModel: 'fixture-model', retry: { enabled: false } }))
+  await import(pathToFileURL(path.join(project, 'dist/main/index.js')).href)
+})

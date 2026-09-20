@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, safeStorage, utilityProcess, type UtilityProcess } from 'electron'
+import { app, BrowserWindow, ipcMain, safeStorage, utilityProcess } from 'electron'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { SceneHost } from './sceneHost.ts'
 import { FishTts } from './fishTts.ts'
+import { PiHost } from './piHost.ts'
 import { PresentationText } from '../shared/presentation.ts'
 import { sameTurn, isTurnKey, type TurnKey, type VoiceEvent, type PlaybackEvent, type Calibration } from '../shared/voice.ts'
 
@@ -35,12 +36,17 @@ function jsonFile(file: string, fallback: Json): Json {
 class SessionStore {
   private readonly file: string
   sessions: StoredSession[] = []
+  currentId = ''
 
   constructor(file: string) {
     this.file = file
     try {
       const value = JSON.parse(readFileSync(file, 'utf8'))
       if (Array.isArray(value)) this.sessions = value as StoredSession[]
+      else if (Array.isArray(value?.sessions)) {
+        this.sessions = value.sessions
+        this.currentId = typeof value.currentId === 'string' ? value.currentId : ''
+      }
     } catch {
       this.sessions = []
     }
@@ -48,100 +54,7 @@ class SessionStore {
 
   save(): void {
     mkdirSync(path.dirname(this.file), { recursive: true })
-    writeFileSync(this.file, JSON.stringify(this.sessions, null, 2), 'utf8')
-  }
-}
-
-class PiHost {
-  private process: UtilityProcess | null = null
-  private ready: Promise<void> | null = null
-  private readonly pending = new Map<string, {
-    resolve: (text: string) => void
-    reject: (error: Error) => void
-    onText: (delta: string) => void
-    onTool: (name: string, done: boolean) => void
-  }>()
-  error = ''
-
-  async init(): Promise<void> {
-    this.process = utilityProcess.fork(path.join(MODULE_DIR, 'pi-worker.js'), [], {
-      cwd: process.cwd(),
-      env: { ...process.env, SALIERI_NEXT_PI_CWD: process.cwd() },
-      serviceName: 'Salieri Pi Runtime',
-      stdio: 'pipe',
-    })
-    console.info(`[salieri-next] Pi utility process starting: ${this.process.pid ?? 'pending'}`)
-    this.process.on('spawn', () => console.info(`[salieri-next] Pi utility process ready: ${this.process?.pid ?? 'unknown'}`))
-    this.process.on('error', (type, location, report) => console.error('[salieri-next] Pi utility process error', type, location, report))
-    this.process.on('message', message => this.receive(message))
-    this.process.on('exit', () => {
-      this.error = this.error || 'Pi utility process exited'
-      for (const pending of this.pending.values()) pending.reject(new Error(this.error))
-      this.pending.clear()
-      this.process = null
-    })
-    this.ready = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Pi utility process startup timed out')), 20000)
-      const check = (message: unknown) => {
-        const value = message && typeof message === 'object' ? message as Json : {}
-        if (value.type !== 'ready') return
-        clearTimeout(timer)
-        this.process?.off('message', check)
-        if (value.error) reject(new Error(String(value.error)))
-        else resolve()
-      }
-      this.process?.on('message', check)
-    })
-    try {
-      await this.ready
-    } catch (error) {
-      this.error = error instanceof Error ? error.message : String(error)
-      this.process?.kill()
-      this.process = null
-    }
-  }
-
-  async prompt(
-    id: string,
-    text: string,
-    callbacks: { onText: (delta: string) => void; onTool: (name: string, done: boolean) => void },
-  ): Promise<string> {
-    await this.ready
-    if (!this.process) throw new Error(this.error || 'Pi utility process is unavailable')
-    const requestId = randomUUID()
-    return new Promise((resolve, reject) => {
-      this.pending.set(requestId, { resolve, reject, onText: callbacks.onText, onTool: callbacks.onTool })
-      this.process?.postMessage({ id: requestId, command: 'prompt', sessionId: id, text })
-    })
-  }
-
-  async abort(id: string): Promise<void> {
-    if (!this.process) return
-    this.process.postMessage({ id: randomUUID(), command: 'abort', sessionId: id })
-  }
-
-  dispose(): void {
-    this.process?.kill()
-    this.process = null
-  }
-
-  private receive(raw: unknown): void {
-    const message = raw && typeof raw === 'object' ? raw as Json : {}
-    const requestId = String(message.id || '')
-    const pending = this.pending.get(requestId)
-    if (!pending) return
-    if (message.type === 'text') pending.onText(String(message.delta || ''))
-    else if (message.type === 'tool') pending.onTool(String(message.name || 'tool'), message.done === true)
-    else if (message.type === 'done') {
-      this.pending.delete(requestId)
-      pending.resolve(String(message.text || ''))
-    } else if (message.type === 'error') {
-      this.pending.delete(requestId)
-      pending.reject(new Error(String(message.error || 'Pi request failed')))
-    } else if (message.type === 'aborted') {
-      this.pending.delete(requestId)
-      pending.resolve('')
-    }
+    writeFileSync(this.file, JSON.stringify({ currentId: this.currentId, sessions: this.sessions }, null, 2), 'utf8')
   }
 }
 
@@ -170,14 +83,18 @@ class SpeechBridge {
         this.emit('asr.status', { status: 'error', error })
         return { ok: false, error }
       }
-      this.process = spawn(helper, [], { stdio: ['pipe', 'pipe', 'ignore'] })
-      this.process.stdout?.on('data', chunk => this.read(chunk.toString('utf8')))
-      this.process.on('exit', () => {
+      const child = spawn(helper, [], { stdio: ['pipe', 'pipe', 'ignore'] })
+      this.process = child
+      child.stdout?.on('data', chunk => { if (this.process === child) this.read(chunk.toString('utf8')) })
+      child.on('exit', () => {
+        if (this.process !== child) return
         this.process = null
         this.listening = false
         this.emit('asr.status', { status: 'idle' })
       })
-      this.process.on('error', () => {
+      child.on('error', () => {
+        if (this.process !== child) return
+        this.process = null
         this.listening = false
         this.emit('asr.status', { status: 'error', error: 'Apple Speech helper could not start' })
       })
@@ -195,8 +112,12 @@ class SpeechBridge {
   }
 
   dispose(): void {
-    this.process?.kill()
+    const previous = this.process
     this.process = null
+    this.listening = false
+    this.buffer = ''
+    this.recognitionId++
+    previous?.kill()
   }
 
   private write(value: Json): void {
@@ -232,7 +153,12 @@ class AppRuntime {
   private readonly scene: SceneHost
   private readonly store: SessionStore
   private readonly settingsFile: string
-  private readonly pi = new PiHost()
+  private readonly pi = new PiHost(() => utilityProcess.fork(path.join(MODULE_DIR, 'pi-worker.js'), [], {
+    cwd: process.cwd(),
+    env: { ...process.env, SALIERI_NEXT_PI_CWD: process.cwd(), SALIERI_NEXT_PI_SESSIONS: path.join(app.getPath('userData'), 'pi-sessions') },
+    serviceName: 'Salieri Pi Runtime',
+    stdio: 'ignore',
+  }))
   private readonly windows = new Set<BrowserWindow>()
   private readonly config: Json = {
     llm_provider: 'pi',
@@ -256,6 +182,12 @@ class AppRuntime {
   private activeTurn: (TurnKey & { piDone: boolean; drained: boolean; speech: boolean; text: string }) | null = null
   private listeningEnabled = false
   private sceneReady = false
+  private sceneToken = ''
+  private readonly reloadTargets = new Set<string>()
+  private reloading = false
+  private disposed = false
+  private reloadState: Json = { status: 'ready', targets: [] }
+  private sceneReload: { resolve: () => void; reject: (error: Error) => void } | null = null
 
   constructor() {
     this.root = projectRoot()
@@ -270,7 +202,7 @@ class AppRuntime {
       if (event.type === 'error' && this.activeTurn) {
         this.activeTurn.drained = true
         this.activeTurn.speech = false
-        this.emit('tts.error', { error: event.error, turn_id: event.turnId })
+        this.emit('tts.error', { error: event.error, diagnostic: event.diagnostic, turn_id: event.turnId })
         this.resumeListening()
       }
     })
@@ -283,13 +215,13 @@ class AppRuntime {
       this.store.sessions.push({ id: randomUUID(), title: '新对话', messages: [] })
       this.store.save()
     }
-    this.currentSessionId = this.store.sessions[0].id
+    this.currentSessionId = this.store.sessions.some(session => session.id === this.store.currentId) ? this.store.currentId : this.store.sessions[0].id
   }
 
   attach(window: BrowserWindow): void {
     this.windows.add(window)
     window.on('closed', () => { this.windows.delete(window); this.sceneReady = false; this.listeningEnabled = false; this.cancelTurn(); this.speech.stop() })
-    window.webContents.on('render-process-gone', () => { this.sceneReady = false; this.listeningEnabled = false; this.cancelTurn(); this.speech.stop() })
+    window.webContents.on('render-process-gone', () => { void this.request('scene.lost') })
   }
 
   async request(method: string, params: Json = {}): Promise<Json> {
@@ -309,6 +241,19 @@ class AppRuntime {
         return this.desktopSettings()
       case 'desktop.settings.update':
         return this.updateDesktopSettings(params)
+      case 'runtime.status':
+        return this.reloadState
+      case 'runtime.reload':
+        return this.queueReload(params, false)
+      case 'dev.reload':
+        return process.env.SALIERI_NEXT_DEV === '1' ? this.queueReload(params, true) : { ok: false, error: 'Development reload is disabled' }
+      case 'pi.models':
+      case 'pi.model.set':
+        if (this.reloading || this.reloadTargets.size || (this.activeTurn && !this.activeTurn.piDone)) return { ok: false, error: 'Wait for the current reply or reload to finish' }
+        if (method === 'pi.model.set' && typeof params.model !== 'string') return { ok: false, error: 'Invalid model' }
+        try {
+          return { ok: true, ...await this.pi.request(method === 'pi.models' ? 'models' : 'set-model', { sessionId: this.currentSessionId, model: params.model, thinkingLevel: params.thinkingLevel }) }
+        } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) } }
       case 'provider.list':
         return { provider_availability: [{ provider_id: 'pi', configured: !this.pi.error, ready: !this.pi.error, registered: true, reason: this.pi.error || 'ready' }], provider_manifests: [{ provider_id: 'pi', display_name: 'Pi', runtime_kind: 'embedded' }] }
       case 'session.list':
@@ -332,21 +277,30 @@ class AppRuntime {
       case 'chat.abort':
         return this.abortChat(params)
       case 'scene.ready':
+        if (this.sceneReload && (!params.token || params.token === this.sceneToken)) return { ok: false, error: 'Stale scene handshake' }
+        this.sceneToken = String(params.token || '')
         this.sceneReady = true
-        this.cancelTurn()
+        if (this.sceneReload) this.sceneReload.resolve()
         this.resumeListening()
-        return { ok: true, key: this.idleKey(), calibration: this.calibration() }
+        return { ok: true, key: this.activeTurn || this.idleKey(), text: this.activeTurn?.text || '', calibration: this.calibration() }
       case 'scene.lost':
+        if (params.token && params.token !== this.sceneToken) return { ok: true }
         this.sceneReady = false
-        this.listeningEnabled = false
-        this.cancelTurn()
+        if (!this.sceneReload) {
+          this.listeningEnabled = false
+          // Rendering can recover independently. Never replay or cancel model/tool work for a lost display.
+          this.tts.abort()
+          if (this.activeTurn) { this.activeTurn.speech = false; this.activeTurn.drained = true }
+        }
         this.speech.stop()
+        this.resumeListening()
         return { ok: true }
       case 'voice.playback':
         if (isTurnKey(params) && sameTurn(this.activeTurn, params)) this.onPlayback(params as PlaybackEvent)
         return { ok: true }
       case 'asr.start': {
         this.listeningEnabled = true
+        if (this.reloading || this.reloadTargets.size) return { ok: true }
         if (this.activeTurn && (!this.activeTurn.piDone || !this.activeTurn.drained)) return { ok: true }
         const result = this.speech.start(String(this.config.asr_language || 'zh-CN'))
         if (!result.ok) this.listeningEnabled = false
@@ -364,10 +318,80 @@ class AppRuntime {
   }
 
   dispose(): void {
+    this.disposed = true
+    this.reloadTargets.clear()
+    this.sceneReload?.reject(new Error('Application closed'))
     this.speech.dispose()
     this.tts.abort()
     this.scene.close()
     this.pi.dispose()
+  }
+
+  private queueReload(params: Json, development: boolean): Json {
+    const targets = params.targets ?? ['pi', 'scene']
+    const allowed = ['pi', 'scene', 'speech', 'pi-worker', ...(development ? ['preload', 'main'] : [])]
+    if (!Array.isArray(targets) || !targets.length || targets.some(target => typeof target !== 'string' || !allowed.includes(target))) {
+      return { ok: false, error: 'Invalid reload target' }
+    }
+    for (const target of targets) this.reloadTargets.add(target)
+    this.reportReload(this.reloading ? 'applying' : 'queued', [...this.reloadTargets])
+    this.resumeListening()
+    return { ok: true, ...this.reloadState }
+  }
+
+  private reportReload(status: string, targets: string[], error?: string): void {
+    this.reloadState = { status, targets, ...(error ? { error } : {}) }
+    this.emit('runtime.reload', this.reloadState)
+  }
+
+  private flushReload(): void {
+    if (this.disposed || this.reloading || !this.reloadTargets.size || (this.activeTurn && (!this.activeTurn.piDone || !this.activeTurn.drained))) return
+    const targets = [...this.reloadTargets]
+    this.reloadTargets.clear()
+    this.reloading = true
+    this.speech.stop()
+    this.reportReload('applying', targets)
+    void (async () => {
+      // Also wait for an explicitly cancelled Pi turn to finish its tool cleanup.
+      if (!this.pi.error) await this.pi.request('checkpoint')
+      if (targets.includes('main')) {
+        this.dispose()
+        app.exit(75) // The development launcher starts the freshly built main process.
+        return
+      }
+      if (targets.includes('pi-worker') || (targets.includes('pi') && this.pi.error)) await this.pi.restart()
+      else if (targets.includes('pi')) await this.pi.request('reload')
+      if (targets.includes('speech')) this.speech.dispose()
+      if (targets.includes('scene') || targets.includes('preload')) {
+        this.scene.reload()
+        if (this.windows.size) await this.reloadScene(targets.includes('preload'))
+      }
+      this.reportReload('ready', targets)
+    })().catch(error => {
+      this.reloadTargets.clear()
+      this.reportReload('error', targets, error instanceof Error ? error.message : String(error))
+    }).finally(() => {
+      this.reloading = false
+      this.resumeListening()
+    })
+  }
+
+  private async reloadScene(preload: boolean): Promise<void> {
+    this.sceneReady = false
+    this.cancelTurn()
+    let timer: ReturnType<typeof setTimeout>
+    try {
+      await new Promise<void>((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('Scene reload timed out')), 20000)
+        this.sceneReload = { resolve, reject }
+        if (preload) {
+          for (const window of this.windows) if (!window.isDestroyed()) window.webContents.reload()
+        } else this.emit('scene.reload', {})
+      })
+    } finally {
+      clearTimeout(timer!)
+      this.sceneReload = null
+    }
   }
 
   private emit(method: string, params: Json): void {
@@ -397,10 +421,12 @@ class AppRuntime {
     const session = { id, title, messages: [] }
     this.store.sessions.unshift(session)
     this.currentSessionId = id
+    this.store.currentId = id
     this.cancelTurn()
     this.store.save()
     const payload = { ...this.sessionPayload(session), ok: true, client_request_id: String(params.client_request_id || ''), source: 'next' }
     this.emit('session.changed', payload)
+    this.resumeListening()
     return payload
   }
 
@@ -408,23 +434,42 @@ class AppRuntime {
     const session = this.store.sessions.find(item => item.id === id)
     if (!session) return { ok: false, error: 'session not found' }
     this.currentSessionId = id
+    this.store.currentId = id
+    this.store.save()
     this.listeningEnabled = false
     this.speech.stop()
     this.cancelTurn()
+    this.resumeListening()
     return { ...this.sessionPayload(session), ok: true, source: 'next' }
   }
 
   private setConfig(values: Json): Json {
+    for (const [key, min, max] of [['mouth_gain', 0, 32], ['mouth_silence_threshold', 0, 1], ['voice_sync_offset_ms', -1000, 1000]] as const) {
+      if (!(key in values)) continue
+      const value = values[key]
+      if ((typeof value !== 'number' && typeof value !== 'string') || String(value).trim() === '' || !Number.isFinite(Number(value)) || Number(value) < min || Number(value) > max) {
+        return { ok: false, error: `Invalid ${key}: expected ${min} to ${max}` }
+      }
+      values[key] = Number(value)
+    }
+    const previousLanguage = this.config.asr_language
     Object.assign(this.config, values)
     this.persistSettings()
+    if (this.listeningEnabled && this.config.asr_language !== previousLanguage) {
+      this.speech.stop()
+      this.resumeListening()
+    }
     this.emit('system.config', { values: this.configSnapshot() })
+    if (['mouth_gain', 'mouth_silence_threshold', 'voice_sync_offset_ms'].some(key => key in values)) {
+      this.voice({ ...(this.activeTurn || this.idleKey()), type: 'calibration', calibration: this.calibration() })
+    }
     return { ok: true, values: this.configSnapshot() }
   }
 
   private desktopSettings(): Json {
     const snapshot = this.configSnapshot()
     const values = Object.fromEntries(Object.entries(snapshot).flatMap(([key, value]) => {
-      if (['FISH_API_KEY', 'FISH_VOICE_ID', 'model_connections', 'model_roles', 'voice_configuration', 'work_provider_configuration', 'asr_backends'].includes(key)) return []
+      if (['FISH_API_KEY', 'FISH_VOICE_ID', 'voice_configuration', 'work_provider_configuration', 'asr_backends'].includes(key)) return []
       return [[key, String(value ?? '')]]
     }))
     const secrets = Object.fromEntries(['FISH_API_KEY', 'FISH_VOICE_ID'].map(key => [key, { configured: Boolean(this.config[key]), source: 'user', locked: false }]))
@@ -435,8 +480,6 @@ class AppRuntime {
     const { FISH_API_KEY: _fishApiKey, ...publicConfig } = this.config
     return {
       ...publicConfig,
-      model_connections: [],
-      model_roles: [],
       work_provider_configuration: [],
       asr_backends: [{ id: 'apple_speech', label: 'Apple Speech', deployment: 'native' }],
       voice_configuration: [
@@ -448,7 +491,7 @@ class AppRuntime {
           status: 'ready',
           status_ok: true,
           fields: [
-            { key: 'asr_language', label: 'Recognition language', type: 'select', value: 'zh-CN', options: ['zh-CN', 'en-US'], editable: true, restart_required: false },
+            { key: 'asr_language', label: 'Recognition language', type: 'select', value: String(this.config.asr_language || 'zh-CN'), options: ['zh-CN', 'en-US'], editable: true, restart_required: false },
           ],
         },
         {
@@ -461,7 +504,15 @@ class AppRuntime {
           fields: [
             { key: 'FISH_API_KEY', label: 'Fish Audio API key', type: 'secret', editable: true, restart_required: false },
             { key: 'FISH_VOICE_ID', label: 'Fish voice ID', type: 'text', value: String(this.config.FISH_VOICE_ID || ''), editable: true, restart_required: false },
-            { key: 'FISH_API_MODEL', label: 'Fish model', type: 'select', value: String(this.config.FISH_API_MODEL || 's2-pro'), options: ['s2-pro', 's1'], editable: true, restart_required: false },
+            { key: 'FISH_API_MODEL', label: 'Fish model', type: 'select', value: String(this.config.FISH_API_MODEL || 's2-pro'), options: ['s2.1-pro-free', 's2-pro', 's1'], editable: true, restart_required: false },
+          ],
+        },
+        {
+          id: 'voice_calibration', label: 'Live voice calibration', active: true, configured: true,
+          fields: [
+            { key: 'mouth_gain', label: 'Mouth gain', type: 'number', value: this.config.mouth_gain, min: 0, max: 32, step: 0.5, editable: true },
+            { key: 'mouth_silence_threshold', label: 'Silence threshold', type: 'number', value: this.config.mouth_silence_threshold, min: 0, max: 1, step: 0.01, editable: true },
+            { key: 'voice_sync_offset_ms', label: 'Voice sync offset (ms)', type: 'number', value: this.config.voice_sync_offset_ms, min: -1000, max: 1000, step: 10, editable: true },
           ],
         },
       ],
@@ -471,10 +522,8 @@ class AppRuntime {
   private updateDesktopSettings(params: Json): Json {
     const values = params.values && typeof params.values === 'object' ? params.values as Json : {}
     const secrets = params.secrets && typeof params.secrets === 'object' ? params.secrets as Json : {}
-    for (const [key, value] of Object.entries(values)) this.config[key] = value
-    for (const [key, value] of Object.entries(secrets)) this.config[key] = value
-    this.persistSettings()
-    this.emit('system.config', { values: this.configSnapshot() })
+    const result = this.setConfig({ ...values, ...secrets })
+    if (!result.ok) return result
     return { ok: true, settings: this.desktopSettings() }
   }
 
@@ -501,6 +550,7 @@ class AppRuntime {
   }
 
   private sendChat(params: Json): Json {
+    if (this.reloading || this.reloadTargets.size) return { ok: false, error: 'Runtime reload pending; please retry after it completes' }
     const sessionId = String(params.session_id || this.currentSessionId)
     const session = this.store.sessions.find(item => item.id === sessionId)
     const text = String(params.text || '').trim()
@@ -510,6 +560,7 @@ class AppRuntime {
     this.cancelTurn()
     this.speech.stop()
     this.currentSessionId = sessionId
+    this.store.currentId = sessionId
     session.messages.push({ role: 'user', text, turn_id: turnId })
     this.store.save()
     void this.runChat(session, text, turnId)
@@ -589,7 +640,7 @@ class AppRuntime {
     this.activeTurn = null
     this.tts.abort()
     if (turn && !turn.piDone) {
-      void this.pi.abort(turn.sessionId)
+      void this.pi.abort(turn.sessionId).catch(() => {})
       this.emit('chat.interrupted', { session_id: turn.sessionId, turn_id: turn.turnId, text: turn.text })
     }
     this.generation++
@@ -609,6 +660,9 @@ class AppRuntime {
     }
   }
   private resumeListening(): void {
+    if (this.disposed) return
+    if (this.reloadTargets.size) this.flushReload()
+    if (this.reloading || this.reloadTargets.size) return
     if (this.listeningEnabled && this.sceneReady && (!this.activeTurn || (this.activeTurn.piDone && this.activeTurn.drained))) {
       const result = this.speech.start(String(this.config.asr_language || 'zh-CN'))
       if (!result.ok) this.listeningEnabled = false
@@ -616,6 +670,7 @@ class AppRuntime {
   }
   private onSpeech(method: string, params: Json): void {
     if (method === 'asr.recognized' && params.is_final === true) {
+      if (this.reloading || this.reloadTargets.size) return
       if (!this.listeningEnabled || (this.activeTurn && (!this.activeTurn.piDone || !this.activeTurn.drained))) return
       const text = String(params.text || '').trim()
       if (!text) return

@@ -38,5 +38,16 @@ export function usePiRuntime(): NextRuntime {
     }
   }, [])
 
+  useEffect(() => {
+    if (!import.meta.hot) return
+    const reload = (payload: { targets: string[] }) => {
+      void send('dev.reload', payload).then(result => {
+        if (!result.ok) console.error(result.error)
+      }).catch(console.error)
+    }
+    import.meta.hot.on('salieri:reload', reload)
+    return () => import.meta.hot?.off('salieri:reload', reload)
+  }, [send])
+
   return { connected, send, subscribe }
 }

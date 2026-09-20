@@ -57,10 +57,24 @@ export class SceneHost {
         resolve()
       })
     })
+    this.reload()
+  }
+  reload(): void {
     let crtConfig: unknown = { img_size: [1672, 941], crt_corners: [[556, 629], [560, 199], [1127, 204], [1132, 630]] }
-    try { crtConfig = JSON.parse(readFileSync(path.join(this.root, 'wallpaper/crt_config.json'), 'utf8')) } catch { /* fallback authored room */ }
+    try { crtConfig = JSON.parse(readFileSync(path.join(this.root, 'wallpaper/crt_config.json'), 'utf8')) } catch (error) {
+      if (this.initialization) throw error // Retain the last usable scene on an incomplete file save.
+    }
+    const cfg = crtConfig as { img_size?: unknown; crt_corners?: unknown } | null
+    const point = (value: unknown): value is number[] => Array.isArray(value) && value.length === 2 && value.every(Number.isFinite)
+    if (this.initialization && (!cfg || !point(cfg.img_size) || cfg.img_size.some(value => value <= 0) || !Array.isArray(cfg.crt_corners) || cfg.crt_corners.length !== 4 || !cfg.crt_corners.every(point))) {
+      throw new Error('Invalid CRT geometry; keeping the previous scene')
+    }
+    const definition = loadCharacter(this.characterRoot, `${this.origin}/character/`)
+    if (this.initialization?.definition.nodes[this.initialization.definition.root] && !definition.nodes[definition.root]) {
+      throw new Error('Character reload rejected: no usable idle clip; keeping the previous scene')
+    }
     this.initialization = {
-      definition: loadCharacter(this.characterRoot, `${this.origin}/character/`),
+      definition,
       scene: {
         backgroundUrl: `${this.origin}/assets/images/amadeus_desktop_wallpaper.png`,
         ambientUrl: `${this.origin}/assets/images/amadeus_ambient_high_blend.png`,
