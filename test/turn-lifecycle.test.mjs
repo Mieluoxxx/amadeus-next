@@ -20,7 +20,7 @@ function runtime(env = {}) {
     path, randomUUID, setTimeout, clearTimeout, process: { env }, MODULE_DIR: '/fixture', projectRoot: () => '/fixture',
     app: { getPath: () => '/fixture', exit: code => calls.push(['exit', code]) }, jsonFile: () => ({}), safeStorage: { isEncryptionAvailable: () => false },
     mkdirSync() {}, writeFileSync() {},
-    PresentationText, sameTurn, isTurnKey,
+    PresentationText, sameTurn, isTurnKey, URL,
     SessionStore: class { sessions = [{ id: 'one', title: 'One', messages: [] }, { id: 'two', title: 'Two', messages: [] }]; save() {} },
     SceneHost: class { async start() {}; reload() { calls.push(['reload-scene']) }; close() {} },
     PiHost: class {
@@ -247,3 +247,28 @@ test('Fish failure diagnostics reach both error channels while text chat continu
   assert.equal((await app.request('session.list')).messages.at(-1).text, 'Text remains available')
 })
 
+test('the network proxy setting is validated, persisted, and replaces only the Pi worker', async () => {
+  const { app, calls } = runtime()
+  await app.init()
+  const stored = () => calls.filter(([type]) => type === 'desktop.settings.update')
+  assert.equal((await app.request('system.set_config', { values: { network_proxy: 'socks5://127.0.0.1:1080' } })).ok, false)
+  assert.equal((await app.request('system.set_config', { values: { network_proxy: '127.0.0.1:7890' } })).ok, false)
+  assert.equal(stored().length, 0, 'a rejected address must not be stored')
+  const applied = await app.request('system.set_config', { values: { network_proxy: ' http://127.0.0.1:7890 ' } })
+  assert.equal(applied.ok, true)
+  assert.equal(applied.values.network_proxy, 'http://127.0.0.1:7890')
+  assert.equal(calls.some(([type]) => type === 'chat.interrupted'), false)
+  // The worker starts with the address in its environment; Pi's transport reads
+  // it at process start and needs the opt-in flag to use it at all.
+  const env = app.piEnv()
+  assert.equal(env.NODE_USE_ENV_PROXY, '1')
+  assert.equal(env.HTTP_PROXY, 'http://127.0.0.1:7890')
+  assert.equal(env.HTTPS_PROXY, 'http://127.0.0.1:7890')
+  // The worker reads the address from its environment, so it is replaced at the
+  // next safe boundary instead of being reconfigured in place.
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(calls.some(([type]) => type === 'restart-pi'), true)
+  // Clearing the address is a valid change too and reaches the same path.
+  assert.equal((await app.request('system.set_config', { values: { network_proxy: '' } })).ok, true)
+  assert.equal(app.piEnv().HTTP_PROXY, undefined)
+})

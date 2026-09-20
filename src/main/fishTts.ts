@@ -1,10 +1,11 @@
 import WebSocket from 'ws'
+import { HttpsProxyAgent } from 'https-proxy-agent'
 import { decode, encode } from '@msgpack/msgpack'
 import type { VoiceEvent, TurnKey, FishDiagnostic } from '../shared/voice.ts'
 import type { AlignmentChunk } from '../shared/presentation.ts'
 import { fishFailure, fishHttpFailure, fishNetworkFailure, fishCloseFailure, fishServerDetail, type FishFailure } from './fishErrors.ts'
 
-type Config = { FISH_API_KEY?: unknown; FISH_API_MODEL?: unknown; FISH_VOICE_ID?: unknown }
+type Config = { FISH_API_KEY?: unknown; FISH_API_MODEL?: unknown; FISH_VOICE_ID?: unknown; network_proxy?: unknown }
 export class FishTts {
   private socket: WebSocket | null = null
   private queue: string[] = []
@@ -16,11 +17,25 @@ export class FishTts {
   private config: () => Config
   private emit: (event: VoiceEvent) => void
   private connect: (url: string, options: WebSocket.ClientOptions) => WebSocket
+  private proxy: { url: string; agent: HttpsProxyAgent<string> } | null = null
 
   constructor(config: () => Config, emit: (event: VoiceEvent) => void, connect = (url: string, options: WebSocket.ClientOptions) => new WebSocket(url, options)) {
     this.config = config; this.emit = emit; this.connect = connect
   }
   get configured(): boolean { const key = this.config().FISH_API_KEY; return typeof key === 'string' && !!key.trim() }
+
+  // `ws` builds its request with the `http`/`https` modules, which ignore the
+  // proxy environment variables, so the configured address has to reach the
+  // socket as a CONNECT-tunnelling agent. The agent is reused per address so
+  // repeated turns do not accumulate idle sockets.
+  private proxyAgent(proxy: string): HttpsProxyAgent<string> | undefined {
+    if (!proxy) return undefined
+    if (this.proxy?.url !== proxy) {
+      this.proxy?.agent.destroy()
+      this.proxy = { url: proxy, agent: new HttpsProxyAgent(proxy) }
+    }
+    return this.proxy.agent
+  }
 
   start(key: TurnKey): void {
     key = { sessionId: key.sessionId, turnId: key.turnId, generation: key.generation }
@@ -32,7 +47,7 @@ export class FishTts {
       this.emit({ ...key, type: 'error', ...failure })
     }
     this.failure = fail
-    if ([config.FISH_API_KEY, config.FISH_API_MODEL, config.FISH_VOICE_ID].some(value => value != null && typeof value !== 'string')) {
+    if ([config.FISH_API_KEY, config.FISH_API_MODEL, config.FISH_VOICE_ID, config.network_proxy].some(value => value != null && typeof value !== 'string')) {
       fail(fishFailure('invalid_configuration', 'configuration')); return
     }
     const apiKey = String(config.FISH_API_KEY || '').trim()
@@ -42,8 +57,9 @@ export class FishTts {
     this.phase = 'handshake'
     let socket: WebSocket
     try {
+      const agent = this.proxyAgent(String(config.network_proxy || '').trim())
       socket = this.connect('wss://api.fish.audio/v1/tts/live/with-timestamp', {
-        headers: { Authorization: `Bearer ${apiKey}`, model }, handshakeTimeout: 15000,
+        headers: { Authorization: `Bearer ${apiKey}`, model }, handshakeTimeout: 15000, ...(agent ? { agent } : {}),
       })
     } catch (error) {
       const failure = fishNetworkFailure(error, 'handshake')

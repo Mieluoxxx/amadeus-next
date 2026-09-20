@@ -697,6 +697,18 @@ export default function SettingsPage({ send, subscribe }: Props) {
                   <InfoCard icon="Photo" title={t('settings.label.visual_pack')} content={visualPackInstalled ? undefined : visualPackContent} value={visualPackValue} />
                   <InfoCard icon="People" title={t('settings.label.character_pack')} content={!characterPackInstalled && characterPackState === 'invalid' ? characterPackContent : undefined} value={characterPackValue} />
                 </SettingsGroup>
+
+                {/* The address reaches Fish speech directly and Pi through its
+                    worker environment, so one field covers both. */}
+                <SettingsGroup title={t('settings.group.network')}>
+                  <CardShell vertical>
+                    <StartupFieldRow
+                      field={{ key: 'network_proxy', label: t('settings.label.network_proxy'), type: 'text', value: val('network_proxy', ''), editable: true }}
+                      desktop={desktop}
+                      onSave={handleStartupSave}
+                    />
+                  </CardShell>
+                </SettingsGroup>
               </div>
             ) : null}
 

@@ -155,7 +155,7 @@ class AppRuntime {
   private readonly settingsFile: string
   private readonly pi = new PiHost(() => utilityProcess.fork(path.join(MODULE_DIR, 'pi-worker.js'), [], {
     cwd: process.cwd(),
-    env: { ...process.env, SALIERI_NEXT_PI_CWD: process.cwd(), SALIERI_NEXT_PI_SESSIONS: path.join(app.getPath('userData'), 'pi-sessions') },
+    env: { ...process.env, ...this.piEnv(), SALIERI_NEXT_PI_CWD: process.cwd(), SALIERI_NEXT_PI_SESSIONS: path.join(app.getPath('userData'), 'pi-sessions') },
     serviceName: 'Salieri Pi Runtime',
     stdio: 'ignore',
   }))
@@ -174,6 +174,7 @@ class AppRuntime {
     mouth_gain: 8,
     mouth_silence_threshold: 0.08,
     voice_sync_offset_ms: 0,
+    network_proxy: '',
   }
   private readonly speech: SpeechBridge
   private readonly tts: FishTts
@@ -443,6 +444,15 @@ class AppRuntime {
     return { ...this.sessionPayload(session), ok: true, source: 'next' }
   }
 
+  // Pi reads its proxy settings from the environment while its worker process
+  // starts, which is also why the worker is replaced when the address changes
+  // (see setConfig). `NODE_USE_ENV_PROXY` is what makes Node's fetch use the
+  // variables at all; an empty address keeps the worker on direct connections.
+  private piEnv(): Record<string, string> {
+    const proxy = String(this.config.network_proxy || '').trim()
+    return proxy ? { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: proxy, HTTPS_PROXY: proxy } : {}
+  }
+
   private setConfig(values: Json): Json {
     for (const [key, min, max] of [['mouth_gain', 0, 32], ['mouth_silence_threshold', 0, 1], ['voice_sync_offset_ms', -1000, 1000]] as const) {
       if (!(key in values)) continue
@@ -452,9 +462,25 @@ class AppRuntime {
       }
       values[key] = Number(value)
     }
+    if ('network_proxy' in values) {
+      const proxy = String(values.network_proxy ?? '').trim()
+      let parsed: URL | null = null
+      try { parsed = new URL(proxy) } catch { parsed = null }
+      // Only HTTP CONNECT proxies are usable: Pi's transport rejects SOCKS and
+      // PAC URLs, and an empty value means "connect directly".
+      if (proxy && (!parsed || !['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname)) {
+        return { ok: false, error: 'Invalid network_proxy: expected an http:// or https:// proxy URL' }
+      }
+      values.network_proxy = proxy
+    }
     const previousLanguage = this.config.asr_language
+    const previousProxy = this.config.network_proxy
     Object.assign(this.config, values)
     this.persistSettings()
+    // The worker keeps the address it started with, so a changed address
+    // replaces that one component at the next safe boundary. Speech, the scene
+    // and the active reply are untouched.
+    if (this.config.network_proxy !== previousProxy) this.queueReload({ targets: ['pi-worker'] }, false)
     if (this.listeningEnabled && this.config.asr_language !== previousLanguage) {
       this.speech.stop()
       this.resumeListening()

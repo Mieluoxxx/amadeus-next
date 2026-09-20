@@ -403,3 +403,27 @@ test('Fish distinguishes malformed opening headers and ignores intentional abort
   }
 })
 
+test('Fish tunnels through the configured network proxy and stays direct without one', () => {
+  const options = [], events = [], config = { FISH_API_KEY: 'fixture' }
+  const fish = new FishTts(() => config, event => events.push(event), (_url, value) => {
+    options.push(value)
+    const socket = new Socket(); socket.readyState = 1; return socket
+  })
+  const key = generation => ({ sessionId: 'session', turnId: 'turn', generation })
+  try {
+    fish.start(key(1))
+    assert.equal(options[0].agent, undefined, 'no address means a direct connection')
+    config.network_proxy = 'http://127.0.0.1:7890'
+    fish.start(key(2))
+    assert.equal(options[1].agent.constructor.name, 'HttpsProxyAgent')
+    fish.start(key(3))
+    assert.equal(options[2].agent, options[1].agent, 'the same address reuses one agent')
+    config.network_proxy = 'http://127.0.0.1:7891'
+    fish.start(key(4))
+    assert.notEqual(options[3].agent, options[1].agent)
+    config.network_proxy = 42
+    events.length = 0
+    fish.start(key(5))
+    assert.equal(events[0].diagnostic.code, 'invalid_configuration')
+  } finally { fish.abort() }
+})

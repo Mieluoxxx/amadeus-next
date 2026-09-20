@@ -73,6 +73,13 @@ apply during playback. Recognition language restarts only the recognition task.
 The Models page selects the current Pi session's model and thinking level while
 Pi is idle, using the SDK registry rather than a second provider configuration.
 
+The Overview page holds one `Network proxy` field. The address is used by Fish
+speech (as a CONNECT tunnel) and by Pi (through its worker environment, which
+requires the worker to be replaced — no other component is touched). Empty means
+direct connections; only `http://` and `https://` addresses are accepted, and an
+invalid value is rejected without being stored. Fish always tunnels the address;
+`NO_PROXY` is honored only inside Pi's transport.
+
 Resource reload and component recovery are internal runtime mechanisms, not
 user-facing settings. The runtime retains `runtime.reload` and `runtime.status`
 IPC for infrastructure and integration checks; development watchers trigger the

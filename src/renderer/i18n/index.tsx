@@ -66,6 +66,8 @@ const EN = {
   'settings.group.chat_appearance': 'Chat appearance',
 
   'settings.group.chat_voice': 'Chat & Voice',
+  'settings.group.network': 'Network',
+  'settings.label.network_proxy': 'Network proxy',
   'settings.group.main_model': 'Main chat model',
 
   'settings.group.asr_current': 'Current configuration',
@@ -275,6 +277,7 @@ const ZH: Messages = {
   'settings.overview.title': '运行状态总览', 'settings.overview.model': '主模型', 'settings.overview.listening': '语音识别', 'settings.overview.speaking': '语音合成',
   'settings.aria_sections': '设置分区', 'settings.group.chat_appearance': '聊天外观',
   'settings.group.chat_voice': '界面与字幕', 'settings.group.main_model': '主聊天模型', 'settings.group.voice_output': '说话与合成',
+  'settings.group.network': '网络', 'settings.label.network_proxy': '网络代理',
   'settings.group.asr_current': '当前配置', 'settings.group.asr_configuration': '识别设置', 'settings.group.asr_capture': '麦克风与端点', 'settings.group.asr_remaining': '其余设置', 'settings.label.asr_mode': '识别后端', 'settings.asrBackend.qwen3_asr': 'Qwen3-ASR（本地）', 'settings.asrBackend.sense_voice': 'SenseVoice（本地）', 'settings.asrBackend.openai_compatible': 'OpenAI 兼容转写（远程）', 'settings.asrBackend.mimo': '小米 ASR 模型（远程）',
 
 
@@ -334,6 +337,7 @@ const JA: Messages = {
   'settings.security.available': '秘密情報は OS により保護されています', 'settings.security.unavailable': 'OS の秘密情報暗号化を利用できません', 'settings.restart_pending': '保存済みの変更はバックエンドの再起動で反映されます', 'settings.restart_pending_detail': '自動で再起動します。ここから再起動できない場合は右のボタンを使用してください。',
   'settings.overview.title': 'ランタイム概要', 'settings.overview.model': 'メインモデル', 'settings.overview.listening': '音声認識', 'settings.overview.speaking': '音声合成',
   'settings.group.chat_appearance': 'チャットの外観', 'settings.group.chat_voice': '表示と言語', 'settings.group.main_model': 'メインチャットモデル', 'settings.group.voice_output': '合成と出力',
+  'settings.group.network': 'ネットワーク', 'settings.label.network_proxy': 'ネットワークプロキシ',
   'settings.group.asr_current': '現在の設定', 'settings.group.asr_configuration': '認識設定', 'settings.group.asr_capture': 'マイクと端点検出', 'settings.group.asr_remaining': 'その他の設定', 'settings.label.asr_mode': '認識バックエンド', 'settings.asrBackend.qwen3_asr': 'Qwen3-ASR（ローカル）', 'settings.asrBackend.sense_voice': 'SenseVoice（ローカル）', 'settings.asrBackend.openai_compatible': 'OpenAI 互換文字起こし（リモート）', 'settings.asrBackend.mimo': 'MiMo ASR モデル（Xiaomi・リモート）',
 
   'settings.note.no_user_settings': 'ユーザー管理の接続設定はありません。', 'settings.note.no_active_connection': '選択中のアクティブな接続はありません。', 'settings.other_voice_backends': 'その他の音声合成バックエンド',
