@@ -34,7 +34,6 @@ contextBridge.exposeInMainWorld('amadeus', {
   platform: process.platform,
   getDesktopSettings: () => request('desktop.settings.get'),
   updateDesktopSettings: (update: unknown) => request('desktop.settings.update', update as Record<string, unknown>),
-  restartBackend: () => Promise.resolve({ restarted: false, reason: 'Pi is embedded in this app' }),
   focusMainWindow: () => request('window.focus').then(() => true),
   notifyTaskComplete: () => Promise.resolve(false),
   onTaskCompleteActivated: () => () => {},

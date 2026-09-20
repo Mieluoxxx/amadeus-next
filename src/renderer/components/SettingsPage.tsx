@@ -1,11 +1,10 @@
-import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react'
+import { useState, useEffect, useCallback, type ReactNode } from 'react'
 import FluentIcon, { type FluentIconName } from './FluentIcon'
 import { translateDynamic, translateSetting, useI18n, type MessageKey } from '../i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-import { createRestartScheduler, providerCredentialDecision } from './settingsStartupApply'
 
 interface Props {
   send: (method: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
@@ -36,14 +35,13 @@ interface StartupField {
   label: string
   type: 'text' | 'url' | 'path' | 'number' | 'select' | 'boolean' | 'secret'
   description?: string
-  value?: string | boolean
+  value?: string | boolean | number
   configured?: boolean
   options?: StartupOption[]
   min?: number
   max?: number
   step?: number
   editable: boolean
-  restart_required: boolean
 }
 
 interface ConfigurationGroup {
@@ -73,25 +71,6 @@ function asRecord(value: unknown): Record<string, unknown> {
     ? value as Record<string, unknown>
     : {}
 }
-
-// Provider ids whose credential is a single desktop-store secret. Ids name wire
-// protocols now (plus the DeepSeek preset), and the retired vendor ids openai
-// and gemini normalize onto one of these on read. This is what separates "the
-// process started before the key was written" (a restart brings it in) from
-// "nobody entered a key yet" (a restart would accomplish nothing).
-const PROVIDER_SECRET_KEYS: Record<string, string> = {
-  deepseek: 'DEEPSEEK_API_KEY',
-  'openai-responses': 'OPENAI_API_KEY',
-  'openai-completions': 'OPENAI_API_KEY',
-  'anthropic-messages': 'ANTHROPIC_API_KEY',
-  'google-gemini': 'GEMINI_API_KEY',
-}
-
-// A store written by an earlier version may hold a window scope. Show the full
-// screen it resolves to instead of rendering a select with no matching option.
-// A connection card saves field by field. Wait for that burst to finish so one
-// restart covers every field: the backend reads the store when it spawns.
-const AUTO_RESTART_DEBOUNCE_MS = 1000
 
 function asConfigurationGroups(value: unknown): ConfigurationGroup[] {
   return Array.isArray(value) ? value as ConfigurationGroup[] : []
@@ -222,7 +201,7 @@ function StartupFieldRow({ field, desktop, onSave }: {
   const source = field.key ? desktop?.sources?.[field.key] || 'default' : 'default'
   const storedValue = field.key && source === 'user' ? desktop?.values?.[field.key] : undefined
   const initial = storedValue !== undefined ? storedValue : field.value ?? ''
-  const [draft, setDraft] = useState<string | boolean>(initial)
+  const [draft, setDraft] = useState<string | boolean | number>(initial)
   const [busy, setBusy] = useState(false)
   const [secretDraft, setSecretDraft] = useState('')
   const locked = field.key ? Boolean(desktop?.locked?.[field.key]) : true
@@ -481,21 +460,13 @@ export default function SettingsPage({ send, subscribe }: Props) {
   const [config, setConfig] = useState<Record<string, unknown>>({})
   const [desktop, setDesktop] = useState<DesktopSettingsSnapshot | null>(null)
   const [saving, setSaving] = useState<string | null>(null)
-  const [restartPending, setRestartPending] = useState(false)
-  const [restarting, setRestarting] = useState(false)
   const [error, setError] = useState<UiMessage | null>(null)
-  // The restart callback is defined below, so the scheduler reaches the current
-  // one through a ref when its timer fires.
-  const restartBackendRef = useRef<() => void>(() => {})
-
-  // One scheduler for the life of the page: it owns the pending timer, so a
-  // burst of saves cannot leave a second restart queued behind the first.
-  const restartScheduler = useMemo(
-    () => createRestartScheduler(() => restartBackendRef.current(), AUTO_RESTART_DEBOUNCE_MS),
-    [],
-  )
-
-  useEffect(() => () => restartScheduler.cancel(), [restartScheduler])
+  const [reloadStatus, setReloadStatus] = useState('ready')
+  const [piModels, setPiModels] = useState<ComboOption[]>([])
+  const [piModel, setPiModel] = useState('')
+  const [thinkingLevel, setThinkingLevel] = useState('off')
+  const [thinkingLevels, setThinkingLevels] = useState<string[]>([])
+  const reloading = reloadStatus === 'queued' || reloadStatus === 'applying'
 
   const refreshDesktop = useCallback(async () => {
     const snapshot = await window.amadeus?.getDesktopSettings()
@@ -513,102 +484,57 @@ export default function SettingsPage({ send, subscribe }: Props) {
     return unsubscribe
   }, [subscribe, send, refreshDesktop])
 
-  const restartBackend = useCallback(async () => {
-    if (!window.amadeus) return
-    setRestarting(true)
-    setError(null)
-    try {
-      const result = await window.amadeus.restartBackend()
-      if (result?.restarted) {
-        setRestartPending(false)
-        // The restarted backend has new live config, and this page's own
-        // decisions read it (which provider credentials the process holds).
-        // Nothing refreshes on its own: the config subscription only fires when
-        // the backend emits, and a restart does not.
-        try {
-          const response = await send('system.get_config', {})
-          setConfig((response.values as Record<string, unknown>) ?? response)
-          void refreshDesktop()
-        } catch {
-          // The socket may still be reconnecting. Leave the values as they are
-          // rather than reporting a failed refresh as a failed restart.
-        }
-        return
-      }
-      // The running backend was not started by this app, so this process has
-      // nothing to restart. Keep the banner and say why, instead of clearing it
-      // and leaving the saved values silently unapplied.
-      setError({
-        key: result?.reason === 'not_owned' ? 'settings.restart_unowned' : 'settings.restart_error',
-      })
-    } catch (reason) {
-      setError(reason instanceof Error ? { key: 'settings.restart_error', fallback: reason.message } : { key: 'settings.restart_error' })
-    } finally {
-      setRestarting(false)
+  useEffect(() => {
+    const apply = (payload: Record<string, unknown>) => {
+      setReloadStatus(String(payload.status || 'ready'))
+      if (payload.error) setError({ key: 'settings.reload_error', fallback: String(payload.error) })
     }
-  }, [t, send, refreshDesktop])
+    const unsubscribe = subscribe('runtime.reload', apply)
+    void send('runtime.status').then(apply).catch(reason => setError({ key: 'settings.reload_error', fallback: String(reason) }))
+    return unsubscribe
+  }, [send, subscribe])
 
   useEffect(() => {
-    restartBackendRef.current = () => void restartBackend()
-  }, [restartBackend])
+    if (section !== 'models' || reloading) return
+    let cancelled = false
+    void send('pi.models').then(result => {
+      if (cancelled) return
+      if (!result.ok) throw new Error(String(result.error))
+      setPiModels(result.models as ComboOption[])
+      setPiModel(String(result.current || ''))
+      setThinkingLevel(String(result.thinkingLevel || 'off'))
+      setThinkingLevels(result.thinkingLevels as string[])
+    }).catch(reason => { if (!cancelled) setError({ key: 'settings.loading_error', fallback: String(reason) }) })
+    return () => { cancelled = true }
+  }, [section, reloading, send])
 
-  // A saved startup value only reaches the backend when it spawns, which is why
-  // the reported bug read as "the key was ignored". Restart for the user, but
-  // coalesce a burst of saves (a connection card saves field by field) into one
-  // attempt and let the store settle first.
-  const scheduleAutoRestart = useCallback(() => {
-    setRestartPending(true)
-    restartScheduler.schedule()
-  }, [restartScheduler])
+  const changeModel = async (model: string, thinkingLevel?: string) => {
+    setSaving('pi_model')
+    setError(null)
+    try {
+      const result = await send('pi.model.set', { model, thinkingLevel })
+      if (!result.ok) throw new Error(String(result.error))
+      setPiModel(String(result.current))
+      setThinkingLevel(String(result.thinkingLevel))
+      setThinkingLevels(result.thinkingLevels as string[])
+    } catch (reason) { setError({ key: 'settings.update_error', fallback: String(reason) }) }
+    finally { setSaving(null) }
+  }
 
   const handleChange = useCallback(async (key: string, value: unknown) => {
     setSaving(key)
     setError(null)
     try {
       const response = await send('system.set_config', { values: { [key]: value } })
+      if (!response.ok) throw new Error(String(response.error || t('settings.update_error', undefined, { key })))
       setConfig((response.values as Record<string, unknown>) ?? response)
-      if (key === 'llm_provider') {
-        const persisted = await window.amadeus?.updateDesktopSettings({ values: { LLM_PROVIDER: String(value) } })
-        if (persisted && !persisted.ok) throw new Error(persisted.error || t('settings.save_error', undefined, { key }))
-        if (persisted?.settings) setDesktop(persisted.settings as unknown as DesktopSettingsSnapshot)
-        // The provider switch itself is already live: system.set_config calls
-        // set_provider. Only a credential this process is missing can need a
-        // restart, so probe the running config first -- switching to a provider
-        // nobody configured must not restart the backend for nothing.
-        const provider = String(value)
-        const secretKey = PROVIDER_SECRET_KEYS[provider]
-        const decision = providerCredentialDecision({
-          secretKey,
-          configuredInProcess: asConfigurationGroups(config.model_connections)
-            .some(group => group.id === provider && group.configured),
-          storedSecret: Boolean(secretKey && desktop?.secrets?.[secretKey]?.configured),
-        })
-        if (decision === 'restart') {
-          // Stored, but this process started before it was written.
-          scheduleAutoRestart()
-        } else if (decision === 'needs_key') {
-          setError({ key: 'settings.provider_needs_key', values: { provider } })
-        }
-      }
-      // The runtime backend switch is process-local, so the recognition mode
-      // persists its startup equivalent to survive a restart.
-      if (key === 'asr_backend') {
-        const persisted = await window.amadeus?.updateDesktopSettings({ values: { ASR_BACKEND: String(value) } })
-        if (persisted && !persisted.ok) throw new Error(persisted.error || t('settings.save_error', undefined, { key }))
-        if (persisted?.settings) setDesktop(persisted.settings as unknown as DesktopSettingsSnapshot)
-      }
-      if (key === 'presentation_locale') {
-        setLocale(value)
-        const persisted = await window.amadeus?.updateDesktopSettings({ values: { AMADEUS_PRESENTATION_LOCALE: String(value) } })
-        if (persisted && !persisted.ok) throw new Error(persisted.error || t('settings.save_error', undefined, { key }))
-        if (persisted?.settings) setDesktop(persisted.settings as unknown as DesktopSettingsSnapshot)
-      }
+      if (key === 'presentation_locale') setLocale(value)
     } catch (reason) {
       setError(reason instanceof Error ? { key: 'settings.update_error', fallback: reason.message, values: { key } } : { key: 'settings.update_error', values: { key } })
     } finally {
       setSaving(null)
     }
-  }, [send, setLocale, t, config, desktop, scheduleAutoRestart])
+  }, [send, setLocale, t])
 
   const handleStartupSave = useCallback(async (
     field: StartupField,
@@ -624,16 +550,17 @@ export default function SettingsPage({ send, subscribe }: Props) {
       )
       if (!result.ok) throw new Error(result.error || t('settings.save_error', undefined, { key: field.key }))
       if (result.settings) setDesktop(result.settings as unknown as DesktopSettingsSnapshot)
-      scheduleAutoRestart()
+      // The runtime applies and persists the change, then broadcasts system.config.
     } catch (reason) {
       setError(reason instanceof Error ? { key: 'settings.save_error', fallback: reason.message, values: { key: field.key } } : { key: 'settings.save_error', values: { key: field.key } })
       throw reason
     } finally {
       setSaving(null)
     }
-  }, [t, scheduleAutoRestart])
+  }, [t])
 
   const val = (key: string, fallback: string) => String(config[key] ?? fallback)
+
   const visualPack = asRecord(config.visual_asset_pack)
   const visualPackInstalled = Boolean(visualPack.installed)
   const visualPackState = String(visualPack.state ?? 'not_installed')
@@ -657,13 +584,8 @@ export default function SettingsPage({ send, subscribe }: Props) {
       ? t('settings.asset.character_attention', undefined, { detail: String(characterPack.message ?? t('settings.validation_failed', 'validation failed')) })
       : t('settings.asset.character_optional')
 
-  const modelConnections = asConfigurationGroups(config.model_connections)
-  const modelRoles = asConfigurationGroups(config.model_roles)
   const voiceConfiguration = asConfigurationGroups(config.voice_configuration)
 
-
-  const activeModelConnections = modelConnections.filter(group => group.active)
-  const currentModelStatus = activeModelConnections.find(group => group.active)
   const asrBackendId = val('asr_backend', 'qwen3_asr')
   const asrBackends = Array.isArray(config.asr_backends)
     ? config.asr_backends as Array<{ id: string; label: string; deployment?: string }>
@@ -683,7 +605,6 @@ export default function SettingsPage({ send, subscribe }: Props) {
   ).map(id => ({ value: id, label: translateDynamic(locale, 'settings.asrBackend', id, id) }))
   const asrStatus = voiceConfiguration.find(group => group.id === asrGroupId)
   const synthesisStatus = voiceConfiguration.find(group => group.id === 'speech_synthesis')
-  const otherModelConnections = modelConnections.filter(group => !group.active)
   // Runs on this machine for every backend, the remote API included, so it never
   // follows the selected recognizer.
   const captureGroups = voiceConfiguration.filter(group => group.id === 'conversation_asr')
@@ -691,6 +612,7 @@ export default function SettingsPage({ send, subscribe }: Props) {
   const wakeGroups = voiceConfiguration.filter(group => ['wake_asr', 'acoustic_pipeline'].includes(group.id))
   const activeOutputGroups = voiceConfiguration.filter(group => (
     group.id === 'speech_synthesis'
+    || group.id === 'voice_calibration'
     || (['tts_embedded_v3', 'tts_remote', 'tts_mimo', 'voice_reference_profile'].includes(group.id) && group.active)
   ))
   const otherOutputGroups = voiceConfiguration.filter(group => (
@@ -720,21 +642,6 @@ export default function SettingsPage({ send, subscribe }: Props) {
             {desktop?.encryptionAvailable ? t('settings.security.available') : t('settings.security.unavailable')}
           </div>
         </div>
-
-        {restartPending ? (
-          <div className="settings-restart-banner" role="status">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="settings-restart-icon"><FluentIcon name="Sync" size={16} /></div>
-              <div className="min-w-0">
-                <div className="text-[12px] font-[700]" style={{ color: 'var(--text)' }}>{t('settings.restart_pending')}</div>
-                <div className="text-[10.5px] mt-0.5" style={{ color: 'var(--muted)' }}>{t('settings.restart_pending_detail')}</div>
-              </div>
-            </div>
-            <button onClick={() => void restartBackend()} disabled={restarting} className="settings-primary-button disabled:opacity-50">
-              {restarting ? t('settings.restarting') : t('settings.restart')}
-            </button>
-          </div>
-        ) : null}
 
         <div className="settings-layout flex gap-6 items-start" style={{ width: '100%' }}>
           <nav className="settings-section-nav shrink-0 flex flex-col sticky" aria-label={t('settings.aria_sections')}>
@@ -775,7 +682,7 @@ export default function SettingsPage({ send, subscribe }: Props) {
                       whatever status text the backend actually reports; the generic
                       "Current runtime selection" filler line stays out. */}
                   <div className="settings-overview-grid">
-                    <OverviewCard icon="Robot" label={t('settings.overview.model')} value={val('llm_provider', 'deepseek')} detail={currentModelStatus?.status_detail} ok={currentModelStatus?.status_ok ?? true} onClick={() => setSection('models')} />
+                    <OverviewCard icon="Robot" label={t('settings.overview.model')} value={val('llm_provider', 'pi')} onClick={() => setSection('models')} />
                     <OverviewCard icon="Microphone" label={t('settings.overview.listening')} value={asrBackendId} detail={asrStatus?.status_detail} ok={asrStatus?.status_ok ?? false} onClick={() => setSection('asr')} />
                     <OverviewCard icon="Play" label={t('settings.overview.speaking')} value={val('tts_backend', 'gpt_sovits')} detail={synthesisStatus?.status_detail} ok={synthesisStatus?.status_ok ?? false} onClick={() => setSection('tts')} />
                   </div>
@@ -796,27 +703,11 @@ export default function SettingsPage({ send, subscribe }: Props) {
             {section === 'models' ? (
               <div className="flex flex-col settings-section-content">
                 <SettingsGroup title={t('settings.group.main_model')}>
-                  <InfoCard icon="Robot" title={t('settings.label.current_model')} value={val('llm_provider', 'pi')} />
+                  {piModels.length ? <ComboCard icon="Robot" title={t('settings.label.current_model')} value={piModel} options={piModels} disabled={Boolean(saving) || reloading} onChange={value => void changeModel(value)} />
+                    : <InfoCard icon="Robot" title={t('settings.label.current_model')} value={piModel || 'Pi'} />}
+                  {thinkingLevels.length > 1 ? <ComboCard icon="Robot" title={t('settings.thinking_level')} value={thinkingLevel} options={thinkingLevels} disabled={Boolean(saving) || reloading} onChange={value => void changeModel(piModel, value)} /> : null}
                 </SettingsGroup>
 
-                <SettingsGroup title={t('settings.group.active_connections')}>
-                  <ConfigurationCollection groups={activeModelConnections} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_active_connection')} />
-                </SettingsGroup>
-
-
-                <details className="settings-secondary-disclosure">
-                  <summary>{t('settings.other_connections')}</summary>
-                  <div className="flex flex-col gap-2 mt-3">
-                    <ConfigurationCollection groups={otherModelConnections} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-                  </div>
-                </details>
-
-                <details className="settings-secondary-disclosure">
-                  <summary>{t('settings.advanced_roles')}</summary>
-                  <div className="flex flex-col gap-2 mt-3">
-                    <ConfigurationCollection groups={modelRoles} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-                  </div>
-                </details>
               </div>
             ) : null}
 

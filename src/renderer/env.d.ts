@@ -14,7 +14,6 @@ export declare global {
       values?: Record<string, string | boolean | null>
       secrets?: Record<string, string | null>
     }) => Promise<{ ok: boolean; error?: string; settings?: Record<string, unknown> }>
-    restartBackend: () => Promise<{ restarted: boolean; reason?: string }>
     focusMainWindow: () => Promise<boolean>
     /** Preload accepts this payload and currently ignores it. */
     notifyTaskComplete: (payload?: {
