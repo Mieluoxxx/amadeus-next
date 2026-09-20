@@ -62,7 +62,6 @@ const EN = {
   'settings.overview.speaking': 'Speech synthesis',
 
   'settings.group.chat_appearance': 'Chat appearance',
-  'settings.group.avatar_compatibility': 'Avatar compatibility',
 
   'settings.group.chat_voice': 'Chat & Voice',
   'settings.group.main_model': 'Main chat model',
@@ -149,24 +148,6 @@ const EN = {
 
 
   'settings.label.current_model': 'Current model profile',
-
-
-
-
-
-  'settings.avatar.user': 'Your avatar',
-  'settings.avatar.user_detail': 'Shown beside your messages',
-  'settings.avatar.assistant': 'Kurisu avatar',
-  'settings.avatar.assistant_detail': 'Shown beside Amadeus responses',
-  'settings.avatar.opening': 'Opening…',
-  'settings.avatar.replace': 'Replace',
-  'settings.avatar.choose': 'Choose image',
-  'settings.avatar.restore': 'Restore default {name}',
-  'settings.avatar.note': "A centered PNG copy is stored in the app's local assets. The original file is never modified.",
-  'settings.avatar.load_error': 'Could not load chat avatars',
-  'settings.avatar.save_error': 'Could not save avatar',
-  'settings.avatar.restore_error': 'Could not restore default avatar',
-
 
 
 
@@ -285,7 +266,7 @@ const ZH: Messages = {
 
   'settings.security.available': '密钥受操作系统保护', 'settings.security.unavailable': '系统密钥加密不可用', 'settings.restart_pending': '已保存的更改需要重启后端才能生效', 'settings.restart_pending_detail': '本应用会自动重启；若该后端无法从这里自动重启，请点击右侧按钮。',
   'settings.overview.title': '运行状态总览', 'settings.overview.model': '主模型', 'settings.overview.listening': '语音识别', 'settings.overview.speaking': '语音合成',
-  'settings.aria_sections': '设置分区', 'settings.group.chat_appearance': '聊天外观', 'settings.group.avatar_compatibility': '头像兼容',
+  'settings.aria_sections': '设置分区', 'settings.group.chat_appearance': '聊天外观',
   'settings.group.chat_voice': '界面与字幕', 'settings.group.main_model': '主聊天模型', 'settings.group.active_connections': '当前模型连接', 'settings.group.voice_output': '说话与合成',
   'settings.group.asr_current': '当前配置', 'settings.group.asr_configuration': '识别设置', 'settings.group.asr_capture': '麦克风与端点', 'settings.group.asr_remaining': '其余设置', 'settings.label.asr_mode': '识别后端', 'settings.asrBackend.qwen3_asr': 'Qwen3-ASR（本地）', 'settings.asrBackend.sense_voice': 'SenseVoice（本地）', 'settings.asrBackend.openai_compatible': 'OpenAI 兼容转写（远程）', 'settings.asrBackend.mimo': '小米 ASR 模型（远程）',
 
@@ -305,7 +286,6 @@ const ZH: Messages = {
 
   'settings.label.interface_language': '界面语言', 'settings.label.chat_translation': '聊天翻译字幕',
   'settings.label.current_model': '当前模型配置',
-  'settings.avatar.user': '你的头像', 'settings.avatar.user_detail': '显示在你的消息旁', 'settings.avatar.assistant': '红莉栖头像', 'settings.avatar.assistant_detail': '显示在 Amadeus 回复旁', 'settings.avatar.opening': '正在打开…', 'settings.avatar.replace': '替换', 'settings.avatar.choose': '选择图片', 'settings.avatar.restore': '恢复默认 {name}', 'settings.avatar.note': '应用会在本地资源中保存居中的 PNG 副本，不会修改原始文件。', 'settings.avatar.load_error': '无法加载聊天头像', 'settings.avatar.save_error': '无法保存头像', 'settings.avatar.restore_error': '无法恢复默认头像',
 
   'settings.option.english': 'English', 'settings.option.chinese': '简体中文', 'settings.option.japanese': '日本語', 'settings.option.auto': '自动',
   'settings.status.registered': '已注册', 'settings.status.configured': '已配置', 'settings.status.needs_setup': '需要设置', 'settings.status.not_installed': '未安装', 'settings.status.remote': '远程', 'settings.status.none': '无',
@@ -344,11 +324,10 @@ const JA: Messages = {
 
   'settings.security.available': '秘密情報は OS により保護されています', 'settings.security.unavailable': 'OS の秘密情報暗号化を利用できません', 'settings.restart_pending': '保存済みの変更はバックエンドの再起動で反映されます', 'settings.restart_pending_detail': '自動で再起動します。ここから再起動できない場合は右のボタンを使用してください。',
   'settings.overview.title': 'ランタイム概要', 'settings.overview.model': 'メインモデル', 'settings.overview.listening': '音声認識', 'settings.overview.speaking': '音声合成',
-  'settings.group.chat_appearance': 'チャットの外観', 'settings.group.avatar_compatibility': 'アバター互換性', 'settings.group.chat_voice': '表示と言語', 'settings.group.main_model': 'メインチャットモデル', 'settings.group.active_connections': '現在のモデル接続', 'settings.group.voice_output': '合成と出力',
+  'settings.group.chat_appearance': 'チャットの外観', 'settings.group.chat_voice': '表示と言語', 'settings.group.main_model': 'メインチャットモデル', 'settings.group.active_connections': '現在のモデル接続', 'settings.group.voice_output': '合成と出力',
   'settings.group.asr_current': '現在の設定', 'settings.group.asr_configuration': '認識設定', 'settings.group.asr_capture': 'マイクと端点検出', 'settings.group.asr_remaining': 'その他の設定', 'settings.label.asr_mode': '認識バックエンド', 'settings.asrBackend.qwen3_asr': 'Qwen3-ASR（ローカル）', 'settings.asrBackend.sense_voice': 'SenseVoice（ローカル）', 'settings.asrBackend.openai_compatible': 'OpenAI 互換文字起こし（リモート）', 'settings.asrBackend.mimo': 'MiMo ASR モデル（Xiaomi・リモート）',
 
   'settings.note.no_user_settings': 'ユーザー管理の接続設定はありません。', 'settings.note.no_active_connection': '選択中のアクティブな接続はありません。', 'settings.advanced_roles': '高度なモデルロール', 'settings.other_connections': 'その他のモデル接続', 'settings.other_voice_backends': 'その他の音声合成バックエンド',
-  'settings.avatar.user': 'ユーザーアバター', 'settings.avatar.user_detail': 'あなたのメッセージの横に表示', 'settings.avatar.assistant': '紅莉栖アバター', 'settings.avatar.assistant_detail': 'Amadeus の返信の横に表示', 'settings.avatar.opening': '開いています…', 'settings.avatar.replace': '置換', 'settings.avatar.choose': '画像を選択', 'settings.avatar.restore': '既定の {name} に戻す', 'settings.avatar.note': 'アプリのローカルアセットに中央揃えの PNG コピーを保存します。元ファイルは変更しません。', 'settings.avatar.load_error': 'チャットアバターを読み込めません', 'settings.avatar.save_error': 'アバターを保存できません', 'settings.avatar.restore_error': '既定のアバターに戻せません',
   'settings.saving_label': '保存中…', 'settings.placeholder.secret_replace': '設定済み — 入力して置換', 'settings.placeholder.secret_empty': '未設定', 'settings.action.save': '保存', 'settings.action.clear': 'クリア', 'settings.action.on': 'オン', 'settings.action.off': 'オフ',
   'settings.asset.installed': 'インストール済み', 'settings.asset.incomplete': '不完全', 'settings.asset.invalid': '無効なパッケージ', 'settings.asset.not_installed': '未インストール', 'settings.asset.visual_content': '環境レイヤー、字幕、シナリオメディア、壁紙音声アセットが利用できます。', 'settings.asset.visual_optional': 'オプションです。内蔵壁紙、Chat、Work、ヘッドレスモードはなくても利用できます。', 'settings.asset.character_optional': 'オプションです。このパッケージがなくても Chat、Work、ヘッドレスモードは利用できます。', 'settings.label.visual_pack': 'ビジュアルランタイムパック', 'settings.label.character_pack': '紅莉栖キャラクターパック',
   'settings.asset.visual_attention': 'オプションのビジュアルパックに要確認事項があります：{detail}', 'settings.asset.character_attention': 'オプションパッケージが不完全です：{detail}', 'settings.asset.clips': 'クリップ', 'settings.validation_failed': '検証に失敗しました', 'settings.restart_error': 'バックエンドの再起動に失敗しました', 'settings.restart_unowned': 'このバックエンドは本アプリが起動したものではないため、ここから再起動できません。起動した場所で再起動してください。', 'settings.provider_needs_key': '{provider} の API キーが未設定です。下で入力すると反映されます。',

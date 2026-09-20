@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react'
 import FluentIcon, { type FluentIconName } from './FluentIcon'
-import ChatAvatarSettings from './ChatAvatarSettings'
 import { translateDynamic, translateSetting, useI18n, type MessageKey } from '../i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -661,7 +660,6 @@ export default function SettingsPage({ send, subscribe }: Props) {
   const modelConnections = asConfigurationGroups(config.model_connections)
   const modelRoles = asConfigurationGroups(config.model_roles)
   const voiceConfiguration = asConfigurationGroups(config.voice_configuration)
-  const avatarConfiguration = asConfigurationGroups(config.avatar_configuration)
 
 
   const activeModelConnections = modelConnections.filter(group => group.active)
@@ -789,17 +787,9 @@ export default function SettingsPage({ send, subscribe }: Props) {
                 </SettingsGroup>
 
                 <SettingsGroup title={t('settings.group.chat_appearance')}>
-                  <ChatAvatarSettings />
                   <InfoCard icon="Photo" title={t('settings.label.visual_pack')} content={visualPackInstalled ? undefined : visualPackContent} value={visualPackValue} />
                   <InfoCard icon="People" title={t('settings.label.character_pack')} content={!characterPackInstalled && characterPackState === 'invalid' ? characterPackContent : undefined} value={characterPackValue} />
                 </SettingsGroup>
-
-                <details className="settings-secondary-disclosure">
-                  <summary>{t('settings.group.avatar_compatibility')}</summary>
-                  <div className="flex flex-col gap-2 mt-3">
-                    <ConfigurationCollection groups={avatarConfiguration} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-                  </div>
-                </details>
               </div>
             ) : null}
 

@@ -16,18 +16,6 @@ export declare global {
     }) => Promise<{ ok: boolean; error?: string; settings?: Record<string, unknown> }>
     restartBackend: () => Promise<{ restarted: boolean; reason?: string }>
     focusMainWindow: () => Promise<boolean>
-    getChatAvatars: () => Promise<{ user: string; assistant: string } | null>
-    selectChatAvatar: (role: 'user' | 'assistant') => Promise<{
-      ok: boolean
-      cancelled: boolean
-      error?: string
-      avatars?: { user: string; assistant: string }
-    }>
-    clearChatAvatar: (role: 'user' | 'assistant') => Promise<{
-      ok: boolean
-      error?: string
-      avatars?: { user: string; assistant: string }
-    }>
     /** Preload accepts this payload and currently ignores it. */
     notifyTaskComplete: (payload?: {
       key: string
