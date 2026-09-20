@@ -8,13 +8,14 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:main": "node scripts/build.mjs --main-only",
-    "dev": "npm run build:main && concurrently \"vite --port 5199\" \"wait-on http://127.0.0.1:5199 && SALIERI_NEXT_DEV=1 electron .\"",
+    "dev": "node scripts/dev.mjs",
     "package:mac": "npm run build && electron-builder --mac",
     "package:mac:zip": "npm run build && electron-builder --mac zip",
     "start": "npm run build && electron .",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test test/*.test.mjs",
     "test:electron": "electron test/electron-acceptance.cjs",
+    "test:dev": "node test/dev-acceptance.mjs",
     "test:scene": "node --experimental-strip-types test/scene-harness.mjs"
   },
   "dependencies": {
