@@ -1,7 +1,8 @@
 import WebSocket from 'ws'
 import { decode, encode } from '@msgpack/msgpack'
-import type { VoiceEvent, TurnKey } from '../shared/voice.ts'
+import type { VoiceEvent, TurnKey, FishDiagnostic } from '../shared/voice.ts'
 import type { AlignmentChunk } from '../shared/presentation.ts'
+import { fishFailure, fishHttpFailure, fishNetworkFailure, fishCloseFailure, fishServerDetail, type FishFailure } from './fishErrors.ts'
 
 type Config = { FISH_API_KEY?: unknown; FISH_API_MODEL?: unknown; FISH_VOICE_ID?: unknown }
 export class FishTts {
@@ -9,6 +10,9 @@ export class FishTts {
   private queue: string[] = []
   private ended = false
   private timeout: ReturnType<typeof setTimeout> | null = null
+  private failure: ((failure: FishFailure) => void) | null = null
+  private phase: FishDiagnostic['phase'] = 'handshake'
+  private receivedAudio = false
   private config: () => Config
   private emit: (event: VoiceEvent) => void
   private connect: (url: string, options: WebSocket.ClientOptions) => WebSocket
@@ -16,81 +20,129 @@ export class FishTts {
   constructor(config: () => Config, emit: (event: VoiceEvent) => void, connect = (url: string, options: WebSocket.ClientOptions) => new WebSocket(url, options)) {
     this.config = config; this.emit = emit; this.connect = connect
   }
-  get configured(): boolean { return !!String(this.config().FISH_API_KEY || '').trim() }
+  get configured(): boolean { const key = this.config().FISH_API_KEY; return typeof key === 'string' && !!key.trim() }
 
   start(key: TurnKey): void {
     key = { sessionId: key.sessionId, turnId: key.turnId, generation: key.generation }
     this.abort()
-    if (!this.configured) return
-    const config = this.config()
-    const socket = this.connect('wss://api.fish.audio/v1/tts/live/with-timestamp', {
-      headers: { Authorization: `Bearer ${String(config.FISH_API_KEY).trim()}`, model: String(config.FISH_API_MODEL || 's2-pro') },
-      handshakeTimeout: 15000,
-    })
-    this.socket = socket
-    const fail = (error: string) => {
-      if (this.socket !== socket) return
+    const config = { ...this.config() }
+    const fail = (failure: FishFailure) => {
+      if (this.failure !== fail) return
       this.abort()
-      this.emit({ ...key, type: 'error', error })
+      this.emit({ ...key, type: 'error', ...failure })
     }
+    this.failure = fail
+    if ([config.FISH_API_KEY, config.FISH_API_MODEL, config.FISH_VOICE_ID].some(value => value != null && typeof value !== 'string')) {
+      fail(fishFailure('invalid_configuration', 'configuration')); return
+    }
+    const apiKey = String(config.FISH_API_KEY || '').trim()
+    const model = String(config.FISH_API_MODEL || 's2-pro').trim()
+    if (!apiKey) { fail(fishFailure('missing_key', 'configuration')); return }
+    if (/[\r\n]/.test(apiKey) || /[\r\n]/.test(model)) { fail(fishFailure('invalid_header', 'configuration')); return }
+    this.phase = 'handshake'
+    let socket: WebSocket
+    try {
+      socket = this.connect('wss://api.fish.audio/v1/tts/live/with-timestamp', {
+        headers: { Authorization: `Bearer ${apiKey}`, model }, handshakeTimeout: 15000,
+      })
+    } catch (error) {
+      const failure = fishNetworkFailure(error, 'handshake')
+      fail(failure.diagnostic.code === 'network_unknown'
+        ? fishFailure('connection_setup', 'configuration', { networkCode: failure.diagnostic.networkCode }) : failure)
+      return
+    }
+    this.socket = socket
     socket.once('open', () => {
-      if (this.socket !== socket) { socket.close(); return }
-      socket.send(encode({ event: 'start', request: {
+      if (this.failure !== fail) { socket.close(); return }
+      this.phase = 'synthesis'
+      if (!this.send({ event: 'start', request: {
         text: '', format: 'pcm', sample_rate: 24000, latency: 'balanced', chunk_length: 200, min_chunk_length: 50,
         ...(config.FISH_VOICE_ID ? { reference_id: String(config.FISH_VOICE_ID) } : {}),
-      } }))
-      for (const text of this.queue.splice(0)) socket.send(encode({ event: 'text', text }))
-      if (this.ended) socket.send(encode({ event: 'stop' }))
+      } })) return
+      for (const text of this.queue.splice(0)) if (!this.send({ event: 'text', text })) return
+      if (this.ended) this.sendStop()
     })
     socket.on('message', raw => {
-      if (this.socket !== socket) return
+      if (this.failure !== fail) return
+      let value: unknown
       try {
         const bytes = Array.isArray(raw) ? Buffer.concat(raw) : raw instanceof ArrayBuffer ? new Uint8Array(raw) : raw
-        const message = decode(bytes) as Record<string, any>
-        if (message.event === 'audio') {
-          if (!(message.audio instanceof Uint8Array)) throw new Error('Invalid Fish PCM payload')
-          const alignment = Number.isInteger(message.chunk_seq) ? {
-            chunk_seq: message.chunk_seq, content: message.content, alignment: message.alignment,
-            chunk_audio_offset_sec: message.chunk_audio_offset_sec,
-          } as AlignmentChunk : null
-          this.emit({ ...key, type: 'audio', pcm: message.audio, alignment })
-          if (this.ended) this.armTimeout(() => fail('Fish synthesis timed out'))
-        } else if (message.event === 'finish') {
-          if (message.reason === 'error') { fail(String(message.message || 'Fish synthesis failed')); return }
-          this.abort()
-          this.emit({ ...key, type: 'input-ended' })
-        } else if (message.event === 'error') fail(String(message.message || 'Fish request failed'))
-      } catch { fail('Invalid Fish streaming response') }
+        value = decode(bytes)
+      } catch { fail(fishFailure('decode_failed', this.phase)); return }
+      if (!value || typeof value !== 'object' || Array.isArray(value) || !('event' in value) || typeof value.event !== 'string' || !value.event) {
+        fail(fishFailure('invalid_event', this.phase)); return
+      }
+      const message = value as Record<string, unknown>
+      if (message.event === 'audio') {
+        if (!(message.audio instanceof Uint8Array)) { fail(fishFailure('invalid_audio', this.phase, { event: 'audio' })); return }
+        this.receivedAudio ||= message.audio.length > 0
+        const alignment = Number.isInteger(message.chunk_seq) ? {
+          chunk_seq: message.chunk_seq, content: message.content, alignment: message.alignment,
+          chunk_audio_offset_sec: message.chunk_audio_offset_sec,
+        } as AlignmentChunk : null
+        this.emit({ ...key, type: 'audio', pcm: message.audio, alignment })
+        if (this.ended && this.failure === fail) this.armCompletionTimeout()
+      } else if (message.event === 'error' || (message.event === 'finish' && message.reason === 'error')) {
+        fail(fishFailure('service_error', this.phase, { event: message.event, detail: fishServerDetail(message.message, apiKey) }))
+      } else if (message.event === 'finish') {
+        if (message.reason !== 'stop') { fail(fishFailure('invalid_finish', this.phase, { event: 'finish' })); return }
+        this.abort()
+        this.emit({ ...key, type: 'input-ended' })
+      }
+      // Unknown event names are ignored for forward compatibility with Fish.
     })
-    socket.on('error', () => fail('Fish connection failed'))
-    socket.on('close', () => fail('Fish closed before completing synthesis'))
-    this.armTimeout(() => fail('Fish connection or synthesis timed out'))
+    socket.on('unexpected-response', (_request, response) => {
+      // Never forward response bodies or headers: they may contain credentials.
+      response.resume()
+      fail(fishHttpFailure(response.statusCode, response.headers['retry-after']))
+    })
+    socket.on('error', error => {
+      fail(fishNetworkFailure(error, this.phase))
+    })
+    socket.on('close', (code, reason) => fail(fishCloseFailure(code, this.phase, fishServerDetail(reason?.toString('utf8'), apiKey))))
   }
   push(text: string): void {
     if (!text || !this.socket || this.ended) return
     // Long tool pauses are allowed before the input stream closes.
-    if (this.timeout) { clearTimeout(this.timeout); this.timeout = null }
-    if (this.socket.readyState === WebSocket.OPEN) this.socket.send(encode({ event: 'text', text }))
-    else this.queue.push(text)
+    if (this.socket.readyState === WebSocket.OPEN) this.send({ event: 'text', text })
+    else if (this.socket.readyState === WebSocket.CONNECTING) this.queue.push(text)
   }
   finish(): void {
+    if (!this.socket || this.ended) return
     this.ended = true
-    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(encode({ event: 'stop' }))
-    const socket = this.socket
-    if (socket) this.armTimeout(() => { socket.terminate() })
+    if (this.socket.readyState === WebSocket.OPEN) this.sendStop()
   }
   abort(): void {
     const socket = this.socket
     this.socket = null
+    this.failure = null
     this.queue = []
     this.ended = false
+    this.receivedAudio = false
     if (this.timeout) clearTimeout(this.timeout)
     this.timeout = null
     if (socket?.readyState === WebSocket.CONNECTING) socket.terminate()
     else socket?.close()
   }
-  private armTimeout(callback: () => void): void {
+  private send(message: { event: 'start' | 'text' | 'stop'; [key: string]: unknown }): boolean {
+    const socket = this.socket, fail = this.failure, phase = this.phase
+    if (!socket || !fail) return false
+    const reject = (error: unknown) => {
+      const { networkCode } = fishNetworkFailure(error, phase).diagnostic
+      fail(fishFailure('send_failed', phase, { event: message.event, ...(networkCode ? { networkCode } : {}) }))
+    }
+    try {
+      socket.send(encode(message), error => { if (error) reject(error) })
+      return this.socket === socket
+    } catch (error) { reject(error); return false }
+  }
+  private sendStop(): void {
+    this.phase = 'completion'
+    if (this.send({ event: 'stop' })) this.armCompletionTimeout()
+  }
+  private armCompletionTimeout(): void {
     if (this.timeout) clearTimeout(this.timeout)
-    this.timeout = setTimeout(callback, 30000)
+    const fail = this.failure
+    this.timeout = setTimeout(() => fail?.(fishFailure(this.receivedAudio ? 'completion_timeout' : 'first_audio_timeout', 'completion')), 30000)
   }
 }
