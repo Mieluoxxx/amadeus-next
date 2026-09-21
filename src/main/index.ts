@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, safeStorage, utilityProcess, powerMonitor } from 'electron'
+import { app, BrowserWindow, ipcMain, safeStorage, utilityProcess } from 'electron'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
@@ -200,6 +200,8 @@ class AppRuntime {
   private disposed = false
   private reloadState: Json = { status: 'ready', targets: [] }
   private sceneReload: { resolve: () => void; reject: (error: Error) => void } | null = null
+  private lastActivityAt = Date.now()
+  private idleActive = false
 
   constructor() {
     this.root = projectRoot()
@@ -222,7 +224,7 @@ class AppRuntime {
 
   async init(): Promise<void> {
     await this.scene.start()
-    this.watchSystemIdle()
+    this.watchConversationIdle()
     await this.pi.init()
     if (!this.store.sessions.length) {
       this.store.sessions.push({ id: randomUUID(), title: '新对话', messages: [] })
@@ -293,6 +295,8 @@ class AppRuntime {
         if (this.sceneReload && (!params.token || params.token === this.sceneToken)) return { ok: false, error: 'Stale scene handshake' }
         this.sceneToken = String(params.token || '')
         this.sceneReady = true
+        // 新场景从零开始，不会再有状态翻转；当前的 idle 演出必须重发一次。
+        this.emit('voice.event', { type: 'conversation-idle', active: this.idleActive })
         if (this.sceneReload) this.sceneReload.resolve()
         this.resumeListening()
         return { ok: true, key: this.activeTurn || this.idleKey(), text: this.activeTurn?.text || '', calibration: this.calibration() }
@@ -407,18 +411,29 @@ class AppRuntime {
     }
   }
 
-  /** 系统闲置一段时间后通知场景循环播放 idle 静帧；任何输入立即恢复（powerMonitor 为系统级判定）。 */
-  private watchSystemIdle(): void {
-    // 测试 VM 无 timers/Electron powerMonitor，直接跳过
-    if (typeof setInterval !== 'function' || typeof powerMonitor === 'undefined') return
-    const idleAfterSeconds = 120
-    let active = false
+  /** 回合结束（无语音的回合到 piDone 即结束，有语音的回合等播放排空）也算活动。 */
+  private markActivity(): void {
+    this.lastActivityAt = Date.now()
+    this.publishIdle(false)
+  }
+
+  /** 空闲演出的单一状态源：只在翻转时广播。 */
+  private publishIdle(idle: boolean): void {
+    if (idle === this.idleActive) return
+    this.idleActive = idle
+    this.emit('voice.event', { type: 'conversation-idle', active: idle })
+  }
+
+  /** 距上次活动超过 30 秒且回合已结束时轮播 idle 静帧；回复进行中无论多久都不轮播，回合刚结束也要重新计时。 */
+  private watchConversationIdle(): void {
+    // 测试 VM 无 timers，直接跳过
+    if (typeof setInterval !== 'function') return
+    const idleAfterMs = 30_000
     setInterval(() => {
-      const idle = powerMonitor.getSystemIdleTime() >= idleAfterSeconds
-      if (idle === active) return
-      active = idle
-      this.emit('voice.event', { type: 'system-idle', active: idle })
-    }, 5000)
+      const turn = this.activeTurn
+      const running = !!turn && (!turn.piDone || !turn.drained)
+      this.publishIdle(!running && Date.now() - this.lastActivityAt >= idleAfterMs)
+    }, 1000)
   }
 
   private emit(method: string, params: Json): void {
@@ -602,6 +617,7 @@ class AppRuntime {
   }
 
   private sendChat(params: Json): Json {
+    this.markActivity()
     if (this.reloading || this.reloadTargets.size) return { ok: false, error: 'Runtime reload pending; please retry after it completes' }
     const sessionId = String(params.session_id || this.currentSessionId)
     const session = this.store.sessions.find(item => item.id === sessionId)
@@ -655,6 +671,7 @@ class AppRuntime {
       if (!receivedText && result) present(parser.push(result))
       present(parser.finish())
       turn.piDone = true
+      this.markActivity()
       if (turn.text) session.messages.push({ role: 'assistant', text: turn.text, turn_id: turnId })
       this.store.save()
       this.emit('chat.complete', { session_id: session.id, turn_id: turnId, full_text: turn.text })
@@ -667,6 +684,7 @@ class AppRuntime {
       this.tts.abort()
       turn.piDone = true
       turn.drained = true
+      this.markActivity()
       this.voice({ ...turn, type: 'reset' })
       this.emit('chat.error', { session_id: session.id, turn_id: turnId, error: error instanceof Error ? error.message : String(error) })
       this.resumeListening()
@@ -688,6 +706,7 @@ class AppRuntime {
     return { mouthGain: number(this.config.mouth_gain, 8, 0, 32), silenceThreshold: number(this.config.mouth_silence_threshold, 0.08, 0, 1), syncOffsetMs: number(this.config.voice_sync_offset_ms, 0, -1000, 1000) }
   }
   private cancelTurn(): void {
+    this.markActivity()
     const turn = this.activeTurn
     this.activeTurn = null
     this.tts.abort()
@@ -708,6 +727,7 @@ class AppRuntime {
         turn.speech = false
         this.emit('tts.error', { error: event.error || 'Audio playback unavailable', turn_id: turn.turnId })
       }
+      this.markActivity()
       this.resumeListening()
     }
   }

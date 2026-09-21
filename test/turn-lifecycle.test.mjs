@@ -10,14 +10,17 @@ import ts from 'typescript'
 import { PresentationText } from '../src/shared/presentation.ts'
 import { sameTurn, isTurnKey } from '../src/shared/voice.ts'
 
-function runtime(env = {}) {
+function runtime(env = {}, clock = { value: Date.now() }) {
   const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
   const block = source.slice(source.indexOf('class AppRuntime {'), source.indexOf('\nlet runtime: AppRuntime'))
   const js = ts.transpileModule(block, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
-  const calls = [], prompts = []
+  const calls = [], prompts = [], intervals = []
+  // Fake clock so the conversation-idle timer can be stepped without waiting.
+  class FakeDate extends Date { static now() { return clock.value } }
   let emitFish
   const Runtime = vm.runInNewContext(js + '\nAppRuntime', {
     path, randomUUID, setTimeout, clearTimeout, process: { env }, MODULE_DIR: '/fixture', projectRoot: () => '/fixture',
+    Date: FakeDate, setInterval: (fn, ms) => intervals.push({ fn, ms }),
     app: { getPath: () => '/fixture', exit: code => calls.push(['exit', code]) }, jsonFile: () => ({}), safeStorage: { isEncryptionAvailable: () => false },
     mkdirSync() {}, writeFileSync() {},
     PresentationText, sameTurn, isTurnKey, URL,
@@ -36,7 +39,7 @@ function runtime(env = {}) {
   })
   const app = new Runtime()
   app.emit = (method, params) => calls.push([method, params])
-  return { app, calls, prompts, emitFish: event => emitFish(event) }
+  return { app, calls, prompts, intervals, clock, emitFish: event => emitFish(event) }
 }
 
 test('ASR resumes only after both Pi completion and playback drain; stale acknowledgements cannot release a new turn', async () => {
@@ -271,4 +274,49 @@ test('the network proxy setting is validated, persisted, and replaces only the P
   // Clearing the address is a valid change too and reaches the same path.
   assert.equal((await app.request('system.set_config', { values: { network_proxy: '' } })).ok, true)
   assert.equal(app.piEnv().HTTP_PROXY, undefined)
+})
+
+test('idle stills need 30 quiet seconds and never appear while a reply is running', async () => {
+  const { app, calls, intervals, clock, prompts } = runtime()
+  await app.init()
+  const idleEvents = () => calls.filter(([method, value]) => method === 'voice.event' && value.type === 'conversation-idle')
+  assert.equal(intervals.length, 1, 'the runtime watches exactly one conversation-idle timer')
+  const tick = () => intervals[0].fn()
+  const settle = () => new Promise(resolve => setImmediate(resolve))
+
+  clock.value += 29_000
+  tick()
+  assert.equal(idleEvents().length, 0)
+
+  await app.request('chat.send', { text: 'hello', turn_id: 'one' })
+  clock.value += 30_000
+  tick()
+  assert.equal(idleEvents().length, 0, 'a running reply keeps the E-mote foreground past the deadline')
+
+  prompts[0].resolve('done')
+  await settle()
+  tick()
+  assert.equal(idleEvents().length, 0, 'finishing the reply restarts the clock')
+
+  clock.value += 30_000
+  tick()
+  assert.deepEqual(idleEvents().map(([, value]) => value.active), [true])
+
+  await app.request('chat.send', { text: 'again', turn_id: 'two' })
+  tick()
+  assert.deepEqual(idleEvents().map(([, value]) => value.active), [true, false], 'a new message ends the idle show at once')
+  tick()
+  assert.equal(idleEvents().length, 2)
+
+  prompts[1].resolve('done')
+  await settle()
+  clock.value += 30_000
+  tick()
+  assert.deepEqual(idleEvents().at(-1)[1].active, true)
+
+  // A new scene starts blank and never sees the edge again, so the handshake resends the current state.
+  const before = idleEvents().length
+  await app.request('scene.ready', { token: 'next' })
+  assert.equal(idleEvents().length, before + 1)
+  assert.equal(idleEvents().at(-1)[1].active, true)
 })

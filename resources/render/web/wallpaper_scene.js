@@ -448,7 +448,7 @@
       return { x, y, width: right - x, height: bottom - y, right, bottom };
     },
 
-    /** 系统闲置时的整幅 idle 静帧轮播；urls 为空即停用并清理。 */
+    /** 对话闲置时只替换电视屏幕内的静帧；urls 为空即停用并清理。 */
     setIdleLoop(urls) {
       if (!this.app || !window.PIXI) return;
       const list = Array.isArray(urls) ? urls.filter(function (url) { return typeof url === "string" && url; }) : [];
@@ -458,12 +458,13 @@
       if (!this.idleLayer) {
         this.idleLayer = new PIXI.Container();
         this.idleLayer.visible = false;
+        this.idleLayer.mask = this.mask;
         this.idleA = new PIXI.Sprite();
         this.idleB = new PIXI.Sprite();
         this.idleB.visible = false;
         this.idleLayer.addChild(this.idleA);
         this.idleLayer.addChild(this.idleB);
-        this.app.stage.addChild(this.idleLayer);
+        this.app.stage.addChildAt(this.idleLayer, this.app.stage.getChildIndex(this.staticOverlay));
         // 字幕容器后建时会自然落在 idle 层之上；已建则重新 addChild 保持在顶层。
         if (wallpaperSubtitle && wallpaperSubtitle.container) this.app.stage.addChild(wallpaperSubtitle.container);
       }
@@ -510,14 +511,6 @@
 
     layout() {
       if (!this.app || !this.mask || !this.staticOverlay) return;
-      if (this.idleA) {
-        this.idleA.width = this.app.screen.width;
-        this.idleA.height = this.app.screen.height;
-      }
-      if (this.idleB) {
-        this.idleB.width = this.app.screen.width;
-        this.idleB.height = this.app.screen.height;
-      }
       if (this.bg) {
         this.bg.x = 0;
         this.bg.y = 0;
@@ -537,6 +530,19 @@
       const bounds = this._computeBounds(points);
       this._points = points;
       this._crtBounds = bounds;
+
+      // 五张静帧的固定景物共用同一标定：先等比映射到原壁纸，再随壁纸适配窗口。
+      // 边框由 CRT 遮罩裁掉，不能按屏幕包围盒另行拉伸，否则切换时背景会变形。
+      const placement = this.cfg.idle_transform || { x: 503.72, y: 136.57, scale: 0.4865 };
+      const imgSize = this.cfg.img_size || [1672, 941];
+      const sx = this.app.screen.width / imgSize[0];
+      const sy = this.app.screen.height / imgSize[1];
+      for (const sprite of [this.idleA, this.idleB]) {
+        if (!sprite) continue;
+        sprite.scale.set(placement.scale * sx, placement.scale * sy);
+        sprite.x = placement.x * sx;
+        sprite.y = placement.y * sy;
+      }
 
       this.mask.clear();
       this.mask.beginFill(0xffffff, 1);

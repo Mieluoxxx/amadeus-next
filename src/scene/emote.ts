@@ -89,9 +89,11 @@ export function createEmoteRenderer() {
   sprite.visible = false
   app.stage.addChild(sprite)
   let viewport: Bounds | null = null
+  /** Enlargement over the fit that already bottoms the model out; the CRT polygon mask clips the overflow. */
+  const EMOTE_ZOOM = 1.1
   const layout = () => {
     if (!viewport) return
-    const scale = Math.min(viewport.width / 800, viewport.height / 600)
+    const scale = Math.min(viewport.width / 800, viewport.height / 600) * EMOTE_ZOOM
     sprite.width = 800 * scale; sprite.height = 600 * scale
     sprite.x = viewport.x + (viewport.width - sprite.width) / 2
     sprite.y = viewport.y + viewport.height - sprite.height
@@ -101,6 +103,8 @@ export function createEmoteRenderer() {
     _sprite: { sprite },
     setSpriteViewportBounds(bounds: Bounds) { viewport = bounds; layout() },
     setSpriteViewportMask(mask: unknown) { sprite.mask = mask },
+    /** 仅切换 E-mote 前景；静帧轮播层与前景同处这一块画布，隐藏画布会连轮播一起藏掉。 */
+    setForegroundVisible(visible: boolean) { sprite.visible = visible },
   }
   // Pixi resizes on its next frame, after the wallpaper's window.resize listener.
   app.renderer.on('resize', () => host.wallpaperApp?.scene?.layout())
@@ -137,7 +141,7 @@ export function createEmoteRenderer() {
     sprite.texture = PIXI.Texture.from(canvas)
     sprite.visible = true; layout()
     // ponytail: one canvas upload per frame; a shared WebGL renderer is only needed if profiling warrants it.
-    app.ticker.add(() => sprite.texture.baseTexture.update())
+    app.ticker.add(() => { if (sprite.visible) sprite.texture.baseTexture.update() })
     const failed = () => {
       sprite.visible = false
       window.dispatchEvent(new CustomEvent('amadeus:scene-failed', { detail: 'E-mote WebGL 上下文丢失，请重新加载场景' }))

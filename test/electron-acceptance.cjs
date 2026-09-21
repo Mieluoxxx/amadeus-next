@@ -49,6 +49,64 @@ app.on('browser-window-created', (_event, window) => {
     void (async () => {
       let frame = await wait(() => window.webContents.mainFrame.frames.find(f => f.url.includes('wallpaper_engine.html')), 'Scene iframe missing')
       await wait(() => frame.executeJavaScript('!!window.__amadeusCharacter && !!window.__sceneLastReport?.character'), 'Character did not render')
+      const idle = active => window.webContents.send('next.event', { method: 'voice.event', params: { type: 'conversation-idle', active } })
+      idle(true)
+      await wait(() => frame.executeJavaScript('window.wallpaperApp.scene.idleLayer?.visible && window.wallpaperApp.scene.idleA.texture.baseTexture.valid && !window.wallpaperApp.scene._idleFade'), 'Idle frame did not render')
+      const inspectIdle = () => frame.executeJavaScript(`(() => {
+        const scene = window.wallpaperApp.scene, app = scene.app
+        const original = [app.screen.width, app.screen.height]
+        const results = []
+        try {
+          for (const [width, height] of [original, [900, 700]]) {
+            app.renderer.resize(width, height)
+            const target = PIXI.RenderTexture.create({ width, height, resolution: 1 })
+            const pixels = visible => {
+              scene.idleLayer.visible = visible
+              app.renderer.render(app.stage, { renderTexture: target })
+              return app.renderer.extract.pixels(target)
+            }
+            const before = pixels(false), after = pixels(true), b = scene._crtBounds
+            let outside = 0, inside = 0
+            for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+              const i = (y * width + x) * 4
+              if (!before.subarray(i, i + 4).some((value, offset) => value !== after[i + offset])) continue
+              // Allow the antialiased edge, but not changes to the TV bezel or room.
+              if (x < b.x - 2 || x > b.right + 2 || y < b.y - 2 || y > b.bottom + 2) outside++
+              else inside++
+            }
+            // Matched ceiling, floor and clock-side landmarks: idle pixels -> original wallpaper pixels.
+            const landmarks = [[323.53, 253.86, 661, 259.89], [483.15, 807.89, 738.82, 529.60], [1197.67, 352.08, 1086.43, 307.83]]
+            const sprite = scene.idleA
+            const alignmentError = Math.max(...landmarks.map(([x, y, bx, by]) => Math.hypot(
+              (sprite.x + x * sprite.scale.x) * 1672 / width - bx,
+              (sprite.y + y * sprite.scale.y) * 941 / height - by)))
+            const scaleError = Math.abs(sprite.scale.x * 1672 / width - sprite.scale.y * 941 / height)
+            results.push({ outside, inside, alignmentError, scaleError, masked: scene.idleLayer.mask === scene.mask })
+            target.destroy(true)
+          }
+          return { results, foreground: window.renderApp._sprite.sprite.visible }
+        } finally { app.renderer.resize(...original) }
+      })()`)
+      const idleCount = await frame.executeJavaScript('window.wallpaperApp.scene._idleUrls.length')
+      for (let index = 0; index < idleCount; index++) {
+        if (index) {
+          await frame.executeJavaScript('window.wallpaperApp.scene._idleAdvance()')
+          await wait(() => frame.executeJavaScript('(() => { const s = window.wallpaperApp.scene; return s.idleA.texture === PIXI.Texture.from(s._idleUrls[' + index + ']) && !s._idleFade && s.idleA.texture.baseTexture.valid })()'), 'Next idle frame did not render')
+        }
+        const idlePixels = await inspectIdle()
+        for (const result of idlePixels.results) {
+          assert.equal(result.outside, 0, 'Idle stills must not replace any pixels outside the TV screen, including after resize')
+          assert.ok(result.inside > 1000, 'Idle stills must actually change the TV content')
+          assert.equal(result.masked, true, 'Idle stills must follow the existing CRT polygon')
+          assert.ok(result.alignmentError < 1, 'Idle background landmarks moved by ' + result.alignmentError.toFixed(2) + ' wallpaper pixels')
+          assert.ok(result.scaleError < 1e-9, 'Idle artwork must scale uniformly in wallpaper coordinates')
+        }
+        assert.equal(idlePixels.foreground, false, 'Idle stills replace only the E-mote foreground')
+      }
+      await writeFile('/tmp/amadeus-electron-idle.png', (await window.webContents.capturePage()).toPNG())
+      idle(false)
+      await wait(() => frame.executeJavaScript('!window.wallpaperApp.scene.idleLayer.visible && window.renderApp._sprite.sprite.visible'), 'Leaving idle did not restore E-mote')
+      console.log('PASS: every idle frame aligns with the original background at both viewport sizes; exterior unchanged; leaving idle restores E-mote')
       const visibility = await frame.executeJavaScript(`(async () => {
         const { player: p, canvas: c } = window.__amadeusEmote
         const saved = { scale: p.scale, coord: p.coord, speed: p.speed, step: p.stepUpdate }

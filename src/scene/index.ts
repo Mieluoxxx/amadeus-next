@@ -1,7 +1,7 @@
 import type { CharacterEvent } from '../shared/character.ts'
 import { createEmoteRenderer, type EmoteCharacter } from './emote.ts'
 import { AlignmentTimeline } from '../shared/presentation.ts'
-import { isTurnKey, sameTurn, type VoiceEvent, type SystemIdleEvent, type TurnKey, type SceneInitialization, type Calibration } from '../shared/voice.ts'
+import { isTurnKey, sameTurn, type VoiceEvent, type ConversationIdleEvent, type TurnKey, type SceneInitialization, type Calibration } from '../shared/voice.ts'
 
 const host = window as any
 const loadCharacter = createEmoteRenderer()
@@ -24,15 +24,12 @@ let playbackStatus = ''
 let failed = false
 let lastPosition = 0
 let idleUrls: string[] = []
-let systemIdle = false
-let inTurn = false
+let conversationIdle = false
 
-/** 系统闲置时循环播放 idle 静帧并隐藏 E-mote 前景；对话回合内不进入 idle 演出。 */
+/** 空闲演出只由主进程的 conversation-idle 驱动；回合是否进行中由主进程统一判定。 */
 function applyIdle(): void {
-  const active = systemIdle && !inTurn
-  host.wallpaperApp?.scene?.setIdleLoop(active ? idleUrls : null)
-  const container = document.getElementById('canvas-container')
-  if (container) container.style.visibility = active ? 'hidden' : ''
+  host.wallpaperApp?.scene?.setIdleLoop(conversationIdle ? idleUrls : null)
+  host.renderApp?.setForegroundVisible(!conversationIdle)
 }
 
 Object.defineProperty(host, '__amadeusPlayback', { get: () => ({
@@ -87,7 +84,6 @@ function failAudio(error: unknown): void {
   dispatch({ type: 'reset' })
   diagnostic(`语音播放不可用：${String(error)}`)
   playback('error', String(error))
-  inTurn = false
   applyIdle()
 }
 
@@ -158,9 +154,9 @@ function pcm(bytes: Uint8Array): void {
   else pending.push({ generation: key.generation, samples })
 }
 
-function receive(event: VoiceEvent | SystemIdleEvent): void {
-  if (event.type === 'system-idle') {
-    systemIdle = event.active
+function receive(event: VoiceEvent | ConversationIdleEvent): void {
+  if (event.type === 'conversation-idle') {
+    conversationIdle = event.active
     applyIdle()
     return
   }
@@ -173,7 +169,6 @@ function receive(event: VoiceEvent | SystemIdleEvent): void {
   if (event.type === 'begin' || event.type === 'reset') {
     if (key && event.generation < key.generation) return
     key = { sessionId: event.sessionId, turnId: event.turnId, generation: event.generation }
-    inTurn = true
     pending = []; reports = []; timeline = new AlignmentTimeline(); trailingByte = null; inputEnded = false; playbackStatus = ''; lastPosition = 0
     text = ''; failed = false; speech = event.type === 'begin' && event.speech
     worklet?.port.postMessage({ type: 'reset', generation: key.generation })
@@ -214,7 +209,6 @@ function receive(event: VoiceEvent | SystemIdleEvent): void {
     sprite?.setMouth(0)
     dispatch({ type: 'reset' })
     playbackStatus = 'error'
-    inTurn = false
     applyIdle()
   }
 }
@@ -234,7 +228,6 @@ function tick(): void {
       } else if (report.type === 'ended') {
         dispatch({ type: 'playback', status: 'ended', now: performance.now() })
         playback('ended')
-        inTurn = false
         applyIdle()
       }
       const amplitude = Math.min(1, report.rms * calibration.mouthGain)

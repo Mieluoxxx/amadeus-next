@@ -26,7 +26,7 @@ export type VoiceEvent = TurnKey & (
 )
 export type PlaybackEvent = TurnKey & { type: 'playing' | 'buffering' | 'ended' | 'error'; error?: string }
 export type SceneInitialization = { character: { renderer: 'emote'; model: '牧瀬紅莉栖ab_白衣' }; scene: Record<string, unknown> }
-export type SystemIdleEvent = { type: 'system-idle'; active: boolean }
+export type ConversationIdleEvent = { type: 'conversation-idle'; active: boolean }
 export function sameTurn(a: TurnKey | null, b: TurnKey): boolean {
   return !!a && a.generation === b.generation && a.sessionId === b.sessionId && a.turnId === b.turnId
 }
