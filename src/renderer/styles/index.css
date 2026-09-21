@@ -425,13 +425,6 @@ html.desktop-work-slice-window #root {
   gap: 28px;
 }
 
-.settings-overview-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 9px;
-  margin-top: 14px;
-}
-
 .settings-config-summary::-webkit-details-marker,
 .settings-secondary-disclosure > summary::-webkit-details-marker {
   display: none;
@@ -557,9 +550,6 @@ html.desktop-work-slice-window #root {
     max-width: none !important;
   }
 
-  .settings-overview-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 720px) {
@@ -574,10 +564,6 @@ html.desktop-work-slice-window #root {
   .settings-restart-banner {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .settings-overview-grid {
-    grid-template-columns: 1fr;
   }
 
   .settings-field-row {
@@ -931,7 +917,7 @@ html.desktop-work-slice-window #root {
 .scene-settings-panel .setting-card:has(> select) { flex-wrap: wrap; row-gap: 10px; }
 .scene-settings-panel .setting-card > select { width: 100%; }
 .scene-settings-panel .settings-feedback.rounded-md { color: #f0aaa1 !important; background: #301c21 !important; }
-.scene-settings-panel :is(.setting-card, .settings-overview-grid > *, .settings-secondary-disclosure, [data-slot='card']) {
+.scene-settings-panel :is(.setting-card, .settings-secondary-disclosure, [data-slot='card']) {
   border: 1px solid var(--border);
   border-radius: 12px;
   color: var(--text);
@@ -939,7 +925,7 @@ html.desktop-work-slice-window #root {
   box-shadow: none;
   backdrop-filter: none;
 }
-.scene-settings-panel :is(.setting-card, .settings-overview-grid > *):hover { border-color: var(--border-strong); background: var(--surface); box-shadow: none; }
+.scene-settings-panel .setting-card:hover { border-color: var(--border-strong); background: var(--surface); box-shadow: none; }
 .scene-settings-panel [data-slot='button'] {
   border: 1px solid var(--border);
   color: var(--text);

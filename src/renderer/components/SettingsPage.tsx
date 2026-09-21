@@ -381,49 +381,6 @@ function ConfigurationCard({ group, desktop, onSave, defaultOpen }: {
   )
 }
 
-function OverviewCard({ icon, label, value, detail, ok = true, onClick }: {
-  icon: FluentIconName
-  label: string
-  value: string
-  detail?: string
-  ok?: boolean
-  onClick?: () => void
-}) {
-  const content = (
-    <>
-      <div className="flex items-center justify-between gap-3">
-        <div className="w-7 h-7 rounded-lg bg-black/[0.04] flex items-center justify-center text-[#86868b]">
-          <FluentIcon name={icon} size={15} />
-        </div>
-        <span
-          className={cn(
-            'w-2 h-2 rounded-full shrink-0 shadow-xs',
-            ok ? 'bg-emerald-500 shadow-emerald-500/50' : 'bg-amber-400 shadow-amber-400/50'
-          )}
-        />
-      </div>
-      <div className="text-[10px] uppercase tracking-wider mt-3 text-[#86868b] font-bold">{label}</div>
-      <div className="text-sm font-bold mt-1 truncate text-[#1d1d1f]">{value}</div>
-      {/* Only real backend status text earns a line here; a generic filler
-          sentence under every card was the noise this card set is meant to drop. */}
-      {detail ? <div className="text-[10.5px] mt-1 text-[#86868b] leading-tight line-clamp-1">{detail}</div> : null}
-    </>
-  )
-  return onClick ? (
-    <button
-      type="button"
-      className="rounded-2xl border border-black/[0.06] bg-white/75 backdrop-blur-xl p-3.5 text-left transition-all duration-200 shadow-[0_2px_10px_rgba(0,0,0,0.03),inset_0_1px_1px_rgba(255,255,255,0.85)] hover:bg-white hover:shadow-[0_6px_20px_rgba(0,0,0,0.06)] active:scale-[0.98] min-w-0"
-      onClick={onClick}
-    >
-      {content}
-    </button>
-  ) : (
-    <div className="rounded-2xl border border-black/[0.06] bg-white/75 backdrop-blur-xl p-3.5 text-left shadow-[0_2px_10px_rgba(0,0,0,0.03),inset_0_1px_1px_rgba(255,255,255,0.85)] min-w-0">
-      {content}
-    </div>
-  )
-}
-
 function ConfigurationCollection({ groups, desktop, onSave, empty }: {
   groups: ConfigurationGroup[]
   desktop: DesktopSettingsSnapshot | null
@@ -592,8 +549,6 @@ export default function SettingsPage({ send, subscribe }: Props) {
     ? asrBackends.map(backend => backend.id)
     : ['qwen3_asr', 'sense_voice', 'openai_compatible', 'mimo']
   ).map(id => ({ value: id, label: translateDynamic(locale, 'settings.asrBackend', id, id) }))
-  const asrStatus = voiceConfiguration.find(group => group.id === asrGroupId)
-  const synthesisStatus = voiceConfiguration.find(group => group.id === 'speech_synthesis')
   // Runs on this machine for every backend, the remote API included, so it never
   // follows the selected recognizer.
   const captureGroups = voiceConfiguration.filter(group => group.id === 'conversation_asr')
@@ -665,18 +620,6 @@ export default function SettingsPage({ send, subscribe }: Props) {
           <main className="settings-main flex-1 min-w-0">
             {section === 'general' ? (
               <div className="flex flex-col settings-section-content">
-                <section>
-                  <GroupTitle>{t('settings.overview.title')}</GroupTitle>
-                  {/* The three runtime roles. Each card shows its health dot and
-                      whatever status text the backend actually reports; the generic
-                      "Current runtime selection" filler line stays out. */}
-                  <div className="settings-overview-grid">
-                    <OverviewCard icon="Robot" label={t('settings.overview.model')} value={val('llm_provider', 'pi')} onClick={() => setSection('models')} />
-                    <OverviewCard icon="Microphone" label={t('settings.overview.listening')} value={asrBackendId} detail={asrStatus?.status_detail} ok={asrStatus?.status_ok ?? false} onClick={() => setSection('asr')} />
-                    <OverviewCard icon="Play" label={t('settings.overview.speaking')} value={val('tts_backend', 'gpt_sovits')} detail={synthesisStatus?.status_detail} ok={synthesisStatus?.status_ok ?? false} onClick={() => setSection('tts')} />
-                  </div>
-                </section>
-
                 <SettingsGroup title={t('settings.group.chat_voice')}>
                   {/* The panel remounts whenever it is reopened, so `config` is empty until the fetch lands. The interface language the renderer is already using is the only true value available then; an English literal would misreport the active choice. */}
                   <ComboCard icon="Language" title={t('settings.label.interface_language')} value={val('presentation_locale', locale)} onChange={value => void handleChange('presentation_locale', value)} options={[{ value: 'en-US', label: t('settings.option.english') }, { value: 'zh-CN', label: t('settings.option.chinese') }, { value: 'ja-JP', label: t('settings.option.japanese') }]} />
@@ -686,17 +629,6 @@ export default function SettingsPage({ send, subscribe }: Props) {
                   <InfoCard icon="Photo" title={t('settings.label.visual_pack')} content={visualPackInstalled ? undefined : visualPackContent} value={visualPackValue} />
                 </SettingsGroup>
 
-                {/* The address reaches Fish speech directly and Pi through its
-                    worker environment, so one field covers both. */}
-                <SettingsGroup title={t('settings.group.network')}>
-                  <CardShell vertical>
-                    <StartupFieldRow
-                      field={{ key: 'network_proxy', label: t('settings.label.network_proxy'), type: 'text', value: val('network_proxy', ''), editable: true }}
-                      desktop={desktop}
-                      onSave={handleStartupSave}
-                    />
-                  </CardShell>
-                </SettingsGroup>
               </div>
             ) : null}
 
@@ -725,16 +657,17 @@ export default function SettingsPage({ send, subscribe }: Props) {
                   <ConfigurationCollection groups={activeAsrGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
                 </SettingsGroup>
 
-                {/* 3. Microphone capture and endpointing, which stay local in every
-                       mode; only the transcription step can be remote. */}
-                <SettingsGroup title={t('settings.group.asr_capture')}>
-                  <ConfigurationCollection groups={captureGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-                </SettingsGroup>
+                {captureGroups.length ? (
+                  <SettingsGroup title={t('settings.group.asr_capture')}>
+                    <ConfigurationCollection groups={captureGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
+                  </SettingsGroup>
+                ) : null}
 
-                {/* 4. The wake and acoustic subsystems, which run alongside recognition. */}
-                <SettingsGroup title={t('settings.group.asr_remaining')}>
-                  <ConfigurationCollection groups={wakeGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-                </SettingsGroup>
+                {wakeGroups.length ? (
+                  <SettingsGroup title={t('settings.group.asr_remaining')}>
+                    <ConfigurationCollection groups={wakeGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
+                  </SettingsGroup>
+                ) : null}
               </div>
             ) : null}
 
