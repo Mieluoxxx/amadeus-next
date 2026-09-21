@@ -1,13 +1,17 @@
 {
-  "name": "salieri-next",
+  "name": "amadeus-next",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
+  "author": "Code-Amadeus",
+  "repository": "https://github.com/Code-Amadeus/Amadeus",
   "type": "module",
   "main": "dist/main/index.js",
-  "description": "Salieri's TypeScript/Electron runtime with native Pi, Apple Speech and Fish Audio.",
+  "description": "Amadeus's TypeScript/Electron runtime with native Pi, Apple Speech and Fish Audio.",
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:main": "node scripts/build.mjs --main-only",
+    "assets:emote": "node scripts/provision-emote.mjs",
     "dev": "node scripts/dev.mjs",
     "package:mac": "npm run build && electron-builder --mac",
     "package:mac:zip": "npm run build && electron-builder --mac zip",
@@ -39,16 +43,14 @@
     "@types/react-dom": "^19.0.0",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.1.1",
-    "concurrently": "^10.0.5",
     "electron": "^44.0.0",
     "electron-builder": "^26.15.3",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.6.0",
-    "vite": "^8.2.2",
-    "wait-on": "^8.0.0"
+    "vite": "^8.2.2"
   },
   "build": {
-    "appId": "com.amadeus.salieri.next",
+    "appId": "com.amadeus.next",
     "productName": "Amadeus",
     "directories": {
       "output": "release"
@@ -61,7 +63,8 @@
     "extraResources": [
       {
         "from": "resources",
-        "to": "amadeus-assets"
+        "to": "amadeus-assets",
+        "filter": ["**/*", "!emote/**"]
       },
       {
         "from": "dist/bin",
@@ -71,8 +74,8 @@
     "mac": {
       "category": "public.app-category.productivity",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Salieri uses the microphone for voice conversations.",
-        "NSSpeechRecognitionUsageDescription": "Salieri uses speech recognition to turn your voice into conversation."
+        "NSMicrophoneUsageDescription": "Amadeus uses the microphone for voice conversations.",
+        "NSSpeechRecognitionUsageDescription": "Amadeus uses speech recognition to turn your voice into conversation."
       }
     }
   }
