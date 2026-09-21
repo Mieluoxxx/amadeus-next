@@ -81,7 +81,7 @@ test('a Pi child that exits during the ready handshake is never adopted', async 
 })
 
 test('Pi sessions persist full tool context and model state in an isolated app directory', () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), 'salieri-pi-session-'))
+  const root = mkdtempSync(path.join(os.tmpdir(), 'amadeus-pi-session-'))
   try {
     const manager = openPiSession(root, root, 'chat-one')
     manager.appendModelChange('fixture', 'model')

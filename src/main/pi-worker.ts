@@ -12,7 +12,7 @@ const port = (process as NodeJS.Process & { parentPort?: ParentPortLike }).paren
 if (!port) throw new Error('Pi worker must run as an Electron utility process')
 
 const systemPrompt = [
-  'You are Amadeus, a warm desktop companion embedded in Salieri.',
+  'You are Amadeus, a warm desktop companion embedded in Amadeus.',
   'Speak naturally and concisely. Keep the character present while using Pi tools when they help.',
   'Explain tool results in the user-facing reply; never expose internal protocol details.',
   'For natural character expression, optionally put [EMO preset=smile] before the matching phrase in your spoken reply.',
@@ -25,7 +25,7 @@ let resourceLoader: DefaultResourceLoader | null = null
 const sessions = new Map<string, AgentSession>()
 const stopping = new Map<string, Promise<void>>()
 const epochs = new Map<string, number>()
-const cwd = process.env.SALIERI_NEXT_PI_CWD || process.cwd()
+const cwd = process.env.AMADEUS_NEXT_PI_CWD || process.cwd()
 
 async function initialize(): Promise<void> {
   modelRuntime = await ModelRuntime.create()
@@ -43,7 +43,7 @@ async function getSession(id: string): Promise<AgentSession> {
   const existing = sessions.get(id)
   if (existing) return existing
   if (!modelRuntime || !resourceLoader) throw new Error('Pi runtime is unavailable')
-  const directory = process.env.SALIERI_NEXT_PI_SESSIONS
+  const directory = process.env.AMADEUS_NEXT_PI_SESSIONS
   if (!directory) throw new Error('Pi session directory is required')
   const result = await createAgentSession({
     cwd,

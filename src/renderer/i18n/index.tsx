@@ -120,16 +120,10 @@ const EN = {
   'settings.asset.visual_content': 'Ambient layers, subtitles, scenario media, and wallpaper sound assets are available.',
   'settings.asset.visual_attention': 'The optional visual pack needs attention: {detail}',
   'settings.asset.visual_optional': 'Optional. The built-in wallpaper, Chat, Work, and headless mode remain available without it.',
-  'settings.asset.character_content': '{frames} indexed KTX2 frames · {path}',
-  'settings.asset.character_optional': 'Optional. Chat, Work, and headless mode remain available without this package.',
-  'settings.asset.clips': 'clips',
-  'settings.asset.character_attention': 'The optional package is incomplete: {detail}',
-  'settings.validation_failed': 'validation failed',
   'settings.restart_error': 'Backend restart failed',
   'settings.restart_unowned': 'This backend was not started by this app, so it cannot be restarted from here. Restart it where it was launched.',
   'settings.provider_needs_key': 'No API key is configured for {provider}. Enter one below and it will be applied.',
   'settings.label.visual_pack': 'Visual Runtime Pack',
-  'settings.label.character_pack': 'Kurisu Character Pack',
 
 
 
@@ -270,7 +264,7 @@ const ZH: Messages = {
   ...MAIN_LOCALE_MESSAGES['zh-CN'],
   'locale.en-US': 'English', 'locale.zh-CN': '简体中文', 'locale.ja-JP': '日本語',
   'settings.title': '设置', 'settings.restart': '重启后端以应用设置', 'settings.restarting': '正在重启…',
-  'settings.loading_error': '无法加载设置', 'settings.save_error': '无法保存 {key}', 'settings.update_error': '无法更新 {key}', 'settings.saving': '正在保存 {key}…', 'settings.asset.character_content': '{frames} 个 KTX2 帧 · {path}',
+  'settings.loading_error': '无法加载设置', 'settings.save_error': '无法保存 {key}', 'settings.update_error': '无法更新 {key}', 'settings.saving': '正在保存 {key}…',
   'settings.saving_label': '正在保存…', 'settings.section.general': '总览', 'settings.section.models': '模型', 'settings.section.asr': '语音识别', 'settings.section.tts': '语音合成',
 
   'settings.security.available': '密钥受操作系统保护', 'settings.security.unavailable': '系统密钥加密不可用', 'settings.restart_pending': '已保存的更改需要重启后端才能生效', 'settings.restart_pending_detail': '本应用会自动重启；若该后端无法从这里自动重启，请点击右侧按钮。',
@@ -289,8 +283,8 @@ const ZH: Messages = {
   'settings.placeholder.secret_replace': '已配置——输入以替换', 'settings.placeholder.secret_empty': '未配置', 'settings.action.save': '保存', 'settings.action.clear': '清除', 'settings.action.on': '开', 'settings.action.off': '关',
   'settings.asset.installed': '已安装', 'settings.asset.incomplete': '不完整', 'settings.asset.invalid': '无效包', 'settings.asset.not_installed': '未安装',
   'settings.asset.visual_content': '环境层、字幕、场景媒体和壁纸音频资源可用。', 'settings.asset.visual_optional': '可选。没有它，内置壁纸、聊天、工作页和无界面模式仍可用。',
-  'settings.asset.visual_attention': '可选视觉资源包需要处理：{detail}', 'settings.asset.character_attention': '可选资源包不完整：{detail}', 'settings.asset.clips': '个片段', 'settings.validation_failed': '验证失败', 'settings.restart_error': '后端重启失败', 'settings.restart_unowned': '该后端不是由本应用启动的，无法从这里自动重启；请在启动它的地方重启。', 'settings.provider_needs_key': '{provider} 尚未配置 API Key，请在下方填写后即可生效。',
-  'settings.asset.character_optional': '可选。没有此资源包，聊天、工作页和无界面模式仍可用。', 'settings.label.visual_pack': '视觉运行时资源包', 'settings.label.character_pack': '红莉栖角色包',
+  'settings.asset.visual_attention': '可选视觉资源包需要处理：{detail}', 'settings.restart_error': '后端重启失败', 'settings.restart_unowned': '该后端不是由本应用启动的，无法从这里自动重启；请在启动它的地方重启。', 'settings.provider_needs_key': '{provider} 尚未配置 API Key，请在下方填写后即可生效。',
+  'settings.label.visual_pack': '视觉运行时资源包',
 
 
 
@@ -331,7 +325,7 @@ const JA: Messages = {
   ...MAIN_LOCALE_MESSAGES['ja-JP'],
   'locale.en-US': 'English', 'locale.zh-CN': '简体中文', 'locale.ja-JP': '日本語',
   'settings.title': '設定', 'settings.restart': '適用するにはバックエンドを再起動', 'settings.restarting': '再起動中…',
-  'settings.loading_error': '設定を読み込めません', 'settings.save_error': '{key} を保存できません', 'settings.update_error': '{key} を更新できません', 'settings.saving': '{key} を保存中…', 'settings.asset.character_content': '{frames} 個の KTX2 フレーム · {path}',
+  'settings.loading_error': '設定を読み込めません', 'settings.save_error': '{key} を保存できません', 'settings.update_error': '{key} を更新できません', 'settings.saving': '{key} を保存中…',
   'settings.section.general': '概要', 'settings.section.models': 'モデル', 'settings.section.asr': '音声認識', 'settings.section.tts': '音声合成', 'settings.aria_sections': '設定セクション',
 
   'settings.security.available': '秘密情報は OS により保護されています', 'settings.security.unavailable': 'OS の秘密情報暗号化を利用できません', 'settings.restart_pending': '保存済みの変更はバックエンドの再起動で反映されます', 'settings.restart_pending_detail': '自動で再起動します。ここから再起動できない場合は右のボタンを使用してください。',
@@ -342,8 +336,8 @@ const JA: Messages = {
 
   'settings.note.no_user_settings': 'ユーザー管理の接続設定はありません。', 'settings.note.no_active_connection': '選択中のアクティブな接続はありません。', 'settings.other_voice_backends': 'その他の音声合成バックエンド',
   'settings.saving_label': '保存中…', 'settings.placeholder.secret_replace': '設定済み — 入力して置換', 'settings.placeholder.secret_empty': '未設定', 'settings.action.save': '保存', 'settings.action.clear': 'クリア', 'settings.action.on': 'オン', 'settings.action.off': 'オフ',
-  'settings.asset.installed': 'インストール済み', 'settings.asset.incomplete': '不完全', 'settings.asset.invalid': '無効なパッケージ', 'settings.asset.not_installed': '未インストール', 'settings.asset.visual_content': '環境レイヤー、字幕、シナリオメディア、壁紙音声アセットが利用できます。', 'settings.asset.visual_optional': 'オプションです。内蔵壁紙、Chat、Work、ヘッドレスモードはなくても利用できます。', 'settings.asset.character_optional': 'オプションです。このパッケージがなくても Chat、Work、ヘッドレスモードは利用できます。', 'settings.label.visual_pack': 'ビジュアルランタイムパック', 'settings.label.character_pack': '紅莉栖キャラクターパック',
-  'settings.asset.visual_attention': 'オプションのビジュアルパックに要確認事項があります：{detail}', 'settings.asset.character_attention': 'オプションパッケージが不完全です：{detail}', 'settings.asset.clips': 'クリップ', 'settings.validation_failed': '検証に失敗しました', 'settings.restart_error': 'バックエンドの再起動に失敗しました', 'settings.restart_unowned': 'このバックエンドは本アプリが起動したものではないため、ここから再起動できません。起動した場所で再起動してください。', 'settings.provider_needs_key': '{provider} の API キーが未設定です。下で入力すると反映されます。',
+  'settings.asset.installed': 'インストール済み', 'settings.asset.incomplete': '不完全', 'settings.asset.invalid': '無効なパッケージ', 'settings.asset.not_installed': '未インストール', 'settings.asset.visual_content': '環境レイヤー、字幕、シナリオメディア、壁紙音声アセットが利用できます。', 'settings.asset.visual_optional': 'オプションです。内蔵壁紙、Chat、Work、ヘッドレスモードはなくても利用できます。', 'settings.label.visual_pack': 'ビジュアルランタイムパック',
+  'settings.asset.visual_attention': 'オプションのビジュアルパックに要確認事項があります：{detail}', 'settings.restart_error': 'バックエンドの再起動に失敗しました', 'settings.restart_unowned': 'このバックエンドは本アプリが起動したものではないため、ここから再起動できません。起動した場所で再起動してください。', 'settings.provider_needs_key': '{provider} の API キーが未設定です。下で入力すると反映されます。',
   'settings.label.interface_language': 'インターフェース言語', 'settings.label.chat_translation': 'チャット翻訳字幕', 'settings.label.current_model': '現在のモデルプロファイル',
   'settings.option.english': 'English', 'settings.option.chinese': '简体中文', 'settings.option.japanese': '日本語', 'settings.option.auto': '自動',
   'settings.status.registered': '登録済み', 'settings.status.configured': '設定済み', 'settings.status.needs_setup': '設定が必要', 'settings.status.not_installed': '未インストール', 'settings.status.remote': 'リモート', 'settings.status.none': 'なし',

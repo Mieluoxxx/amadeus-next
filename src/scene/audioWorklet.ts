@@ -4,7 +4,7 @@ declare class AudioWorkletProcessor { port: MessagePort }
 declare function registerProcessor(name: string, processor: typeof AudioWorkletProcessor): void
 
 /** One queue and one consumption clock, including silence caused by starvation. */
-class SalieriPcmProcessor extends AudioWorkletProcessor {
+class AmadeusPcmProcessor extends AudioWorkletProcessor {
   private queue: Float32Array[] = []
   private head = 0
   private offset = 0
@@ -66,5 +66,5 @@ class SalieriPcmProcessor extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor('salieri-pcm', SalieriPcmProcessor)
+registerProcessor('amadeus-pcm', AmadeusPcmProcessor)
 export {}

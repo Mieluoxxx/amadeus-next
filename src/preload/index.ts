@@ -8,7 +8,7 @@ type RuntimeEvent = {
 const request = (method: string, params?: Record<string, unknown>) =>
   ipcRenderer.invoke('next.request', method, params || {}) as Promise<Record<string, unknown>>
 
-contextBridge.exposeInMainWorld('salieriNext', {
+contextBridge.exposeInMainWorld('amadeusNext', {
   request,
   onEvent(listener: (event: RuntimeEvent) => void) {
     const handler = (_event: Electron.IpcRendererEvent, payload: RuntimeEvent) => listener(payload)

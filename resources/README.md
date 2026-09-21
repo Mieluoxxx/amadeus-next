@@ -1,13 +1,13 @@
-# Salieri Next runtime resources
+# Amadeus Next runtime resources
 
 This directory contains independent local copies of the assets the Electron
 scene host serves:
 
-- `assets/spriteforge/runtime/kurisu/`: character animation clips, graph, mouth
-  profiles, and all manifest-indexed KTX2 textures.
+- `emote/`: locally provisioned FreeMote runtime, verified PSB adapter and all four AB/C ordinary-clothes/white-coat model packs. Developer-local; excluded from packaging.
+- `assets/idle/`: the idle scene stills and `scenario_graph.json`.
 - `assets/images/`: room background, ambient layers, and subtitle frame.
-- `render/web/`: scene drawing scripts (`renderer.js`, `wallpaper_scene.js`,
-  PixiJS, Basis/KTX2 decoding) and `wallpaper_engine.html`.
+- `render/web/`: room drawing scripts, PixiJS, retained Basis/KTX2 decoding,
+  and `wallpaper_engine.html`. The legacy `renderer.js` is no longer loaded.
 - `wallpaper/crt_config.json`: authored room geometry.
 - `LICENSE`, `LICENSES/`, `THIRD_PARTY_NOTICES.md`: copied license/provenance notices.
 
@@ -18,19 +18,56 @@ longer rewrites the HTML; it only generates the tiny `/next/start.js` bootstrap.
 ## Asset provisioning
 
 Development reads this directory directly. Packaging copies it to
-`Contents/Resources/amadeus-assets`, including the character pack. Runtime assets
-therefore no longer require the legacy checkout or an external path.
+`Contents/Resources/amadeus-assets`, excluding `emote/` (see
+`THIRD_PARTY_NOTICES.md`). Runtime assets therefore no longer require the legacy
+checkout or an external path.
+
+Provision the model and runtime once, from the project root:
+
+```bash
+npm run assets:emote -- ../salieri-next-emote
+```
+
+This copies `牧瀬紅莉栖ab`, `牧瀬紅莉栖ab_白衣`, `牧瀬紅莉栖c`, and
+`牧瀬紅莉栖c_白衣`, including model JSON, resource indexes, textures and binary
+resources, plus the unmodified verified PSB adapter and source READMEs.
+It downloads the pinned FreeMote v3.9 scripts once and verifies their
+SHA-256 hashes (subsequent imports reuse valid local scripts). At runtime all
+requests go to the loopback asset server; no CDN or sibling checkout is needed.
+The HTML's `/emote/` base preserves the original adapter's relative model URLs.
+The scene continues to load the white-coat AB pack, explicitly selecting B
+(crossed arms); copying the other packs does not add a model-switching UI.
+The adapter converts neutral `cw` alpha keyframes into legacy `opa` keyframes.
+The renderer updates all custom part visibility, including head/body activation
+and mutually exclusive A/B sleeves, before its first frame and on every update.
+Layers and source art are not deleted or reordered to hide rendering errors.
 
 Some media are **intentionally not tracked by Git** (see `.gitignore`):
 
 - `/resources/assets/images/*` — only `amadeus_desktop_wallpaper.png` is tracked;
   the ambient blend layers and subtitle frame are not.
-- `/resources/assets/spriteforge/runtime/` — the character pack.
+- `/resources/assets/audio/sfx/*.wav` — only `computer_use_keyboard_loop.wav` is
+  tracked; other sound effects are not.
+- `/resources/emote/` — imported runtime, adapter and private model resources.
 
 A fresh clone therefore cannot run a complete scene until those files are copied
-in from the asset source. Nothing degrades hard: the room renders without an
-ambient layer (the host logs a warning), and a missing character pack is
-diagnosed and pruned while an available idle clip stays usable.
+in from the asset source. Missing ambient layers do not stop the room. Missing
+E-mote data produces a visible error and does not claim character/voice readiness.
+
+Only the foreground monitor role is replaced. Computer-use and blackboard
+background scenarios in the old Salieri checkout remain untouched; this import
+does not migrate that separate scenario layer into Next. The packaged app ships
+no `emote/` runtime, no model packs and no scenario stills; other assets and the
+retained texture decoders are copied unchanged.
+
+The imported runtime/adapter are **CC BY-NC-SA 4.0**; character assets retain
+their original rights. Both are developer-local and excluded from packaging. See
+`LICENSES/FreeMote-NOTICE.md` before redistribution.
+This is a local non-commercial compatibility preview: the old 3.9 runtime uses
+`all_parts / 全体構造`, not all original top-level composition effects. Its heap
+reserves 512 MiB, so smaller disk assets do not imply equally small RAM usage.
+Rendering uses an 800×600 canvas at up to 2× pixel density and an existing Pixi
+texture; moving between different-DPI screens requires a scene reload.
 
 Large/private media stay local files under the existing Git ignore policy;
 copying them does not change their original ownership or license.

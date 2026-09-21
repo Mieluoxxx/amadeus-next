@@ -572,17 +572,6 @@ export default function SettingsPage({ send, subscribe }: Props) {
     : visualPackState === 'incomplete' || visualPackState === 'invalid'
       ? t('settings.asset.visual_attention', undefined, { detail: String(visualPack.message || (visualPack.missing as unknown[] || []).join(', ') || visualPackState) })
       : t('settings.asset.visual_optional')
-  const characterPack = asRecord(config.character_pack)
-  const characterPackInstalled = Boolean(characterPack.installed)
-  const characterPackState = String(characterPack.state ?? 'not_installed')
-  const characterPackValue = characterPackInstalled
-    ? `${t('settings.asset.installed')} · ${formatNumber(Number(characterPack.clip_count ?? 0))} ${t('settings.asset.clips', 'clips')}`
-    : characterPackState === 'invalid' ? t('settings.asset.invalid') : t('settings.asset.not_installed')
-  const characterPackContent = characterPackInstalled
-    ? t('settings.asset.character_content', undefined, { frames: formatNumber(Number(characterPack.frame_count ?? 0)), path: String(characterPack.relative_path ?? '') })
-    : characterPackState === 'invalid'
-      ? t('settings.asset.character_attention', undefined, { detail: String(characterPack.message ?? t('settings.validation_failed', 'validation failed')) })
-      : t('settings.asset.character_optional')
 
   const voiceConfiguration = asConfigurationGroups(config.voice_configuration)
 
@@ -695,7 +684,6 @@ export default function SettingsPage({ send, subscribe }: Props) {
 
                 <SettingsGroup title={t('settings.group.chat_appearance')}>
                   <InfoCard icon="Photo" title={t('settings.label.visual_pack')} content={visualPackInstalled ? undefined : visualPackContent} value={visualPackValue} />
-                  <InfoCard icon="People" title={t('settings.label.character_pack')} content={!characterPackInstalled && characterPackState === 'invalid' ? characterPackContent : undefined} value={characterPackValue} />
                 </SettingsGroup>
 
                 {/* The address reaches Fish speech directly and Pi through its

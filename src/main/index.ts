@@ -1,5 +1,5 @@
-import { app, BrowserWindow, ipcMain, safeStorage, utilityProcess } from 'electron'
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { app, BrowserWindow, ipcMain, safeStorage, utilityProcess, powerMonitor } from 'electron'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,11 +14,11 @@ type Json = Record<string, unknown>
 type StoredMessage = { role: 'user' | 'assistant'; text: string; turn_id?: string }
 type StoredSession = { id: string; title: string; messages: StoredMessage[] }
 
-const DEV_SERVER_URL = process.env.SALIERI_NEXT_DEV_URL || 'http://127.0.0.1:5199'
+const DEV_SERVER_URL = process.env.AMADEUS_NEXT_DEV_URL || 'http://127.0.0.1:5199'
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
 
 function projectRoot(): string {
-  if (process.env.SALIERI_NEXT_PROJECT_ROOT) return process.env.SALIERI_NEXT_PROJECT_ROOT
+  if (process.env.AMADEUS_NEXT_PROJECT_ROOT) return process.env.AMADEUS_NEXT_PROJECT_ROOT
   const bundledAssets = path.join(process.resourcesPath || '', 'amadeus-assets')
   if (existsSync(path.join(bundledAssets, 'render/web/wallpaper_engine.html'))) return bundledAssets
   return path.resolve(MODULE_DIR, '../../resources')
@@ -74,9 +74,9 @@ class SpeechBridge {
     if (process.platform !== 'darwin') return { ok: false, error: 'Apple Speech is only available on macOS' }
     if (!this.process) {
       const helper = [
-        process.env.SALIERI_SPEECH_HELPER || '',
-        path.join(MODULE_DIR, '../bin/SalieriSpeechRecognizer'),
-        path.join(process.resourcesPath || '', 'SalieriSpeechRecognizer'),
+        process.env.AMADEUS_SPEECH_HELPER || '',
+        path.join(MODULE_DIR, '../bin/AmadeusSpeechRecognizer'),
+        path.join(process.resourcesPath || '', 'AmadeusSpeechRecognizer'),
       ].find(candidate => candidate && existsSync(candidate)) || ''
       if (!existsSync(helper)) {
         const error = 'Apple Speech helper is not built; run npm run build on macOS'
@@ -153,10 +153,21 @@ class AppRuntime {
   private readonly scene: SceneHost
   private readonly store: SessionStore
   private readonly settingsFile: string
+
+  /** Adopt the pre-rename `salieri-next-*` file when the renamed one is absent (never overwrites). */
+  private adoptLegacyFile(file: string): string {
+    const legacy = path.join(path.dirname(file), path.basename(file).replace(/^amadeus-next-/, 'salieri-next-'))
+    try {
+      if (!existsSync(file) && existsSync(legacy)) renameSync(legacy, file)
+    } catch {
+      // 迁移失败时退回全新存储，不阻断启动
+    }
+    return file
+  }
   private readonly pi = new PiHost(() => utilityProcess.fork(path.join(MODULE_DIR, 'pi-worker.js'), [], {
     cwd: process.cwd(),
-    env: { ...process.env, ...this.piEnv(), SALIERI_NEXT_PI_CWD: process.cwd(), SALIERI_NEXT_PI_SESSIONS: path.join(app.getPath('userData'), 'pi-sessions') },
-    serviceName: 'Salieri Pi Runtime',
+    env: { ...process.env, ...this.piEnv(), AMADEUS_NEXT_PI_CWD: process.cwd(), AMADEUS_NEXT_PI_SESSIONS: path.join(app.getPath('userData'), 'pi-sessions') },
+    serviceName: 'Amadeus Pi Runtime',
     stdio: 'ignore',
   }))
   private readonly windows = new Set<BrowserWindow>()
@@ -193,8 +204,8 @@ class AppRuntime {
   constructor() {
     this.root = projectRoot()
     this.scene = new SceneHost(this.root, path.join(MODULE_DIR, '../scene'))
-    this.store = new SessionStore(path.join(app.getPath('userData'), 'salieri-next-sessions.json'))
-    this.settingsFile = path.join(app.getPath('userData'), 'salieri-next-settings.json')
+    this.store = new SessionStore(this.adoptLegacyFile(path.join(app.getPath('userData'), 'amadeus-next-sessions.json')))
+    this.settingsFile = this.adoptLegacyFile(path.join(app.getPath('userData'), 'amadeus-next-settings.json'))
     this.loadPersistedSettings()
     this.speech = new SpeechBridge((method, params) => this.onSpeech(method, params))
     this.tts = new FishTts(() => this.config, event => {
@@ -211,6 +222,7 @@ class AppRuntime {
 
   async init(): Promise<void> {
     await this.scene.start()
+    this.watchSystemIdle()
     await this.pi.init()
     if (!this.store.sessions.length) {
       this.store.sessions.push({ id: randomUUID(), title: '新对话', messages: [] })
@@ -247,7 +259,7 @@ class AppRuntime {
       case 'runtime.reload':
         return this.queueReload(params, false)
       case 'dev.reload':
-        return process.env.SALIERI_NEXT_DEV === '1' ? this.queueReload(params, true) : { ok: false, error: 'Development reload is disabled' }
+        return process.env.AMADEUS_NEXT_DEV === '1' ? this.queueReload(params, true) : { ok: false, error: 'Development reload is disabled' }
       case 'pi.models':
       case 'pi.model.set':
         if (this.reloading || this.reloadTargets.size || (this.activeTurn && !this.activeTurn.piDone)) return { ok: false, error: 'Wait for the current reply or reload to finish' }
@@ -393,6 +405,20 @@ class AppRuntime {
       clearTimeout(timer!)
       this.sceneReload = null
     }
+  }
+
+  /** 系统闲置一段时间后通知场景循环播放 idle 静帧；任何输入立即恢复（powerMonitor 为系统级判定）。 */
+  private watchSystemIdle(): void {
+    // 测试 VM 无 timers/Electron powerMonitor，直接跳过
+    if (typeof setInterval !== 'function' || typeof powerMonitor === 'undefined') return
+    const idleAfterSeconds = 120
+    let active = false
+    setInterval(() => {
+      const idle = powerMonitor.getSystemIdleTime() >= idleAfterSeconds
+      if (idle === active) return
+      active = idle
+      this.emit('voice.event', { type: 'system-idle', active: idle })
+    }, 5000)
   }
 
   private emit(method: string, params: Json): void {
@@ -732,7 +758,7 @@ async function createWindow(): Promise<void> {
     },
   })
   runtime.attach(window)
-  if (process.env.SALIERI_NEXT_DEV === '1') await window.loadURL(DEV_SERVER_URL)
+  if (process.env.AMADEUS_NEXT_DEV === '1') await window.loadURL(DEV_SERVER_URL)
   else await window.loadFile(path.join(MODULE_DIR, '../renderer/index.html'))
 }
 

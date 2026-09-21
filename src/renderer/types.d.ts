@@ -6,7 +6,7 @@ declare global {
     params: Record<string, unknown>
   }
 
-  interface SalieriNextBridge {
+  interface AmadeusNextBridge {
     request(method: string, params?: Record<string, unknown>): Promise<Record<string, unknown>>
     onEvent(listener: (event: NextRuntimeEvent) => void): () => void
     getDesktopSettings(): Promise<Record<string, unknown>>
@@ -17,6 +17,6 @@ declare global {
   }
 
   interface Window {
-    salieriNext: SalieriNextBridge
+    amadeusNext: AmadeusNextBridge
   }
 }

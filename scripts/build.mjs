@@ -13,7 +13,7 @@ const mainOnly = process.argv.includes('--main-only')
 export async function compileSpeechHelper() {
   if (process.platform !== 'darwin') return
   const outputDir = path.join(project, 'dist/bin')
-  const output = path.join(outputDir, 'SalieriSpeechRecognizer')
+  const output = path.join(outputDir, 'AmadeusSpeechRecognizer')
   const temporary = `${output}.${process.pid}.tmp`
   await mkdir(outputDir, { recursive: true })
   try {

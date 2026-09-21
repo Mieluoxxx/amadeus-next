@@ -13,7 +13,7 @@
 | 宿主 | Electron 44，主进程 / Pi utility process / preload / renderer / scene 五份产物 |
 | 渲染 | PixiJS **7.4.3**（WebGL），`resources/render/web/vendor/pixi.min.js` |
 | 场景 | 独立 iframe（`sceneHost.ts:58`，带 `sliceHost=electron`），React 只转发带类型校验的消息 |
-| ASR | 原生 Swift 辅助进程（`native/SpeechRecognizer.swift`），已编译为 `dist/bin/SalieriSpeechRecognizer` |
+| ASR | 原生 Swift 辅助进程（`native/SpeechRecognizer.swift`），已编译为 `dist/bin/AmadeusSpeechRecognizer` |
 | TTS | Fish Audio 云端 WebSocket，msgpack 帧（`src/main/fishTts.ts`） |
 | 现状 WASM | 只有 `resources/render/web/vendor/basis_transcoder.wasm`（472,914 B），用于 KTX2/Basis 纹理解码 |
 

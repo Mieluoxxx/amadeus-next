@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- The imported, unmodified PSB adapter resolves its model directory against this base. -->
+  <base href="/emote/" />
   <title>Amadeus Wallpaper Engine Scene</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -31,12 +33,13 @@
   <div id="canvas-container"></div>
 
   <script>
+    var Module = { TOTAL_MEMORY: 512 * 1024 * 1024 };
     (function () {
       var SCRIPTS = [
         "/render/web/vendor/pixi.min.js",
-        "/render/web/vendor/pixi-basis-ktx2.global.js",
+        "/emote/FreeMoteDriver.js",
+        "/emote/emoteplayer.js",
         "/next/scene.js",
-        "/render/web/renderer.js",
         "/render/web/wallpaper_scene.js",
         "/next/start.js"
       ];
@@ -51,10 +54,19 @@
         }
         if (src.indexOf("/next/") === 0) s.type = "module";
         s.src = src;
-        s.onload = function () { loadAt(i + 1); };
+        s.onload = function () {
+          // A global lexical class is not a window property.
+          if (SCRIPTS[i] === "/emote/emoteplayer.js") window.EmotePlayer = EmotePlayer;
+          loadAt(i + 1);
+        };
         s.onerror = function () {
           console.error("[WallpaperEngineLoader] failed to load: " + SCRIPTS[i]);
-          loadAt(i + 1);
+          var notice = document.createElement("div");
+          notice.setAttribute("role", "alert");
+          notice.textContent = "场景资源加载失败，请运行 npm run assets:emote 后重试：" + SCRIPTS[i];
+          notice.style.cssText = "position:absolute;bottom:12px;left:12px;color:#ffd8cd;background:#221c20;padding:12px";
+          document.body.appendChild(notice);
+          window.dispatchEvent(new Event("error"));
         };
         document.head.appendChild(s);
       }
@@ -75,6 +87,7 @@
       if (window.parent === window) return;
       var attempts = 0;
       var reported = false;
+      var failed = false;
       // Readiness must mean "the scene actually rendered": the background
       // texture is valid, the authored CRT polygon produced bounds, and the
       // Pixi canvas exists with a non-zero box. A visible iframe element, or a
@@ -131,6 +144,8 @@
         return width > 1 && height > 1;
       }
       function report(status) {
+        if (failed && status !== "failed") return;
+        if (status === "failed") failed = true;
         if (reported && status === "ready") return;
         if (status === "ready") reported = true;
         // What the page last told its parent. Cheap, non-sensitive, and the only
@@ -161,6 +176,7 @@
         }
       }
       function poll() {
+        if (failed) return;
         attempts += 1;
         if (ready()) {
           report("ready");
@@ -173,6 +189,7 @@
         window.setTimeout(poll, 100);
       }
       window.addEventListener("error", function () { report("failed"); });
+      window.addEventListener("amadeus:scene-failed", function () { report("failed"); });
       poll();
 
       // Frames arrive after the scene is ready, so the character's appearance is

@@ -198,7 +198,7 @@ test('speech helper replacement resets listening and ignores the retired helper 
 })
 
 test('the selected desktop session survives restart and legacy history remains readable', () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), 'salieri-history-'))
+  const root = mkdtempSync(path.join(os.tmpdir(), 'amadeus-history-'))
   try {
     const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
     const block = source.slice(source.indexOf('class SessionStore {'), source.indexOf('class SpeechBridge {'))
@@ -215,7 +215,7 @@ test('the selected desktop session survives restart and legacy history remains r
 })
 
 test('development main reload exits for the launcher only after model and playback finish', async () => {
-  const { app, calls, prompts } = runtime({ SALIERI_NEXT_DEV: '1' })
+  const { app, calls, prompts } = runtime({ AMADEUS_NEXT_DEV: '1' })
   await app.init()
   await app.request('scene.ready')
   await app.request('chat.send', { text: 'finish first', turn_id: 'active' })

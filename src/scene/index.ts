@@ -1,20 +1,11 @@
-import { initialCharacterState, transition, type CharacterDefinition, type CharacterState, type CharacterEvent } from '../shared/character.ts'
+import type { CharacterEvent } from '../shared/character.ts'
+import { createEmoteRenderer, type EmoteCharacter } from './emote.ts'
 import { AlignmentTimeline } from '../shared/presentation.ts'
-import { isTurnKey, sameTurn, type VoiceEvent, type TurnKey, type SceneInitialization, type Calibration } from '../shared/voice.ts'
+import { isTurnKey, sameTurn, type VoiceEvent, type SystemIdleEvent, type TurnKey, type SceneInitialization, type Calibration } from '../shared/voice.ts'
 
-// The existing renderer owns Pixi objects; this adapter is its only state-machine writer in Next.
-type Sprite = {
-  setEmotion(label: string): void; setSpeaking(value: boolean): void; setMouth(value: number): void
-  clearHold(): void; holdFrame(frame: number): void; holdClosedFrame(): void
-  prefetchLabels(labels: string[], priority: string, options?: unknown): void
-  loadFrames(label: string, frames: string[]): void; loadMouthConfig(label: string, config: unknown): void
-  setIdleFrameIntervalMs(label: string, interval: number): void; setClipConfig(label: string, config: unknown): void
-  setIdleAnimation(value: boolean): void
-}
 const host = window as any
-let sprite: Sprite
-let definition: CharacterDefinition
-let state: CharacterState
+const loadCharacter = createEmoteRenderer()
+let sprite: EmoteCharacter | null = null
 let port: MessagePort | null = null
 let key: TurnKey | null = null
 let speech = false
@@ -32,8 +23,19 @@ let reports: any[] = []
 let playbackStatus = ''
 let failed = false
 let lastPosition = 0
+let idleUrls: string[] = []
+let systemIdle = false
+let inTurn = false
 
-Object.defineProperty(host, '__salieriPlayback', { get: () => ({
+/** 系统闲置时循环播放 idle 静帧并隐藏 E-mote 前景；对话回合内不进入 idle 演出。 */
+function applyIdle(): void {
+  const active = systemIdle && !inTurn
+  host.wallpaperApp?.scene?.setIdleLoop(active ? idleUrls : null)
+  const container = document.getElementById('canvas-container')
+  if (container) container.style.visibility = active ? 'hidden' : ''
+}
+
+Object.defineProperty(host, '__amadeusPlayback', { get: () => ({
   status: playbackStatus, audioState: context?.state, audioTime: context?.currentTime,
   outputTime: context?.getOutputTimestamp?.().contextTime, pending: pending.length,
   reports: reports.length, inputEnded, failed, workletReady: !!worklet, generation: key?.generation,
@@ -41,9 +43,10 @@ Object.defineProperty(host, '__salieriPlayback', { get: () => ({
 }) })
 
 function diagnostic(message: string): void {
-  let element = document.getElementById('salieri-diagnostic')
+  let element = document.getElementById('amadeus-diagnostic')
+  if (!message) { element?.remove(); return }
   if (!element) {
-    element = document.createElement('div'); element.id = 'salieri-diagnostic'; element.setAttribute('role', 'status')
+    element = document.createElement('div'); element.id = 'amadeus-diagnostic'; element.setAttribute('role', 'status')
     Object.assign(element.style, { position: 'absolute', bottom: '8px', left: '8px', maxWidth: '85%', padding: '8px', background: '#221c20e8', color: '#ffd8cd', font: '12px sans-serif', zIndex: '100' })
     document.body.append(element)
   }
@@ -51,32 +54,11 @@ function diagnostic(message: string): void {
 }
 
 function dispatch(event: CharacterEvent): void {
-  if (!definition?.nodes[definition.root] || !sprite) return
-  const result = transition(state, event, definition)
-  state = result.state
-  for (const effect of result.effects) {
-    if (effect.type === 'play') {
-      sprite.clearHold(); sprite.setEmotion(effect.label)
-      const next = (definition.edges[state.node] || []).filter(edge => edge.weight > 0).map(edge => definition.nodes[edge.to].label)
-      sprite.prefetchLabels(next, 'warm', { reason: 'next-state' })
-    } else if (effect.type === 'hold') {
-      if (effect.closed) sprite.holdClosedFrame(); else sprite.holdFrame(-1)
-    } else {
-      sprite.setSpeaking(effect.value)
-      host.wallpaperApp?.scene?.setSpeaking(effect.value)
-    }
-  }
+  if (!sprite) return
+  sprite.dispatch(event)
+  host.wallpaperApp?.scene?.setSpeaking(['playing', 'buffering'].includes(sprite.state.playback))
   // Small, non-sensitive live state for integration checks and diagnosis.
-  host.__salieriCharacter = { ...state, label: definition.nodes[state.node]?.label }
-}
-
-host.__SALIERI_CHARACTER_FACTORY__ = (driver: Sprite) => {
-  sprite = driver
-  return {
-    onCycleComplete(label: string) {
-      if (definition && definition.nodes[state.node]?.label === label) dispatch({ type: 'cycle', node: state.node, random: Math.random() })
-    },
-  }
+  host.__amadeusCharacter = { ...sprite.state }
 }
 
 function playback(type: string, error?: string): void {
@@ -100,11 +82,13 @@ function failAudio(error: unknown): void {
   }
   worklet = null; context = null; preparing = null
   if (previousContext && previousContext.state !== 'closed') void previousContext.close().catch(() => {})
-  document.getElementById('salieri-enable-audio')?.remove()
+  document.getElementById('amadeus-enable-audio')?.remove()
   sprite?.setMouth(0)
   dispatch({ type: 'reset' })
   diagnostic(`语音播放不可用：${String(error)}`)
   playback('error', String(error))
+  inTurn = false
+  applyIdle()
 }
 
 async function prepareAudio(): Promise<void> {
@@ -120,9 +104,9 @@ async function prepareAudio(): Promise<void> {
       void audio.resume().then(changed, error => { audio.removeEventListener('statechange', changed); reject(error) })
       changed()
     })
-    if (audio.state === 'suspended' && !document.getElementById('salieri-enable-audio')) {
+    if (audio.state === 'suspended' && !document.getElementById('amadeus-enable-audio')) {
       const button = document.createElement('button')
-      button.id = 'salieri-enable-audio'; button.textContent = '启用声音'
+      button.id = 'amadeus-enable-audio'; button.textContent = '启用声音'
       Object.assign(button.style, { position: 'absolute', bottom: '12px', right: '12px', padding: '10px', zIndex: '101' })
       button.onclick = () => { void audio.resume().catch(error => { if (context === audio) failAudio(error) }) }
       document.body.append(button)
@@ -142,7 +126,7 @@ async function prepareAudio(): Promise<void> {
     if (epoch !== audioEpoch) return
     await audio.audioWorklet.addModule('/next/audio-worklet.js')
     if (epoch !== audioEpoch) return
-    worklet = new AudioWorkletNode(audio, 'salieri-pcm')
+    worklet = new AudioWorkletNode(audio, 'amadeus-pcm')
     worklet.connect(audio.destination)
     worklet.onprocessorerror = () => { if (epoch === audioEpoch) failAudio('Audio processor stopped') }
     worklet.port.onmessage = event => {
@@ -154,7 +138,7 @@ async function prepareAudio(): Promise<void> {
     for (const item of pending.splice(0)) if (item.generation === key?.generation && !failed) worklet.port.postMessage({ type: 'pcm', generation: item.generation, buffer: item.samples.buffer }, [item.samples.buffer])
     if (inputEnded) worklet.port.postMessage({ type: 'end', generation: key?.generation })
     await resume(audio)
-    const notice = document.getElementById('salieri-diagnostic')
+    const notice = document.getElementById('amadeus-diagnostic')
     if (epoch === audioEpoch && notice?.textContent?.startsWith('语音播放不可用：')) notice.remove()
   })()
   preparing = preparation
@@ -174,25 +158,30 @@ function pcm(bytes: Uint8Array): void {
   else pending.push({ generation: key.generation, samples })
 }
 
-function receive(event: VoiceEvent): void {
+function receive(event: VoiceEvent | SystemIdleEvent): void {
+  if (event.type === 'system-idle') {
+    systemIdle = event.active
+    applyIdle()
+    return
+  }
   if (!isTurnKey(event)) return
   if (event.type === 'calibration') {
     if (!sameTurn(key, event)) return
     calibration = event.calibration
-    for (const [label, config] of Object.entries(definition.mouths)) sprite.loadMouthConfig(label, { ...config, silenceThreshold: calibration.silenceThreshold })
     return
   }
   if (event.type === 'begin' || event.type === 'reset') {
     if (key && event.generation < key.generation) return
     key = { sessionId: event.sessionId, turnId: event.turnId, generation: event.generation }
+    inTurn = true
     pending = []; reports = []; timeline = new AlignmentTimeline(); trailingByte = null; inputEnded = false; playbackStatus = ''; lastPosition = 0
     text = ''; failed = false; speech = event.type === 'begin' && event.speech
     worklet?.port.postMessage({ type: 'reset', generation: key.generation })
     sprite?.setMouth(0); dispatch({ type: 'reset' })
+    applyIdle()
     host.wallpaperApp.setSubtitle('')
     if (event.type === 'begin') {
       calibration = event.calibration
-      for (const [label, config] of Object.entries(definition.mouths)) sprite.loadMouthConfig(label, { ...config, silenceThreshold: calibration.silenceThreshold })
       if (speech) {
         dispatch({ type: 'playback', status: 'waiting', now: performance.now() })
         const epoch = audioEpoch
@@ -225,6 +214,8 @@ function receive(event: VoiceEvent): void {
     sprite?.setMouth(0)
     dispatch({ type: 'reset' })
     playbackStatus = 'error'
+    inTurn = false
+    applyIdle()
   }
 }
 
@@ -243,9 +234,12 @@ function tick(): void {
       } else if (report.type === 'ended') {
         dispatch({ type: 'playback', status: 'ended', now: performance.now() })
         playback('ended')
+        inTurn = false
+        applyIdle()
       }
-      const mouth = report.type === 'playing' ? Math.min(1, report.rms * calibration.mouthGain) : 0
-      sprite.setMouth(mouth)
+      const amplitude = Math.min(1, report.rms * calibration.mouthGain)
+      const mouth = report.type === 'playing' && amplitude >= calibration.silenceThreshold ? amplitude : 0
+      sprite?.setMouth(mouth)
       host.wallpaperApp.scene.setMouth(mouth)
       host.wallpaperApp.scene.setSpeaking(report.type === 'playing' || report.type === 'buffering')
     }
@@ -254,35 +248,28 @@ function tick(): void {
       if (emotion) dispatch({ type: 'cue', emotion, random: Math.random() })
     }
   }
-  if (state?.phase === 'holding') dispatch({ type: 'tick', now: performance.now(), random: Math.random() })
+  dispatch({ type: 'tick', now: performance.now(), random: Math.random() })
   requestAnimationFrame(tick)
 }
 
-window.addEventListener('salieri:scene-ready', () => {
+window.addEventListener('amadeus:scene-ready', () => {
   void (async () => {
     const response = await fetch('/next/init')
     if (!response.ok) throw new Error('Scene initialization unavailable')
     const init = await response.json() as SceneInitialization
-    definition = init.definition
-    state = initialCharacterState(definition)
     host.wallpaperApp.initDesktopScene(init.scene)
-    for (const [label, clip] of Object.entries(definition.clips)) {
-      sprite.loadFrames(label, clip.frames)
-      sprite.setIdleFrameIntervalMs(label, clip.frameIntervalMs)
-      sprite.setClipConfig(label, { loopMode: clip.loopMode, frameIntervalMs: clip.frameIntervalMs })
-    }
-    for (const [label, config] of Object.entries(definition.mouths)) sprite.loadMouthConfig(label, config)
-    sprite.setIdleAnimation(true)
+    idleUrls = Array.isArray(init.scene.idleUrls) ? (init.scene.idleUrls as unknown[]).map(item => String(item)) : []
+    if (init.character?.renderer !== 'emote' || init.character.model !== '牧瀬紅莉栖ab_白衣') throw new Error('不支持的 E-mote 模型')
+    sprite = await loadCharacter(init.character.model, diagnostic)
     dispatch({ type: 'reset' })
-    if (definition.diagnostics.length) diagnostic(definition.diagnostics.join('；'))
     const token = new URLSearchParams(location.search).get('sceneLoadToken')
     window.addEventListener('message', event => {
       if (event.source !== window.parent || !token || event.data?.sceneLoadToken !== token) return
-      if (event.data.type === 'salieri.probe') {
+      if (event.data.type === 'amadeus.probe') {
         window.parent.postMessage({ source: 'amadeus-scene', status: 'voice-ready', sceneLoadToken: token }, '*')
         return
       }
-      if (event.data.type !== 'salieri.connect' || !event.ports[0]) return
+      if (event.data.type !== 'amadeus.connect' || !event.ports[0]) return
       port?.close()
       port = event.ports[0]
       port.onmessage = message => receive(message.data)
@@ -291,7 +278,13 @@ window.addEventListener('salieri:scene-ready', () => {
     })
     window.parent.postMessage({ source: 'amadeus-scene', status: 'voice-ready', sceneLoadToken: token }, '*')
     requestAnimationFrame(tick)
-  })().catch(error => diagnostic(String(error)))
+  })().catch(error => window.dispatchEvent(new CustomEvent('amadeus:scene-failed', { detail: String(error) })))
 }, { once: true })
+
+window.addEventListener('amadeus:scene-failed', event => {
+  diagnostic((event as CustomEvent).detail)
+  if (key) failAudio((event as CustomEvent).detail)
+  port?.postMessage({ type: 'lost' }); port?.close(); port = null
+})
 
 window.addEventListener('pagehide', () => { audioEpoch++; port?.postMessage({ type: 'lost' }); port?.close(); void context?.close() })

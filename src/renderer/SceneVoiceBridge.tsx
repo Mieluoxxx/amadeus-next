@@ -46,7 +46,7 @@ export default function SceneVoiceBridge({ runtime }: { runtime: NextRuntime }) 
         }
       }
       port.start()
-      candidate.contentWindow?.postMessage({ type: 'salieri.connect', sceneLoadToken: token }, url.origin, [channel.port2])
+      candidate.contentWindow?.postMessage({ type: 'amadeus.connect', sceneLoadToken: token }, url.origin, [channel.port2])
     }
     const remove = subscribe('voice.event', payload => {
       const event = payload as unknown as VoiceEvent
@@ -71,7 +71,7 @@ export default function SceneVoiceBridge({ runtime }: { runtime: NextRuntime }) 
     const existingFrame = document.querySelector<HTMLIFrameElement>('iframe[data-testid="scene-frame"]')
     if (existingFrame?.src) {
       const url = new URL(existingFrame.src)
-      existingFrame.contentWindow?.postMessage({ type: 'salieri.probe', sceneLoadToken: url.searchParams.get('sceneLoadToken') }, url.origin)
+      existingFrame.contentWindow?.postMessage({ type: 'amadeus.probe', sceneLoadToken: url.searchParams.get('sceneLoadToken') }, url.origin)
     }
     return () => { observer.disconnect(); remove(); removeError(); removeReload(); window.removeEventListener('message', connect); disconnect() }
   }, [send, subscribe])

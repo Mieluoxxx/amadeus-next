@@ -3,10 +3,10 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleIdentifier</key>
-  <string>com.amadeus.salieri.next.speech</string>
+  <string>com.amadeus.next.speech</string>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Salieri uses the microphone for voice conversations.</string>
+  <string>Amadeus uses the microphone for voice conversations.</string>
   <key>NSSpeechRecognitionUsageDescription</key>
-  <string>Salieri uses speech recognition to turn your voice into conversation.</string>
+  <string>Amadeus uses speech recognition to turn your voice into conversation.</string>
 </dict>
 </plist>

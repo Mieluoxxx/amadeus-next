@@ -4,7 +4,7 @@
  * SpriteRenderer is the low-level Pixi frame / mouth / texture driver.
  * The character state machine lives in TypeScript (src/shared/character.ts,
  * driven by src/scene/index.ts) and is injected through
- * window.__SALIERI_CHARACTER_FACTORY__; this file no longer carries a JS
+ * window.__AMADEUS_CHARACTER_FACTORY__; this file no longer carries a JS
  * fallback state machine.
  *
  * Exposes window.renderApp for the scene adapter in wallpaper_scene.js:
@@ -967,11 +967,11 @@
   // ---------------------------------------------------------------------------
   class RenderApp {
     constructor() {
-      if (typeof window.__SALIERI_CHARACTER_FACTORY__ !== "function") {
+      if (typeof window.__AMADEUS_CHARACTER_FACTORY__ !== "function") {
         throw new Error("[RenderApp] character factory unavailable; /next/scene.js must load before renderer.js");
       }
       this._sprite = new SpriteRenderer(app.stage);
-      this._character = window.__SALIERI_CHARACTER_FACTORY__(this._sprite);
+      this._character = window.__AMADEUS_CHARACTER_FACTORY__(this._sprite);
       this._sprite.setCycleCompleteHandler((label) => this._character.onCycleComplete(label));
 
       // The sprite layer is the only foreground layer; the work surface lives

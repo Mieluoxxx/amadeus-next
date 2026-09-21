@@ -13,4 +13,5 @@ release/
 /resources/assets/images/*
 !/resources/assets/images/amadeus_desktop_wallpaper.png
 /resources/assets/audio/sfx/*.wav
-/resources/assets/spriteforge/runtime/
+!/resources/assets/audio/sfx/computer_use_keyboard_loop.wav
+/resources/emote/

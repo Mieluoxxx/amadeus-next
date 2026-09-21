@@ -20,8 +20,8 @@ function changed(target) {
   timer = setTimeout(() => {
     const targets = [...pending]
     pending.clear()
-    server.ws.send({ type: 'custom', event: 'salieri:reload', data: { targets } })
-    console.info(`[salieri-next] built; requesting safe reload: ${targets.join(', ')}`)
+    server.ws.send({ type: 'custom', event: 'amadeus:reload', data: { targets } })
+    console.info(`[amadeus-next] built; requesting safe reload: ${targets.join(', ')}`)
   }, 150)
 }
 
@@ -33,7 +33,7 @@ async function watchBuild(configFile, outputs) {
     configFile: path.join(project, configFile),
     build: { watch: {}, emptyOutDir: false },
     plugins: [{
-      name: 'salieri-safe-reload',
+      name: 'amadeus-safe-reload',
       async writeBundle() {
         for (const [file, target] of outputs) {
           const hash = createHash('sha256').update(await readFile(path.join(project, file))).digest('hex')
@@ -65,7 +65,7 @@ async function close(code = 0) {
 }
 
 function launch() {
-  const env = { ...process.env, SALIERI_NEXT_DEV: '1', SALIERI_NEXT_DEV_URL: `http://127.0.0.1:${port}` }
+  const env = { ...process.env, AMADEUS_NEXT_DEV: '1', AMADEUS_NEXT_DEV_URL: `http://127.0.0.1:${port}` }
   delete env.ELECTRON_RUN_AS_NODE
   child = spawn(electron, ['.'], { cwd: project, env, stdio: 'inherit' })
   child.once('error', error => { console.error(error); void close(1) })
@@ -87,7 +87,7 @@ try {
     watchBuild('vite.scene.config.mjs', [['dist/scene/scene.js', 'scene'], ['dist/scene/audio-worklet.js', 'scene']]),
     compileSpeechHelper(),
   ])
-  const resourceRoots = [path.join(project, 'resources'), process.env.SALIERI_NEXT_PROJECT_ROOT, process.env.SALIERI_NEXT_CHARACTER_ROOT].filter(Boolean).map(root => path.resolve(root))
+  const resourceRoots = [path.join(project, 'resources'), process.env.AMADEUS_NEXT_PROJECT_ROOT].filter(Boolean).map(root => path.resolve(root))
   server.watcher.add([...resourceRoots, path.join(project, 'native')])
   server.watcher.on('all', (event, file) => {
     if (closing || !['add', 'change', 'unlink'].includes(event)) return

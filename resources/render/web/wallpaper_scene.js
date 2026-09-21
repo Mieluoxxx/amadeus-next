@@ -184,6 +184,14 @@
     _lastSubtitleText: "",
     _subtitleClearTimer: null,
     _subtitleClearDelayMs: 15000,
+    idleLayer: null,
+    idleA: null,
+    idleB: null,
+    _idleUrls: [],
+    _idleIndex: -1,
+    _idleTimer: null,
+    _idleSignature: "",
+    _idleFade: null,
 
     init(payload) {
       this.app = callRender("getPixiApp", []);
@@ -440,8 +448,76 @@
       return { x, y, width: right - x, height: bottom - y, right, bottom };
     },
 
+    /** 系统闲置时的整幅 idle 静帧轮播；urls 为空即停用并清理。 */
+    setIdleLoop(urls) {
+      if (!this.app || !window.PIXI) return;
+      const list = Array.isArray(urls) ? urls.filter(function (url) { return typeof url === "string" && url; }) : [];
+      const signature = list.join("\n");
+      if (signature === this._idleSignature) return;
+      this._idleSignature = signature;
+      if (!this.idleLayer) {
+        this.idleLayer = new PIXI.Container();
+        this.idleLayer.visible = false;
+        this.idleA = new PIXI.Sprite();
+        this.idleB = new PIXI.Sprite();
+        this.idleB.visible = false;
+        this.idleLayer.addChild(this.idleA);
+        this.idleLayer.addChild(this.idleB);
+        this.app.stage.addChild(this.idleLayer);
+        // 字幕容器后建时会自然落在 idle 层之上；已建则重新 addChild 保持在顶层。
+        if (wallpaperSubtitle && wallpaperSubtitle.container) this.app.stage.addChild(wallpaperSubtitle.container);
+      }
+      if (this._idleTimer) { clearInterval(this._idleTimer); this._idleTimer = null; }
+      if (!list.length) {
+        this.idleLayer.visible = false;
+        this._idleFade = null;
+        this.idleA.texture = null;
+        this.idleB.texture = null;
+        return;
+      }
+      this._idleUrls = list;
+      this._idleIndex = -1;
+      this.idleLayer.visible = true;
+      this._idleAdvance();
+      const self = this;
+      this._idleTimer = setInterval(function () { self._idleAdvance(); }, 15000);
+      this.layout();
+    },
+
+    _idleAdvance() {
+      if (!this.idleLayer || !this._idleUrls.length) return;
+      this._idleIndex = (this._idleIndex + 1) % this._idleUrls.length;
+      const texture = PIXI.Texture.from(this._idleUrls[this._idleIndex]);
+      const outgoing = this.idleA;
+      const incoming = this.idleB;
+      const self = this;
+      const show = function () {
+        if (!self.idleLayer || !texture.baseTexture || !texture.baseTexture.valid) return;
+        incoming.texture = texture;
+        incoming.alpha = 0;
+        incoming.visible = true;
+        self._idleFade = { incoming: incoming, outgoing: outgoing, t: 0 };
+        self.idleA = incoming;
+        self.idleB = outgoing;
+        self.layout();
+      };
+      if (texture.baseTexture && texture.baseTexture.valid) show();
+      else if (texture.baseTexture) {
+        texture.baseTexture.once("loaded", show);
+        texture.baseTexture.once("error", function (err) { diag("idle.frame_error", { error: String(err) }, "warning"); });
+      }
+    },
+
     layout() {
       if (!this.app || !this.mask || !this.staticOverlay) return;
+      if (this.idleA) {
+        this.idleA.width = this.app.screen.width;
+        this.idleA.height = this.app.screen.height;
+      }
+      if (this.idleB) {
+        this.idleB.width = this.app.screen.width;
+        this.idleB.height = this.app.screen.height;
+      }
       if (this.bg) {
         this.bg.x = 0;
         this.bg.y = 0;
@@ -489,6 +565,17 @@
     },
 
     tick(delta) {
+      if (this._idleFade) {
+        const fade = this._idleFade;
+        fade.t = Math.min(1, fade.t + delta / 45);
+        fade.incoming.alpha = fade.t;
+        fade.outgoing.alpha = 1 - fade.t;
+        if (fade.t >= 1) {
+          fade.outgoing.visible = false;
+          fade.outgoing.texture = null;
+          this._idleFade = null;
+        }
+      }
       if (!this.app || !this._crtBounds || !this._points) return;
       const dt = Math.min(0.05, Math.max(0, (this.app.ticker.deltaMS || (delta * 16.6667)) / 1000));
       this._time += dt;
@@ -630,6 +717,7 @@
   };
 
   try {
+    const app = callRender("getPixiApp", []);
     app.view.addEventListener("webglcontextlost", function (event) {
       console.error("[WallpaperScene] WebGL context lost; preventing default restore path", event);
       diag("webgl.context_lost", {}, "error");

@@ -6,7 +6,7 @@ import os from 'node:os'
 import { SceneHost } from '../src/main/sceneHost.ts'
 
 test('scene resources reload on the same host and invalid geometry leaves the last snapshot usable', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'salieri-scene-reload-'))
+  const root = await mkdtemp(path.join(os.tmpdir(), 'amadeus-scene-reload-'))
   const host = new SceneHost(root, root)
   const config = { img_size: [100, 200], crt_corners: [[0, 0], [0, 10], [10, 10], [10, 0]] }
   const file = path.join(root, 'wallpaper/crt_config.json')

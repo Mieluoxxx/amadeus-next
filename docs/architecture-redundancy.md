@@ -60,7 +60,7 @@ C 档与合规项未动。
 
 ### React legacy 壳
 
-preload 恒设 `window.__SALIERI_NEXT__ = true`，所以 `!nextRuntime` 恒为 `false`。
+preload 恒设 `window.__AMADEUS_NEXT__ = true`，所以 `!nextRuntime` 恒为 `false`。
 这意味着 `SettingsPage` 里所有 `!nextRuntime` 分支（providers / mcp / skills / legacy
 四个 section、chat_translation、wallpaper_caption、vision、runtime_presentation
 四个设置组）**永不渲染**。
@@ -123,7 +123,7 @@ MCP 增删、项目目录选择、`closeElectronSlice`、`openMacWallpaper`、�
 成员）。preload 实际只暴露 13 个成员。已把声明收缩到 preload 的真实面，
 并删除无人引用的 `WorkPreviewDescriptor` / `WorkPreviewIpcResult`。
 
-### `__SALIERI_NEXT__`
+### `__AMADEUS_NEXT__`
 
 preload 写入该标记、`types.d.ts` 声明它，但**唯一读者**是 SettingsPage 里刚删掉的
 `nextRuntime`。两侧一并删除。
@@ -323,12 +323,19 @@ renderer.js 提供:       getPixiApp / setSpriteViewportBounds / setSpriteViewpo
   `locked: {}`，而 `SettingsPage.tsx:302,308` 会读取它们（当前恒为默认值）——
   属于"契约已声明但未填充"，不是冗余，接了真实来源才有意义。
 
-## 独立问题：第三方 notices 与证据漂移（合规审查项）
+## 第三方 notices 与证据漂移（已执行）
 
-`resources/THIRD_PARTY_NOTICES.md` 引用 10 个证据文件，实际只有 2 个存在
-（`FIRST-PARTY-BRAND-ASSETS.md`、`pixi-basis-ktx2-MIT.txt`）。
+`resources/THIRD_PARTY_NOTICES.md` 曾引用 11 个证据文件，实际只有 3 个存在
+（`FIRST-PARTY-BRAND-ASSETS.md`、`FreeMote-NOTICE.md`、`pixi-basis-ktx2-MIT.txt`）。
 
 其中 5 项属于本项目并未包含的组件（GPT-SoVITS、Bert-VITS2、AP-BWE、Live2D Cubism
-Core、pixi-live2d-display）；`provenance.json` 是来源清单而非组件。注意 Live2D 的
-**前端代码**本次已删除，但 notices 的处理仍需合规判断——
-**本文档只指出 notices 声明的证据与仓库现状不一致，不给出删除建议。**
+Core、pixi-live2d-display）；`provenance.json` 是来源清单而非组件，
+`docs/render_vendor_compatibility.md` 已被删除。Live2D 的**前端代码**也已在第二批删除。
+
+处置：notices 收敛为只记录仓库内真实存在的第三方材料——E-mote/FreeMote、PixiJS、
+pixi-basis-ktx2、Keyboard Soundpack #1、first-party 品牌资产、角色/模型/语音资产的
+排除声明。所有引用路径经 `LICENSES/` 存在性校验通过，无悬空引用。
+
+注：pixi-basis-ktx2 的解码器文件仍在仓库内，但当前场景入口只加载 `pixi.min.js`，
+这批资产（`vendor/basis_transcoder.*`、`vendor/pixi-basis-ktx2.global.js`）已不可达，
+是否一并删除与 notices 无关，属于独立的资产清理决策。

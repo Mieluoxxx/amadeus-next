@@ -25,7 +25,7 @@ window.addEventListener('message',e=>{
  if(e.source!==frame.contentWindow||e.origin!==location.origin||e.data.sceneLoadToken!=='acceptance'||e.data.status!=='voice-ready')return;
  const channel=new MessageChannel();port=channel.port1;
  port.onmessage=e=>{events.push(e.data);if(e.data.type==='connected'){ready=true;begin()}};
- port.start();frame.contentWindow.postMessage({type:'salieri.connect',sceneLoadToken:'acceptance'},location.origin,[channel.port2]);
+ port.start();frame.contentWindow.postMessage({type:'amadeus.connect',sceneLoadToken:'acceptance'},location.origin,[channel.port2]);
 });
 </script></body></html>`
 const server = createServer(async (request, response) => {

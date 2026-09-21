@@ -78,7 +78,7 @@ export class PiHost {
         if (this.disposed) { child.kill(); throw new Error('Pi host is closed') }
         this.process = child
         this.error = ''
-        console.info(`[salieri-next] Pi runtime ready: ${child.pid ?? 'unknown'}`)
+        console.info(`[amadeus-next] Pi runtime ready: ${child.pid ?? 'unknown'}`)
         return child
       }).finally(() => { this.starting = null })
     }

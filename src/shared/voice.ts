@@ -1,4 +1,4 @@
-import type { Activity, CharacterDefinition } from './character.ts'
+import type { Activity } from './character.ts'
 import type { AlignmentChunk, PresentedText } from './presentation.ts'
 
 export type TurnKey = { sessionId: string; turnId: string; generation: number }
@@ -25,7 +25,8 @@ export type VoiceEvent = TurnKey & (
   | { type: 'error'; error: string; diagnostic?: FishDiagnostic }
 )
 export type PlaybackEvent = TurnKey & { type: 'playing' | 'buffering' | 'ended' | 'error'; error?: string }
-export type SceneInitialization = { definition: CharacterDefinition; scene: Record<string, unknown> }
+export type SceneInitialization = { character: { renderer: 'emote'; model: '牧瀬紅莉栖ab_白衣' }; scene: Record<string, unknown> }
+export type SystemIdleEvent = { type: 'system-idle'; active: boolean }
 export function sameTurn(a: TurnKey | null, b: TurnKey): boolean {
   return !!a && a.generation === b.generation && a.sessionId === b.sessionId && a.turnId === b.turnId
 }

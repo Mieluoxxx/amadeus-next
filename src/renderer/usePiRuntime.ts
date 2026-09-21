@@ -14,9 +14,9 @@ export function usePiRuntime(): NextRuntime {
   const subscribers = useRef(new Map<string, Set<Subscriber>>())
 
   useEffect(() => {
-    if (!window.salieriNext) return
+    if (!window.amadeusNext) return
     setConnected(true)
-    return window.salieriNext.onEvent(event => {
+    return window.amadeusNext.onEvent(event => {
       const listeners = subscribers.current.get(event.method)
       if (!listeners) return
       for (const listener of listeners) listener(event.params || {})
@@ -24,8 +24,8 @@ export function usePiRuntime(): NextRuntime {
   }, [])
 
   const send = useCallback((method: string, params?: Payload) => {
-    if (!window.salieriNext) return Promise.reject(new Error('Salieri runtime unavailable'))
-    return window.salieriNext.request(method, params)
+    if (!window.amadeusNext) return Promise.reject(new Error('Amadeus runtime unavailable'))
+    return window.amadeusNext.request(method, params)
   }, [])
 
   const subscribe = useCallback((method: string, listener: Subscriber) => {
@@ -45,8 +45,8 @@ export function usePiRuntime(): NextRuntime {
         if (!result.ok) console.error(result.error)
       }).catch(console.error)
     }
-    import.meta.hot.on('salieri:reload', reload)
-    return () => import.meta.hot?.off('salieri:reload', reload)
+    import.meta.hot.on('amadeus:reload', reload)
+    return () => import.meta.hot?.off('amadeus:reload', reload)
   }, [send])
 
   return { connected, send, subscribe }
