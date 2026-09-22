@@ -2,9 +2,9 @@
  * Geometry for the Amadeus scene shell.
  *
  * The scene always fills the whole main window — background, desk and CRT stay
- * one continuous picture. The full transcript, settings and the reply/input
- * dock are overlays placed in the scene's free space; the scene framing is then
- * shifted so the CRT cabinet sits in whatever space is left. Nothing may cover
+ * one continuous picture. The transcript, settings and reply/input dock occupy
+ * reserved side/bottom regions; the scene framing is then shifted so the CRT
+ * cabinet sits in whatever space is left. Nothing may cover
  * the cabinet, and the character inside it is never cropped or shrunk into a
  * corner preview.
  *
@@ -33,9 +33,9 @@ export const SCENE_GLASS = { x: 550, y: 195, width: 586, height: 443 } as const
  */
 export const SCENE_CABINET = { x: 470, y: 100, width: 780, height: 645 } as const
 
-/** Preferred overlay sizes. */
+/** Preferred sidebar sizes. */
 export const MIN_PANEL_WIDTH = 320
-/** Raw band size; PANEL_MARGIN is inset on both sides, leaving room for context and attachments. */
+/** Composer inset, leaving a small gap from the scene edges. */
 export const MIN_DOCK_HEIGHT = 128
 export const MAX_DOCK_HEIGHT = 184
 /**
@@ -53,11 +53,10 @@ export const TOOLBAR_RESERVED_WIDTH = 236
 /** Maximum width of the shared status tray. */
 export const STATUS_TRAY_MAX_WIDTH = 420
 /**
- * Margin between a panel and the window edges. The panel is a floating surface
- * over the scene, not a layout column, so it never touches the frame.
+ * Margin between the scene and the bottom composer.
  */
 export const PANEL_MARGIN = 12
-/** Keep at least this share of the window for the scene when an overlay is open. */
+/** Keep at least this share of the window for the scene when the sidebar is open. */
 export type ScenePanelKind = 'transcript' | 'more'
 
 export type SceneRegion = { x: number; y: number; width: number; height: number }
@@ -308,12 +307,11 @@ function fallbackArrangement(
 }
 
 /**
- * Places the open panel and the reply/input dock so the CRT cabinet stays whole
- * and uncovered, the window stays fully painted, and the overlays are never a
- * separate layout column — they float over one continuous scene.
+ * Places the sidebar and the reply/input dock so the CRT cabinet stays whole
+ * and uncovered while the scene yields real layout space to the sidebar.
  *
- * Panels only use the right or left column; sizes step down toward their
- * minimums. Preference is given to arrangements that both keep the
+ * The sidebar is right anchored and uses a bounded width. Preference is given
+ * to arrangements that both keep the
  * cabinet whole and leave no seam, then to the largest cabinet; when no
  * arrangement can do both, the largest cabinet still wins and `seam` is set.
  */
@@ -321,7 +319,7 @@ export function resolveSceneLayout(
   width: number,
   height: number,
   panel: ScenePanelKind | null,
-  options: { dock?: boolean; preferredSide?: 'left' | 'right' } = {},
+  options: { dock?: boolean } = {},
 ): SceneLayout {
   const scene: SceneRegion = {
     x: 0,
@@ -331,10 +329,6 @@ export function resolveSceneLayout(
   }
   const showDock = options.dock !== false
 
-  const sideSizes = [
-    clamp(Math.floor(scene.width * 0.38), MIN_PANEL_WIDTH, 560),
-    MIN_PANEL_WIDTH,
-  ].filter((value, index, list) => list.indexOf(value) === index)
   const dockFloor = scene.height < 360 ? 64 : scene.height <= 500 ? MIN_DOCK_HEIGHT : MAX_DOCK_HEIGHT
   const dockWidth = Math.min(scene.width, 1080)
   const dockHeight = Math.max(1, Math.min(dockFloor, Math.max(1, scene.height - 1)))
@@ -381,29 +375,15 @@ export function resolveSceneLayout(
 
   const panelCandidates: SceneOverlay[] = []
   if (panel) {
-    // Side panels start below the window chrome band. The toolbar lives only in
-    // that band, so this is what keeps its buttons (and the panel header's own
-    // controls) clickable instead of buried under a floating surface.
-    const panelTop = Math.min(chromeHeight, Math.max(0, scene.height - 1))
-    const panelBody = Math.max(1, (dock?.region.y ?? scene.height) - panelTop)
-    for (const side of sideSizes) {
-      panelCandidates.push({
-        kind: panel,
-        placement: 'right',
-        region: insetRegion(
-          { x: scene.width - side, y: panelTop, width: side, height: panelBody },
-          PANEL_MARGIN,
-        ),
-      })
-      panelCandidates.push({
-        kind: panel,
-        placement: 'left',
-        region: insetRegion(
-          { x: 0, y: panelTop, width: side, height: panelBody },
-          PANEL_MARGIN,
-        ),
-      })
-    }
+    const sidebarWidth = Math.min(
+      scene.width,
+      clamp(Math.floor(scene.width * 0.32), MIN_PANEL_WIDTH, 420),
+    )
+    panelCandidates.push({
+      kind: panel,
+      placement: 'right',
+      region: { x: scene.width - sidebarWidth, y: 0, width: sidebarWidth, height: scene.height },
+    })
   } else if (dock) {
     panelCandidates.push(dock)
   }
@@ -425,11 +405,6 @@ export function resolveSceneLayout(
     ranked.push({ overlays: candidateOverlays, arranged: relaxed, covered: Boolean(strict) })
   }
   ranked.sort((left, right) => {
-      if (options.preferredSide) {
-        const onPreferredSide = (entry: Ranked) => entry.overlays.some(overlay => overlay.kind === panel && overlay.placement === options.preferredSide)
-        const sidePreference = Number(onPreferredSide(right)) - Number(onPreferredSide(left))
-        if (sidePreference) return sidePreference
-      }
       if (left.covered !== right.covered) return left.covered ? -1 : 1
       const leftArea = left.arranged.cabinet.width * left.arranged.cabinet.height
       const rightArea = right.arranged.cabinet.width * right.arranged.cabinet.height

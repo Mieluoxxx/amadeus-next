@@ -1,9 +1,9 @@
 /**
  * Amadeus scene shell — the normal Electron main window.
  *
- * The scene fills the window; the transcript, settings and
- * the reply/input dock are overlays placed in the scene's free space, and the
- * framing shifts so the CRT cabinet is never covered. Nothing here may hide the
+ * The scene fills the window; the transcript and settings use a shared sidebar,
+ * while the reply/input dock occupies the bottom region. The framing shifts so
+ * the CRT cabinet is never covered. Nothing here may hide the
  * character, and the window never switches to a separate chat mode to talk.
  */
 
@@ -17,7 +17,6 @@ import {
   Plus,
   RotateCw,
   SlidersHorizontal,
-  X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useI18n } from '../../i18n'
@@ -29,7 +28,7 @@ import {
   type ScenePanelKind,
   type SceneRegion,
 } from './sceneLayout'
-import { SCENE_WORK_SURFACE, useSceneApproval } from './useSceneApproval'
+import { useSceneApproval } from './useSceneApproval'
 import { useSceneWorkCompletions } from './useSceneWorkCompletions'
 import {
   prepareImageAttachment,
@@ -40,17 +39,12 @@ import { useSceneBridge } from './useSceneBridge'
 import { useSceneTransition } from './useSceneTransition'
 import { useSceneSession } from './useSceneSession'
 import SceneDock from './SceneDock'
-import { SceneWorkView } from './sceneAuxiliary'
 import {
   sceneNotices,
 } from './sceneWork'
 
 type SendFn = (method: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
 type SubscribeFn = (method: string, fn: (params: Record<string, unknown>) => void) => () => void
-
-// The scene panel ships Settings plus the Work surface, which stays reachable
-// through its own event path (notices, completions, backend canvas actions).
-type AuxView = 'settings' | 'workboard'
 
 /** How long the scene may be up without the character before saying so. */
 const CHARACTER_WAIT_MS = 8000
@@ -80,12 +74,8 @@ export default function ScenePage({
   const completions = useSceneWorkCompletions({ send, subscribe, connected })
   const { pending: pendingCompletions, markAnnounced } = completions
   const [panel, setPanel] = useState<ScenePanelKind | null>(null)
-  const [auxView, setAuxView] = useState<AuxView>('settings')
   const [acknowledgedNotices, setAcknowledgedNotices] = useState<string[]>([])
   const [pendingAttachment, setPendingAttachment] = useState<VisualAttachment | null>(null)
-  const [focusedWorkItem, setFocusedWorkItem] = useState<Record<string, unknown> | null>(null)
-  const [focusedWorkItemError, setFocusedWorkItemError] = useState('')
-  const focusRequestRef = useRef(0)
   /**
    * True once the scene has been ready for a bounded wait without the character
    * ever being drawn. The user's requirement is that Amadeus is always visible,
@@ -194,80 +184,14 @@ export default function ScenePage({
     return () => window.clearTimeout(timer)
   }, [bridge.status, bridge.character, bridge.loadId])
 
-  const focusWorkItem = useCallback(async (workItemId: string) => {
-    const requestId = ++focusRequestRef.current
-    setAuxView('workboard')
-    setPanel('more')
-    setFocusedWorkItem(null)
-    setFocusedWorkItemError('')
-    if (!workItemId) return
-    try {
-      const response = await send('work.focus', {
-        work_item_id: workItemId,
-        surface: SCENE_WORK_SURFACE,
-      })
-      const envelope = response.work && typeof response.work === 'object'
-        ? response.work as Record<string, unknown>
-        : {}
-      const items = Array.isArray(envelope.items) ? envelope.items : []
-      const summaryItem = items.find(candidate => (
-        candidate && typeof candidate === 'object'
-          && String((candidate as Record<string, unknown>).id || '') === workItemId
-      ))
-      const detail = await send('work.get', {
-        work_item_id: workItemId,
-        surface: SCENE_WORK_SURFACE,
-      })
-      if (requestId !== focusRequestRef.current) return
-      if (detail.item && typeof detail.item === 'object') {
-        const item = detail.item as Record<string, unknown>
-        if (String(item.id || item.workItemId || item.work_item_id || '') === workItemId) {
-          setFocusedWorkItem(item)
-          return
-        }
-      }
-      if (summaryItem && typeof summaryItem === 'object') setFocusedWorkItem(summaryItem as Record<string, unknown>)
-    } catch (error) {
-      // The notification still opens the work panel even if a disconnected backend
-      // cannot return the selected item's details yet.
-      if (requestId === focusRequestRef.current) {
-        setFocusedWorkItemError(error instanceof Error ? error.message : String(error))
-      }
-    }
-  }, [send])
-
-  // Clicking the system notification is an explicit user action. It opens the
-  // work panel *and selects the notified work item*, so the user lands on the task
-  // the notice was about rather than on whatever happened to be selected.
-  useEffect(() => {
-    const subscribeToActivation = window.amadeus?.onTaskCompleteActivated
-    if (!subscribeToActivation) return
-    return subscribeToActivation(payload => {
-      const workItemId = String(payload?.workItemId || '')
-      void focusWorkItem(workItemId)
-    })
-  }, [focusWorkItem])
-
   // React only to the accepted session-change record from useSceneSession. Raw
   // broadcasts are intentionally not consumed here: stale context events must
   // not clear the selected WorkItem or Artifact context.
   useEffect(() => {
     const change = session.sessionChange
     if (!change) return
-    focusRequestRef.current += 1
-    setFocusedWorkItem(null)
-    setFocusedWorkItemError('')
     if (change.source === 'slice') setPanel('transcript')
   }, [session.sessionChange])
-
-  useEffect(() => {
-    const onWorkRequested = () => {
-      setAuxView('workboard')
-      setPanel('more')
-    }
-    window.addEventListener('amadeus:scene-work-requested', onWorkRequested)
-    return () => window.removeEventListener('amadeus:scene-work-requested', onWorkRequested)
-  }, [])
 
   // ⌘N stays inside the scene: it starts a new task and shows it.
   useEffect(() => {
@@ -280,22 +204,7 @@ export default function ScenePage({
   }, [session])
 
   const togglePanel = useCallback((kind: ScenePanelKind) => {
-    if (kind !== 'more') {
-      setPanel(current => toggleScenePanel(current, kind))
-      return
-    }
-    // The toolbar's Settings button always leads to Settings. The Work surface
-    // is an event-driven guest in this panel, so it must never become a view the
-    // user cannot leave: clicking Settings while it is shown switches back
-    // instead of closing the panel.
-    const showingGuest = panel === 'more' && auxView !== 'settings'
-    setAuxView('settings')
-    setPanel(current => (showingGuest ? 'more' : toggleScenePanel(current, kind)))
-  }, [panel, auxView])
-
-  const openWorkOverlay = useCallback(() => {
-    setAuxView('workboard')
-    setPanel('more')
+    setPanel(current => toggleScenePanel(current, kind))
   }, [])
 
   const toolbarRight = Math.max(12, viewport.width - (layout.scene.x + layout.scene.width) + 12)
@@ -436,7 +345,7 @@ export default function ScenePage({
           notices={visibleNotices}
           unresolvedCount={notices.length}
           onDismiss={key => setAcknowledgedNotices(previous => [...previous, key])}
-          onOpenWork={openWorkOverlay}
+          onOpenSettings={() => setPanel('more')}
         />
 
         {characterMissing && (
@@ -449,9 +358,9 @@ export default function ScenePage({
           </div>
         )}
 
-        {/* In-window completion record. A system notification can be suppressed by
-            Do Not Disturb or refused by the user; the completion still has to be
-            discoverable here, and clicking it selects the task it is about. */}
+      {/* In-window completion record. A system notification can be suppressed by
+          Do Not Disturb or refused by the user; the completion remains visible
+          here until dismissed. */}
         {inAppCompletions.length > 0 && (
           <div
             className="flex max-h-[40%] shrink-0 flex-col items-stretch gap-1 overflow-hidden"
@@ -468,15 +377,6 @@ export default function ScenePage({
                 <span className="min-w-0 flex-1 truncate" title={completion.title}>
                   {completion.title}
                 </span>
-                <button
-                  onClick={() => {
-                    void focusWorkItem(completion.workItemId)
-                  }}
-                  className="shrink-0 underline decoration-dotted"
-                  data-testid="scene-completion-open"
-                >
-                  {t('scene.workboard')}
-                </button>
                 <button
                   onClick={() => setInAppCompletions(previous => previous.filter(item => item.key !== completion.key))}
                   data-testid="scene-completion-dismiss"
@@ -514,11 +414,6 @@ export default function ScenePage({
           session={session}
           permissions={permissions}
           approval={approval}
-           focusedWorkItem={focusedWorkItem}
-           focusedWorkItemError={focusedWorkItemError}
-           onFocusWorkItem={workItemId => { void focusWorkItem(workItemId).then(() => approval.refresh()) }}
-          auxView={auxView}
-          onClose={() => setPanel(null)}
           connected={connected}
           send={send}
           subscribe={subscribe}
@@ -532,12 +427,12 @@ function SceneNotices({
   notices,
   unresolvedCount,
   onDismiss,
-  onOpenWork,
+  onOpenSettings,
 }: {
   notices: Array<{ key: string; tone: 'attention' | 'error'; text: string }>
   unresolvedCount: number
   onDismiss: (key: string) => void
-  onOpenWork: () => void
+  onOpenSettings: () => void
 }) {
   const { t } = useI18n()
   if (unresolvedCount === 0) return null
@@ -545,7 +440,7 @@ function SceneNotices({
     // Acknowledged but still unresolved: the entry stays discoverable.
     return (
       <button
-        onClick={onOpenWork}
+        onClick={onOpenSettings}
         data-testid="scene-notice-summary"
         className="flex shrink-0 items-center gap-1.5 rounded-xl border border-amber-500/30 bg-[#1c1a12]/95 px-3 py-1.5 text-[11px] text-amber-200 backdrop-blur-xl"
       >
@@ -580,11 +475,11 @@ function SceneNotices({
           </span>
         )}
         <button
-          onClick={onOpenWork}
+          onClick={onOpenSettings}
           className="shrink-0 underline decoration-dotted"
           data-testid="scene-notice-details"
         >
-          {t('scene.workboard')}
+          {t('scene.settings')}
         </button>
         <button
           onClick={() => onDismiss(first.key)}
@@ -605,11 +500,6 @@ function ScenePanelFrame({
   session,
   permissions,
   approval,
-  focusedWorkItem,
-  focusedWorkItemError,
-  onFocusWorkItem,
-  auxView,
-  onClose,
   connected,
   send,
   subscribe,
@@ -620,11 +510,6 @@ function ScenePanelFrame({
   session: ReturnType<typeof useSceneSession>
   permissions: Array<{ key: string; requestId: string; workItemId: string; title: string; detail: string }>
   approval: ReturnType<typeof useSceneApproval>
-  focusedWorkItem: Record<string, unknown> | null
-  focusedWorkItemError: string
-  onFocusWorkItem: (workItemId: string) => void
-  auxView: AuxView
-  onClose: () => void
   connected: boolean
   send: SendFn
   subscribe: SubscribeFn
@@ -679,16 +564,7 @@ function ScenePanelFrame({
             <Plus aria-hidden="true" />
           </button>
         )}
-        {kind !== 'transcript' && <div className="flex-1" />}
-        <button
-          onClick={onClose}
-          data-testid="scene-panel-close"
-          title={t('scene.collapse')}
-          aria-label={t('scene.collapse')}
-          className={cn('scene-crt-action', kind === 'transcript' && 'scene-transcript-close')}
-        >
-          <X aria-hidden="true" />
-        </button>
+        {kind !== 'transcript' ? <div className="flex-1" /> : null}
       </div>
 
       <div
@@ -705,24 +581,10 @@ function ScenePanelFrame({
             />
         )}
         {kind === 'more' && (
-          <>
-            <div className="flex min-h-0 flex-1 flex-col overflow-auto border-t border-[var(--border)] p-3" data-testid="scene-aux">
-              {auxView === 'settings' && <SettingsPage send={send} subscribe={subscribe} />}
-              {auxView === 'workboard' && (
-                <>
-                  <SceneWorkActions
-                    permissions={permissions}
-                    approval={approval}
-                    focusedWorkItem={focusedWorkItem}
-                    focusedWorkItemError={focusedWorkItemError}
-                    onFocusWorkItem={onFocusWorkItem}
-                    connected={connected}
-                  />
-                  <SceneWorkView send={send} subscribe={subscribe} connected={connected} />
-                </>
-              )}
-            </div>
-          </>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="scene-aux">
+            <SceneApprovalActions permissions={permissions} approval={approval} connected={connected} />
+            <SettingsPage send={send} subscribe={subscribe} />
+          </div>
         )}
       </div>
 
@@ -748,12 +610,8 @@ function SceneToolbarButton({
       onClick={onClick}
       data-testid={testId}
       title={label}
-      className={cn(
-        'flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] backdrop-blur-xl transition-colors',
-        active
-          ? 'border-[var(--accent)]/40 bg-[var(--accent)]/15 text-[var(--text)]'
-          : 'border-[var(--border)] bg-[var(--bg)]/80 text-[var(--muted)] hover:text-[var(--text)]',
-      )}
+      data-active={active ? 'true' : 'false'}
+      className="scene-toolbar-button"
     >
       {icon}
       <span>{label}</span>
@@ -856,25 +714,19 @@ function SceneTranscript({
   )
 }
 
-function SceneWorkActions({
+function SceneApprovalActions({
   permissions,
   approval,
-  focusedWorkItem,
-  focusedWorkItemError,
-  onFocusWorkItem,
   connected,
 }: {
   permissions: Array<{ key: string; requestId: string; workItemId: string; title: string; detail: string }>
   approval: ReturnType<typeof useSceneApproval>
-  focusedWorkItem: Record<string, unknown> | null
-  focusedWorkItemError: string
-  onFocusWorkItem: (workItemId: string) => void
   connected: boolean
 }) {
   const { t } = useI18n()
-  if (!approval.error && !approval.authorization && !permissions.length && !focusedWorkItem && !focusedWorkItemError) return null
+  if (!approval.error && !approval.authorization && !permissions.length) return null
   return (
-    <div className="flex shrink-0 flex-col gap-2 pb-3" data-testid="scene-work-actions">
+    <div className="flex shrink-0 flex-col gap-2 p-3" data-testid="scene-approval-actions">
       {approval.error && !approval.authorization && (
         <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300" data-testid="scene-approval-error-orphaned">
           <div>{approval.error}</div>
@@ -883,22 +735,10 @@ function SceneWorkActions({
           </button>
         </div>
       )}
-      {focusedWorkItem && (
-        <div className="rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/10 px-3 py-2 text-[11px]" data-testid="scene-focused-work-item">
-          <div className="font-medium">{String(focusedWorkItem.title || focusedWorkItem.id || t('scene.workboard'))}</div>
-          <div className="mt-1 break-words text-[var(--muted)]">
-            {[focusedWorkItem.state, focusedWorkItem.execution, focusedWorkItem.completion, focusedWorkItem.attention]
-              .map(value => String(value || '').trim()).filter(Boolean).join(' · ')}
-          </div>
-          {focusedWorkItem.workspacePath ? <div className="mt-0.5 break-all text-[10px] text-[var(--muted)]">{String(focusedWorkItem.workspacePath)}</div> : null}
-          {focusedWorkItem.artifactCount !== undefined ? <div className="mt-0.5 text-[10px] text-[var(--muted)]">Artifacts: {String(focusedWorkItem.artifactCount)}</div> : null}
-        </div>
-      )}
-      {focusedWorkItemError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300" data-testid="scene-focused-work-item-error">{focusedWorkItemError}</div>}
       {approval.authorization && (
         <div
           className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200"
-          data-testid="scene-work-permission"
+            data-testid="scene-approval-card"
           data-kind={approval.authorization.kind}
           data-request-id={approval.authorization.requestId}
         >
@@ -970,15 +810,12 @@ function SceneWorkActions({
           <div
             key={permission.key}
             className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200"
-            data-testid="scene-work-ledger-permission"
+            data-testid="scene-ledger-permission"
             data-request-id={permission.requestId}
           >
             <div className="font-medium">{t('scene.work_needs_permission')}</div>
             <div className="mt-1 break-words">{permission.title}</div>
             {permission.detail ? <div className="mt-0.5 break-words text-[10px] text-[var(--muted)]">{permission.detail}</div> : null}
-            <button type="button" className="mt-1 underline decoration-dotted" data-testid="scene-ledger-permission-focus" onClick={() => onFocusWorkItem(permission.workItemId)}>
-              {t('scene.workboard')} →
-            </button>
           </div>
         ))}
 

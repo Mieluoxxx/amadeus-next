@@ -32,7 +32,6 @@ export function useSceneTransition(
   const [reducedMotion, setReducedMotion] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches)
   const panelRef = useRef<HTMLDivElement>(null)
   const dockRef = useRef<HTMLDivElement>(null)
-  const preferredSide = useRef<'left' | 'right' | undefined>(undefined)
   const previousViewport = useRef({ width, height, frameLoadId })
   const animations = useRef<Animation[]>([])
   const generation = useRef(0)
@@ -58,7 +57,7 @@ export function useSceneTransition(
     // ponytail: resize/load changes settle immediately; coordinated resize motion can be added if needed.
     const animate = !reducedMotion && old.width === width && old.height === height && old.frameLoadId === frameLoadId
       && ((view.layout.panel?.kind || null) !== requestedPanel || view.animating)
-    const layout = resolveSceneLayout(width, height, requestedPanel, { preferredSide: preferredSide.current })
+    const layout = resolveSceneLayout(width, height, requestedPanel)
     pending.current = {
       generation: ++generation.current,
       frame: frameRef.current ? getComputedStyle(frameRef.current).transform : null,
@@ -68,7 +67,6 @@ export function useSceneTransition(
       animate,
     }
     previousViewport.current = { width, height, frameLoadId }
-    if (layout.panel?.placement === 'left' || layout.panel?.placement === 'right') preferredSide.current = layout.panel.placement
     if ((!layout.panel && panelRef.current?.contains(document.activeElement)) || (!layout.dock && dockRef.current?.contains(document.activeElement))) {
       document.querySelector<HTMLButtonElement>(`[data-testid="scene-open-${requestedPanel || view.panel?.kind}"]`)?.focus({ preventScroll: true })
     }

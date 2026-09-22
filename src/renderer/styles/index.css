@@ -736,7 +736,7 @@ html.desktop-work-slice-window #root {
   .scene-composer { transition: none; }
 }
 
-/* Scene panels share the phosphor palette and inset frames of the CRT canvas. */
+/* Scene panels share the phosphor palette and use a real right sidebar. */
 .scene-crt-panel {
   --text: #c6eee4;
   --muted: #91b9af;
@@ -745,29 +745,55 @@ html.desktop-work-slice-window #root {
   --scrollbar: rgba(151, 247, 227, 0.2);
   --scrollbar-hover: rgba(151, 247, 227, 0.4);
   color-scheme: dark;
-  padding: 8px;
-  border: 1px solid rgba(91, 239, 215, 0.42);
-  border-radius: 18px;
+  border-left: 1px solid rgba(91, 239, 215, 0.42);
   color: var(--text);
   font-family: var(--font-mono), var(--font-cjk);
   background:
     repeating-linear-gradient(0deg, rgba(148, 255, 230, 0.018) 0 1px, transparent 1px 5px),
     linear-gradient(135deg, rgba(3, 26, 30, 0.94), rgba(5, 20, 28, 0.9));
-  box-shadow: inset 0 0 0 1px rgba(184, 255, 241, 0.035), 0 16px 48px rgba(0, 12, 18, 0.34), 0 0 32px rgba(50, 238, 207, 0.08);
+  box-shadow: -16px 0 48px rgba(0, 12, 18, 0.24), inset 1px 0 0 rgba(184, 255, 241, 0.035);
   backdrop-filter: blur(12px) saturate(1.08);
   -webkit-app-region: no-drag;
 }
+.scene-toolbar-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid rgba(105, 230, 214, 0.28);
+  border-radius: 10px;
+  color: #91b9af;
+  background: rgba(3, 23, 29, 0.86);
+  box-shadow: inset 0 0 0 1px rgba(184, 255, 241, 0.035), 0 8px 20px rgba(0, 12, 18, 0.24);
+  backdrop-filter: blur(12px) saturate(1.08);
+  font: 11px var(--font-mono), var(--font-cjk);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.scene-toolbar-button:hover,
+.scene-toolbar-button[data-active='true'] {
+  color: #c6eee4;
+  border-color: rgba(105, 230, 214, 0.52);
+  background: rgba(105, 230, 214, 0.12);
+}
+.scene-toolbar-button:focus-visible {
+  outline: 2px solid #97d5c5;
+  outline-offset: 2px;
+}
+.scene-toolbar-button svg { width: 14px; height: 14px; }
 
 .scene-transcript-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px 32px;
+  grid-template-columns: minmax(0, 1fr) 32px;
   flex: 0 0 auto;
   align-items: center;
   gap: 10px 8px;
-  padding: 6px 6px 12px;
+  padding: 16px 18px 14px;
   border-bottom: 1px solid var(--border);
 }
 .scene-crt-title { grid-area: 1 / 1; font-size: 17px; font-weight: 650; letter-spacing: 0.04em; }
+.scene-transcript-header .scene-crt-title { grid-area: 1 / 1 / 2 / -1; }
 .scene-crt-action {
   display: grid;
   place-items: center;
@@ -779,12 +805,11 @@ html.desktop-work-slice-window #root {
   background: rgba(3, 23, 29, 0.4);
   cursor: pointer;
 }
-.scene-transcript-new { grid-area: 1 / 2; }
-.scene-transcript-close { grid-area: 1 / 3; }
+.scene-transcript-new { grid-area: 2 / 2; }
 .scene-crt-action svg { width: 15px; height: 15px; }
 .scene-crt-action:hover { color: var(--text); border-color: var(--accent); background: rgba(105, 230, 214, 0.08); }
 .scene-transcript-session {
-  grid-area: 2 / 1 / 3 / -1;
+  grid-area: 2 / 1;
   min-width: 0;
   width: 100%;
   height: 32px;
@@ -872,12 +897,11 @@ html.desktop-work-slice-window #root {
 .scene-transcript-translation { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .scene-transcript-empty { padding: 16px 12px; color: var(--muted); font-size: 11px; }
 @media (max-height: 500px) {
-  .scene-crt-panel { padding: 6px; }
-  .scene-transcript-header { grid-template-columns: auto minmax(0, 1fr) 28px 28px; gap: 6px; padding: 0 2px 6px; }
+  .scene-transcript-header { grid-template-columns: auto minmax(0, 1fr) 28px; gap: 6px; padding: 0 2px 6px; }
+  .scene-transcript-header .scene-crt-title { grid-area: 1 / 1; }
   .scene-crt-title { font-size: 12px; }
   .scene-crt-action { width: 28px; height: 28px; }
   .scene-transcript-new { grid-area: 1 / 3; }
-  .scene-transcript-close { grid-area: 1 / 4; }
   .scene-transcript-session { grid-area: 1 / 2; height: 26px; padding: 0 6px; }
   .scene-transcript-scroll { margin-top: 4px; }
   .scene-transcript-messages { padding: 8px; gap: 8px; }
@@ -907,9 +931,9 @@ html.desktop-work-slice-window #root {
   --input: var(--border);
   --ring: var(--accent);
 }
-.scene-settings-header { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 6px 6px 12px; border-bottom: 1px solid var(--border); }
-.scene-settings-body { overflow: hidden; }
-.scene-settings-panel [data-testid='scene-aux'] { border: 1px solid var(--border); border-radius: 12px; background: rgba(3, 18, 24, 0.24); scrollbar-width: thin; }
+.scene-settings-header { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 16px 18px 14px; border-bottom: 1px solid var(--border); }
+.scene-settings-body { min-height: 0; overflow: hidden; }
+.scene-settings-panel [data-testid='scene-aux'] { min-height: 0; background: transparent; scrollbar-width: thin; }
 .scene-settings-panel .settings-page-shell { padding: 4px; }
 .scene-settings-panel .settings-page-titlebar { gap: 12px; flex-wrap: wrap; }
 .scene-settings-panel :is(.settings-encryption-state, .settings-restart-banner) { color: var(--text); border-color: var(--border); background: var(--surface-alt); box-shadow: none; }
@@ -997,143 +1021,6 @@ html.desktop-work-slice-window #root {
   width: 100%;
   max-width: none;
   min-width: 0;
-}
-
-@media (max-height: 500px) {
-  .scene-settings-header { position: absolute; top: 6px; right: 6px; z-index: 1; padding: 0; border: 0; }
-  .scene-settings-header .scene-crt-title { display: none; }
-
-  [data-testid='scene-work-surface'] .crt-work-root {
-    padding: 4px;
-  }
-
-  [data-testid='scene-work-surface'] .crt-topbar {
-    height: 22px;
-    padding: 0 6px;
-    font-size: 8px;
-  }
-
-  [data-testid='scene-work-surface'] .crt-focus-layout {
-    height: calc(100% - 56px);
-    padding: 0 6px 4px;
-  }
-
-  [data-testid='scene-work-surface'] .crt-task-dock {
-    left: 4px;
-    width: 34px;
-    bottom: 4px;
-  }
-
-  [data-testid='scene-work-surface'] .crt-task-dock::before {
-    display: none;
-  }
-
-  [data-testid='scene-work-surface'] .crt-plan-toggle {
-    display: grid;
-    place-items: center;
-    width: 30px;
-    height: 30px;
-    padding: 0;
-    border: 1px solid rgba(109, 255, 226, 0.42);
-    border-radius: 999px;
-    background: rgba(3, 18, 22, 0.82);
-    color: var(--crt-text);
-    font-size: 7px;
-    cursor: pointer;
-  }
-
-  [data-testid='scene-work-surface'] .crt-timeline-compact {
-    left: 0;
-    top: 34px;
-    width: min(250px, calc(100vw - 24px));
-    max-height: calc(100% - 40px);
-  }
-
-  [data-testid='scene-work-surface'] .crt-command-bar {
-    height: 34px;
-    min-height: 34px;
-    display: flex;
-    align-items: center;
-    flex-wrap: nowrap;
-    padding: 3px 6px;
-    gap: 4px;
-    overflow: visible;
-  }
-
-  [data-testid='scene-work-surface'] .crt-command-input {
-    flex: 1 1 auto;
-    width: auto;
-    height: 28px;
-    grid-template-columns: 14px minmax(0, 1fr) 38px;
-  }
-
-  [data-testid='scene-work-surface'] .crt-command-input textarea {
-    font-size: 9px;
-    line-height: 22px;
-    height: 22px;
-  }
-
-  [data-testid='scene-work-surface'] .crt-command-input button {
-    height: 22px;
-    font-size: 8px;
-  }
-
-  [data-testid='scene-work-surface'] .crt-command-tools {
-    position: relative;
-    flex: 0 0 auto;
-  }
-
-  [data-testid='scene-work-surface'] .crt-command-tools > summary {
-    display: grid;
-    place-items: center;
-    width: 28px;
-    height: 26px;
-    border: 1px solid var(--crt-line);
-    border-radius: 6px;
-    color: var(--crt-text);
-    cursor: pointer;
-    font-size: 0;
-    list-style: none;
-  }
-
-  [data-testid='scene-work-surface'] .crt-command-tools > summary::after {
-    content: '⋯';
-    font-size: 15px;
-    line-height: 1;
-  }
-
-  [data-testid='scene-work-surface'] .crt-command-tools-content {
-    position: absolute;
-    right: 0;
-    bottom: calc(100% + 4px);
-    z-index: 20;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px;
-    width: min(250px, calc(100vw - 24px));
-    max-height: 120px;
-    overflow: auto;
-    padding: 6px;
-    border: 1px solid var(--crt-line);
-    border-radius: 7px;
-    background: rgba(3, 18, 22, 0.96);
-  }
-
-  [data-testid='scene-work-surface'] .crt-command-tools-content select,
-  [data-testid='scene-work-surface'] .crt-command-tools-content input,
-  [data-testid='scene-work-surface'] .crt-command-tools-content button {
-    min-width: 28px;
-    min-height: 24px;
-    max-width: 100%;
-    padding: 2px 4px;
-    font-size: 8px;
-  }
-
-  [data-testid='scene-work-surface'] .crt-command-tools-content input[aria-label='Workspace for a new WorkItem'] {
-    display: block;
-    min-width: 120px;
-  }
 }
 
 /* ── Range slider (matches QSlider stylesheet) ── */
