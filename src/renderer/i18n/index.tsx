@@ -59,8 +59,6 @@ const EN = {
   'settings.restart_pending': 'Saved changes need a backend restart',
   'settings.restart_pending_detail': 'Applied automatically. Use the button if this backend cannot be restarted from here.',
 
-  'settings.group.chat_appearance': 'Chat appearance',
-
   'settings.group.chat_voice': 'Chat & Voice',
   'settings.group.main_model': 'Main chat model',
 
@@ -95,6 +93,8 @@ const EN = {
   'settings.note.no_active_connection': 'No active connection is selected.',
 
   'settings.other_voice_backends': 'Other synthesis backends',
+  'settings.advanced': 'Advanced (live calibration)',
+  'settings.group.network': 'Network',
 
 
 
@@ -107,17 +107,9 @@ const EN = {
   'settings.action.clear': 'Clear',
   'settings.action.on': 'On',
   'settings.action.off': 'Off',
-  'settings.asset.installed': 'Installed',
-  'settings.asset.incomplete': 'Incomplete',
-  'settings.asset.invalid': 'Invalid package',
-  'settings.asset.not_installed': 'Not installed',
-  'settings.asset.visual_content': 'Ambient layers, subtitles, scenario media, and wallpaper sound assets are available.',
-  'settings.asset.visual_attention': 'The optional visual pack needs attention: {detail}',
-  'settings.asset.visual_optional': 'Optional. The built-in wallpaper, Chat, Work, and headless mode remain available without it.',
   'settings.restart_error': 'Backend restart failed',
   'settings.restart_unowned': 'This backend was not started by this app, so it cannot be restarted from here. Restart it where it was launched.',
   'settings.provider_needs_key': 'No API key is configured for {provider}. Enter one below and it will be applied.',
-  'settings.label.visual_pack': 'Visual Runtime Pack',
 
 
 
@@ -262,7 +254,7 @@ const ZH: Messages = {
   'settings.saving_label': '正在保存…', 'settings.section.general': '总览', 'settings.section.models': '模型', 'settings.section.asr': '语音识别', 'settings.section.tts': '语音合成',
 
   'settings.security.available': '密钥受操作系统保护', 'settings.security.unavailable': '系统密钥加密不可用', 'settings.restart_pending': '已保存的更改需要重启后端才能生效', 'settings.restart_pending_detail': '本应用会自动重启；若该后端无法从这里自动重启，请点击右侧按钮。',
-  'settings.aria_sections': '设置分区', 'settings.group.chat_appearance': '聊天外观',
+  'settings.aria_sections': '设置分区',
   'settings.group.chat_voice': '界面与字幕', 'settings.group.main_model': '主聊天模型', 'settings.group.voice_output': '说话与合成',
   'settings.group.asr_current': '当前配置', 'settings.group.asr_configuration': '识别设置', 'settings.group.asr_capture': '麦克风与端点', 'settings.group.asr_remaining': '其余设置', 'settings.label.asr_mode': '识别后端', 'settings.asrBackend.qwen3_asr': 'Qwen3-ASR（本地）', 'settings.asrBackend.sense_voice': 'SenseVoice（本地）', 'settings.asrBackend.openai_compatible': 'OpenAI 兼容转写（远程）', 'settings.asrBackend.mimo': '小米 ASR 模型（远程）',
 
@@ -270,13 +262,10 @@ const ZH: Messages = {
 
 
 
-  'settings.note.no_user_settings': '没有用户管理的连接设置。', 'settings.note.no_active_connection': '当前没有选中的活动连接。', 'settings.other_voice_backends': '其他语音合成后端',
+  'settings.note.no_user_settings': '没有用户管理的连接设置。', 'settings.note.no_active_connection': '当前没有选中的活动连接。', 'settings.other_voice_backends': '其他语音合成后端', 'settings.advanced': '高级（实时校准）', 'settings.group.network': '网络',
 
   'settings.placeholder.secret_replace': '已配置——输入以替换', 'settings.placeholder.secret_empty': '未配置', 'settings.action.save': '保存', 'settings.action.clear': '清除', 'settings.action.on': '开', 'settings.action.off': '关',
-  'settings.asset.installed': '已安装', 'settings.asset.incomplete': '不完整', 'settings.asset.invalid': '无效包', 'settings.asset.not_installed': '未安装',
-  'settings.asset.visual_content': '环境层、字幕、场景媒体和壁纸音频资源可用。', 'settings.asset.visual_optional': '可选。没有它，内置壁纸、聊天、工作页和无界面模式仍可用。',
-  'settings.asset.visual_attention': '可选视觉资源包需要处理：{detail}', 'settings.restart_error': '后端重启失败', 'settings.restart_unowned': '该后端不是由本应用启动的，无法从这里自动重启；请在启动它的地方重启。', 'settings.provider_needs_key': '{provider} 尚未配置 API Key，请在下方填写后即可生效。',
-  'settings.label.visual_pack': '视觉运行时资源包',
+  'settings.restart_error': '后端重启失败', 'settings.restart_unowned': '该后端不是由本应用启动的，无法从这里自动重启；请在启动它的地方重启。', 'settings.provider_needs_key': '{provider} 尚未配置 API Key，请在下方填写后即可生效。',
 
 
 
@@ -321,13 +310,12 @@ const JA: Messages = {
   'settings.section.general': '概要', 'settings.section.models': 'モデル', 'settings.section.asr': '音声認識', 'settings.section.tts': '音声合成', 'settings.aria_sections': '設定セクション',
 
   'settings.security.available': '秘密情報は OS により保護されています', 'settings.security.unavailable': 'OS の秘密情報暗号化を利用できません', 'settings.restart_pending': '保存済みの変更はバックエンドの再起動で反映されます', 'settings.restart_pending_detail': '自動で再起動します。ここから再起動できない場合は右のボタンを使用してください。',
-  'settings.group.chat_appearance': 'チャットの外観', 'settings.group.chat_voice': '表示と言語', 'settings.group.main_model': 'メインチャットモデル', 'settings.group.voice_output': '合成と出力',
+  'settings.group.chat_voice': '表示と言語', 'settings.group.main_model': 'メインチャットモデル', 'settings.group.voice_output': '合成と出力',
   'settings.group.asr_current': '現在の設定', 'settings.group.asr_configuration': '認識設定', 'settings.group.asr_capture': 'マイクと端点検出', 'settings.group.asr_remaining': 'その他の設定', 'settings.label.asr_mode': '認識バックエンド', 'settings.asrBackend.qwen3_asr': 'Qwen3-ASR（ローカル）', 'settings.asrBackend.sense_voice': 'SenseVoice（ローカル）', 'settings.asrBackend.openai_compatible': 'OpenAI 互換文字起こし（リモート）', 'settings.asrBackend.mimo': 'MiMo ASR モデル（Xiaomi・リモート）',
 
-  'settings.note.no_user_settings': 'ユーザー管理の接続設定はありません。', 'settings.note.no_active_connection': '選択中のアクティブな接続はありません。', 'settings.other_voice_backends': 'その他の音声合成バックエンド',
+  'settings.note.no_user_settings': 'ユーザー管理の接続設定はありません。', 'settings.note.no_active_connection': '選択中のアクティブな接続はありません。', 'settings.other_voice_backends': 'その他の音声合成バックエンド', 'settings.advanced': '詳細設定（リアルタイム調整）', 'settings.group.network': 'ネットワーク',
   'settings.saving_label': '保存中…', 'settings.placeholder.secret_replace': '設定済み — 入力して置換', 'settings.placeholder.secret_empty': '未設定', 'settings.action.save': '保存', 'settings.action.clear': 'クリア', 'settings.action.on': 'オン', 'settings.action.off': 'オフ',
-  'settings.asset.installed': 'インストール済み', 'settings.asset.incomplete': '不完全', 'settings.asset.invalid': '無効なパッケージ', 'settings.asset.not_installed': '未インストール', 'settings.asset.visual_content': '環境レイヤー、字幕、シナリオメディア、壁紙音声アセットが利用できます。', 'settings.asset.visual_optional': 'オプションです。内蔵壁紙、Chat、Work、ヘッドレスモードはなくても利用できます。', 'settings.label.visual_pack': 'ビジュアルランタイムパック',
-  'settings.asset.visual_attention': 'オプションのビジュアルパックに要確認事項があります：{detail}', 'settings.restart_error': 'バックエンドの再起動に失敗しました', 'settings.restart_unowned': 'このバックエンドは本アプリが起動したものではないため、ここから再起動できません。起動した場所で再起動してください。', 'settings.provider_needs_key': '{provider} の API キーが未設定です。下で入力すると反映されます。',
+  'settings.restart_error': 'バックエンドの再起動に失敗しました', 'settings.restart_unowned': 'このバックエンドは本アプリが起動したものではないため、ここから再起動できません。起動した場所で再起動してください。', 'settings.provider_needs_key': '{provider} の API キーが未設定です。下で入力すると反映されます。',
   'settings.label.interface_language': 'インターフェース言語', 'settings.label.chat_translation': 'チャット翻訳字幕', 'settings.label.current_model': '現在のモデルプロファイル',
   'settings.option.english': 'English', 'settings.option.chinese': '简体中文', 'settings.option.japanese': '日本語', 'settings.option.auto': '自動',
   'settings.status.registered': '登録済み', 'settings.status.configured': '設定済み', 'settings.status.needs_setup': '設定が必要', 'settings.status.not_installed': '未インストール', 'settings.status.remote': 'リモート', 'settings.status.none': 'なし',
@@ -363,7 +351,7 @@ type SettingCopy = Record<'group' | 'field' | 'description' | 'groupDescription'
 
 const ZH_SETTINGS: SettingCopy = {
   group: {
-    asr_local: 'Apple Speech（本地）', speech_synthesis: 'Fish Audio 实时合成', voice_calibration: '实时语音校准',
+    asr_local: 'Apple Speech（本地）', speech_synthesis: 'Fish Audio 实时合成', network: '网络',
   },
   field: {
     asr_language: '识别语言', FISH_API_KEY: 'Fish Audio API 密钥', FISH_VOICE_ID: 'Fish 声音 ID', FISH_API_MODEL: 'Fish 模型',
@@ -374,7 +362,7 @@ const ZH_SETTINGS: SettingCopy = {
 
 const JA_SETTINGS: SettingCopy = {
   group: {
-    asr_local: 'Apple Speech（ローカル）', speech_synthesis: 'Fish Audio リアルタイム合成', voice_calibration: 'リアルタイム音声調整',
+    asr_local: 'Apple Speech（ローカル）', speech_synthesis: 'Fish Audio リアルタイム合成', network: 'ネットワーク',
   },
   field: {
     asr_language: '認識言語', FISH_API_KEY: 'Fish Audio API キー', FISH_VOICE_ID: 'Fish ボイス ID', FISH_API_MODEL: 'Fish モデル',

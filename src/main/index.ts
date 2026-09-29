@@ -1,9 +1,11 @@
 import { app, BrowserWindow, ipcMain, safeStorage, utilityProcess } from 'electron'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn, type ChildProcess } from 'node:child_process'
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { SceneHost } from './sceneHost.ts'
 import { FishTts } from './fishTts.ts'
 import { PiHost } from './piHost.ts'
@@ -32,6 +34,24 @@ function jsonFile(file: string, fallback: Json): Json {
   }
 }
 
+// 与 Electron userData 分开：设置文件放在用户可见、可手改的 XDG 位置；API key 仍走 safeStorage 加密。
+function settingsPath(): string {
+  return path.join(process.env.AMADEUS_CONFIG_DIR || path.join(os.homedir(), '.config', 'amadeus'), 'settings.yaml')
+}
+
+function readYaml(file: string): Json {
+  try {
+    const parsed = parseYaml(readFileSync(file, 'utf8'))
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Json : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeYaml(file: string, data: Json): void {
+  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
+  writeFileSync(file, stringifyYaml(data), { encoding: 'utf8', mode: 0o600 })
+}
 
 class SessionStore {
   private readonly file: string
@@ -207,7 +227,7 @@ class AppRuntime {
     this.root = projectRoot()
     this.scene = new SceneHost(this.root, path.join(MODULE_DIR, '../scene'))
     this.store = new SessionStore(this.adoptLegacyFile(path.join(app.getPath('userData'), 'amadeus-next-sessions.json')))
-    this.settingsFile = this.adoptLegacyFile(path.join(app.getPath('userData'), 'amadeus-next-settings.json'))
+    this.settingsFile = settingsPath()
     this.loadPersistedSettings()
     this.speech = new SpeechBridge((method, params) => this.onSpeech(method, params))
     this.tts = new FishTts(() => this.config, event => {
@@ -536,7 +556,7 @@ class AppRuntime {
   private desktopSettings(): Json {
     const snapshot = this.configSnapshot()
     const values = Object.fromEntries(Object.entries(snapshot).flatMap(([key, value]) => {
-      if (['FISH_API_KEY', 'FISH_VOICE_ID', 'voice_configuration', 'work_provider_configuration', 'asr_backends'].includes(key)) return []
+      if (['FISH_API_KEY', 'FISH_VOICE_ID', 'voice_configuration', 'general_configuration', 'work_provider_configuration', 'asr_backends'].includes(key)) return []
       return [[key, String(value ?? '')]]
     }))
     const secrets = Object.fromEntries(['FISH_API_KEY', 'FISH_VOICE_ID'].map(key => [key, { configured: Boolean(this.config[key]), source: 'user', locked: false }]))
@@ -573,13 +593,17 @@ class AppRuntime {
             { key: 'FISH_VOICE_ID', label: 'Fish voice ID', type: 'text', value: String(this.config.FISH_VOICE_ID || ''), editable: true, restart_required: false },
             { key: 'FISH_API_MODEL', label: 'Fish model', type: 'select', value: String(this.config.FISH_API_MODEL || 's2-pro'), options: ['s2.1-pro-free', 's2-pro', 's1'], editable: true, restart_required: false },
           ],
-        },
-        {
-          id: 'voice_calibration', label: 'Live voice calibration', active: true, configured: true,
-          fields: [
+          advanced_fields: [
             { key: 'mouth_gain', label: 'Mouth gain', type: 'number', value: this.config.mouth_gain, min: 0, max: 32, step: 0.5, editable: true },
             { key: 'mouth_silence_threshold', label: 'Silence threshold', type: 'number', value: this.config.mouth_silence_threshold, min: 0, max: 1, step: 0.01, editable: true },
             { key: 'voice_sync_offset_ms', label: 'Voice sync offset (ms)', type: 'number', value: this.config.voice_sync_offset_ms, min: -1000, max: 1000, step: 10, editable: true },
+          ],
+        },
+      ],
+      general_configuration: [
+        {
+          id: 'network', label: 'Network', configured: true,
+          fields: [
             { key: 'network_proxy', label: 'Network proxy', type: 'text', value: String(this.config.network_proxy || ''), editable: true },
           ],
         },
@@ -596,25 +620,21 @@ class AppRuntime {
   }
 
   private loadPersistedSettings(): void {
-    const stored = jsonFile(this.settingsFile, {})
-    const values = stored.values && typeof stored.values === 'object' ? stored.values as Json : {}
-    for (const [key, value] of Object.entries(values)) {
+    const stored = readYaml(this.settingsFile)
+    for (const [key, value] of Object.entries(stored)) {
       if (key in this.config && key !== 'FISH_API_KEY') this.config[key] = value
     }
-    const encrypted = stored.encrypted && typeof stored.encrypted === 'object' ? stored.encrypted as Json : {}
-    if (safeStorage.isEncryptionAvailable() && typeof encrypted.FISH_API_KEY === 'string') {
-      try { this.config.FISH_API_KEY = safeStorage.decryptString(Buffer.from(encrypted.FISH_API_KEY, 'base64')) } catch { /* keep environment value */ }
+    if (safeStorage.isEncryptionAvailable() && typeof stored.FISH_API_KEY_ENCRYPTED === 'string') {
+      try { this.config.FISH_API_KEY = safeStorage.decryptString(Buffer.from(stored.FISH_API_KEY_ENCRYPTED, 'base64')) } catch { /* keep environment value */ }
     }
   }
 
   private persistSettings(): void {
-    const values = Object.fromEntries(Object.entries(this.config).filter(([key]) => key !== 'FISH_API_KEY'))
-    const encrypted: Json = {}
+    const data: Json = Object.fromEntries(Object.entries(this.config).filter(([key]) => key !== 'FISH_API_KEY'))
     if (safeStorage.isEncryptionAvailable() && String(this.config.FISH_API_KEY || '')) {
-      try { encrypted.FISH_API_KEY = safeStorage.encryptString(String(this.config.FISH_API_KEY)).toString('base64') } catch { /* keep the in-memory value */ }
+      try { data.FISH_API_KEY_ENCRYPTED = safeStorage.encryptString(String(this.config.FISH_API_KEY)).toString('base64') } catch { /* keep the in-memory value */ }
     }
-    mkdirSync(path.dirname(this.settingsFile), { recursive: true })
-    writeFileSync(this.settingsFile, JSON.stringify({ values, encrypted }, null, 2), 'utf8')
+    writeYaml(this.settingsFile, data)
   }
 
   private sendChat(params: Json): Json {

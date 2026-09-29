@@ -34,7 +34,8 @@
     "react-dom": "^19.0.0",
     "react-markdown": "^9.0.0",
     "tailwind-merge": "^3.6.0",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",

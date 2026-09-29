@@ -96,7 +96,8 @@ export function createEmoteRenderer() {
     const scale = Math.min(viewport.width / 800, viewport.height / 600) * EMOTE_ZOOM
     sprite.width = 800 * scale; sprite.height = 600 * scale
     sprite.x = viewport.x + (viewport.width - sprite.width) / 2
-    sprite.y = viewport.y + viewport.height - sprite.height
+    // 画布底边是平直的；略压到遮罩最低点之下，切线才只由遮罩弧线决定。
+    sprite.y = viewport.y + viewport.height - sprite.height + viewport.height * 0.01
   }
   host.renderApp = {
     getPixiApp: () => app,

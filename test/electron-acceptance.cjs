@@ -10,6 +10,7 @@ const assert = require('node:assert/strict')
 
 const project = path.resolve(__dirname, '..')
 app.setPath('userData', mkdtempSync(path.join(os.tmpdir(), 'amadeus-acceptance-')))
+process.env.AMADEUS_CONFIG_DIR = path.join(app.getPath('userData'), 'config')
 process.env.PI_CODING_AGENT_DIR = path.join(app.getPath('userData'), 'pi-agent')
 mkdirSync(process.env.PI_CODING_AGENT_DIR)
 process.env.PI_OFFLINE = '1'

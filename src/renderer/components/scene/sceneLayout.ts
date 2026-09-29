@@ -19,7 +19,7 @@ export const SCENE_DESIGN = { width: 1672, height: 941 } as const
  * `wallpaper/crt_config.json`, which is the authored source for the screen
  * mask (see `wallpaper/scene_assets.py`).
  */
-export const SCENE_GLASS = { x: 550, y: 195, width: 586, height: 443 } as const
+export const SCENE_GLASS = { x: 550, y: 195, width: 586, height: 453 } as const
 
 /**
  * CRT cabinet envelope in design coordinates — the beige monitor body with its

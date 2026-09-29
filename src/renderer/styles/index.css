@@ -489,6 +489,19 @@ html.desktop-work-slice-window #root {
   content: '−';
 }
 
+.settings-advanced-disclosure {
+  margin-top: 7px;
+  border-top: 1px solid rgba(17, 24, 39, 0.075);
+  padding-top: 10px;
+}
+
+.settings-advanced-disclosure > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .settings-feedback {
   margin-top: 16px;
 }

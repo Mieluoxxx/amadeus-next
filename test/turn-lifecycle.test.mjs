@@ -21,7 +21,7 @@ function runtime(env = {}, clock = { value: Date.now() }) {
   const Runtime = vm.runInNewContext(js + '\nAppRuntime', {
     path, randomUUID, setTimeout, clearTimeout, process: { env }, MODULE_DIR: '/fixture', projectRoot: () => '/fixture',
     Date: FakeDate, setInterval: (fn, ms) => intervals.push({ fn, ms }),
-    app: { getPath: () => '/fixture', exit: code => calls.push(['exit', code]) }, jsonFile: () => ({}), safeStorage: { isEncryptionAvailable: () => false },
+    app: { getPath: () => '/fixture', exit: code => calls.push(['exit', code]) }, jsonFile: () => ({}), settingsPath: () => '/fixture/settings.yaml', readYaml: () => ({}), writeYaml() {}, safeStorage: { isEncryptionAvailable: () => false },
     mkdirSync() {}, writeFileSync() {},
     PresentationText, sameTurn, isTurnKey, URL,
     SessionStore: class { sessions = [{ id: 'one', title: 'One', messages: [] }, { id: 'two', title: 'Two', messages: [] }]; save() {} },

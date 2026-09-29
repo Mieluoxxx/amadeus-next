@@ -54,6 +54,7 @@ interface ConfigurationGroup {
   status_ok?: boolean
   status_detail?: string
   fields: StartupField[]
+  advanced_fields?: StartupField[]
 }
 
 interface DesktopSettingsSnapshot {
@@ -369,6 +370,12 @@ function ConfigurationCard({ group, desktop, onSave, defaultOpen }: {
           </summary>
           <div className="settings-config-body">
             {group.fields.map(field => <StartupFieldRow key={`${group.id}-${field.key || field.label}`} field={field} desktop={desktop} onSave={onSave} />)}
+            {group.advanced_fields?.length ? (
+              <details className="settings-advanced-disclosure">
+                <summary>{t('settings.advanced')}</summary>
+                {group.advanced_fields.map(field => <StartupFieldRow key={`${group.id}-${field.key || field.label}`} field={field} desktop={desktop} onSave={onSave} />)}
+              </details>
+            ) : null}
           </div>
         </details>
       ) : (
@@ -518,19 +525,8 @@ export default function SettingsPage({ send, subscribe }: Props) {
 
   const val = (key: string, fallback: string) => String(config[key] ?? fallback)
 
-  const visualPack = asRecord(config.visual_asset_pack)
-  const visualPackInstalled = Boolean(visualPack.installed)
-  const visualPackState = String(visualPack.state ?? 'not_installed')
-  const visualPackValue = visualPackInstalled
-    ? t('settings.asset.installed')
-    : visualPackState === 'incomplete' ? t('settings.asset.incomplete') : visualPackState === 'invalid' ? t('settings.asset.invalid') : t('settings.asset.not_installed')
-  const visualPackContent = visualPackInstalled
-    ? t('settings.asset.visual_content')
-    : visualPackState === 'incomplete' || visualPackState === 'invalid'
-      ? t('settings.asset.visual_attention', undefined, { detail: String(visualPack.message || (visualPack.missing as unknown[] || []).join(', ') || visualPackState) })
-      : t('settings.asset.visual_optional')
-
   const voiceConfiguration = asConfigurationGroups(config.voice_configuration)
+  const generalGroups = asConfigurationGroups(config.general_configuration)
 
   const asrBackendId = val('asr_backend', 'qwen3_asr')
   const asrBackends = Array.isArray(config.asr_backends)
@@ -556,7 +552,6 @@ export default function SettingsPage({ send, subscribe }: Props) {
   const wakeGroups = voiceConfiguration.filter(group => ['wake_asr', 'acoustic_pipeline'].includes(group.id))
   const activeOutputGroups = voiceConfiguration.filter(group => (
     group.id === 'speech_synthesis'
-    || group.id === 'voice_calibration'
     || (['tts_embedded_v3', 'tts_remote', 'tts_mimo', 'voice_reference_profile'].includes(group.id) && group.active)
   ))
   const otherOutputGroups = voiceConfiguration.filter(group => (
@@ -625,9 +620,11 @@ export default function SettingsPage({ send, subscribe }: Props) {
                   <ComboCard icon="Language" title={t('settings.label.interface_language')} value={val('presentation_locale', locale)} onChange={value => void handleChange('presentation_locale', value)} options={[{ value: 'en-US', label: t('settings.option.english') }, { value: 'zh-CN', label: t('settings.option.chinese') }, { value: 'ja-JP', label: t('settings.option.japanese') }]} />
                 </SettingsGroup>
 
-                <SettingsGroup title={t('settings.group.chat_appearance')}>
-                  <InfoCard icon="Photo" title={t('settings.label.visual_pack')} content={visualPackInstalled ? undefined : visualPackContent} value={visualPackValue} />
-                </SettingsGroup>
+                {generalGroups.length ? (
+                  <SettingsGroup title={t('settings.group.network')}>
+                    <ConfigurationCollection groups={generalGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
+                  </SettingsGroup>
+                ) : null}
 
               </div>
             ) : null}

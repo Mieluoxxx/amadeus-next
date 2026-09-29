@@ -8,6 +8,8 @@ release/
 *.log
 .codegraph/
 .kilo/
+.grill/
+temp/
 
 # Local media copies follow the legacy external-asset policy.
 /resources/assets/images/*
