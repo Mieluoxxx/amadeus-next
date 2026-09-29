@@ -10,9 +10,10 @@ const assert = require('node:assert/strict')
 
 const project = path.resolve(__dirname, '..')
 app.setPath('userData', mkdtempSync(path.join(os.tmpdir(), 'amadeus-acceptance-')))
-process.env.AMADEUS_CONFIG_DIR = path.join(app.getPath('userData'), 'config')
-process.env.PI_CODING_AGENT_DIR = path.join(app.getPath('userData'), 'pi-agent')
-mkdirSync(process.env.PI_CODING_AGENT_DIR)
+process.env.AMADEUS_HOME = path.join(app.getPath('userData'), 'home')
+// 模型定义和凭据来自共享目录；应用自己的 Pi 目录在 AMADEUS_HOME/pi。
+process.env.AMADEUS_PI_CREDENTIALS_DIR = path.join(app.getPath('userData'), 'pi-agent')
+mkdirSync(process.env.AMADEUS_PI_CREDENTIALS_DIR)
 process.env.PI_OFFLINE = '1'
 delete process.env.AMADEUS_NEXT_PROJECT_ROOT
 delete process.env.AMADEUS_NEXT_CHARACTER_ROOT
@@ -198,7 +199,7 @@ app.on('browser-window-created', (_event, window) => {
       const workerPids = () => app.getAppMetrics().filter(metric => metric.name === 'Amadeus Pi Runtime').map(metric => metric.pid)
       const before = workerPids()
       assert.equal(before.length, 1)
-      const modelsFile = path.join(process.env.PI_CODING_AGENT_DIR, 'models.json')
+      const modelsFile = path.join(process.env.AMADEUS_PI_CREDENTIALS_DIR, 'models.json')
       const savedModels = readFileSync(modelsFile, 'utf8')
       writeFileSync(modelsFile, '{')
       await ui('window.amadeusNext.request("runtime.reload", {targets:["pi-worker"]})')
@@ -303,7 +304,26 @@ app.on('browser-window-created', (_event, window) => {
         assert.equal((await ui('window.amadeusNext.request("session.list")')).messages.at(-1).text, 'context-retained')
         assert.equal((await ui('window.amadeusNext.request("pi.models")')).current, 'fixture/fixture-alternate')
         console.log('PASS: preload/window replacement keeps the Pi process, selected model and conversation')
+        // The GUI choice is global: what the user picked is what every session uses, and it is remembered.
+        const composer = expected => wait(() => ui(`document.querySelector('[data-testid="scene-provider"]')?.textContent === ${JSON.stringify(expected)}`), `The composer must show ${expected}`)
+        await composer('fixture-alternate')
+        const originalSession = (await ui('window.amadeusNext.request("session.list")')).current_session_id
+        await ui('window.amadeusNext.request("pi.model.set", {model:"fixture/fixture-model"})')
+        await composer('fixture-model')
+        assert.equal(JSON.parse(readFileSync(path.join(process.env.AMADEUS_HOME, 'pi', 'settings.json'), 'utf8')).defaultModel, 'fixture-model', 'The chosen model must be remembered as the default')
+        await ui('window.dispatchEvent(new Event("amadeus:new-session"))')
+        await composer('fixture-model')
+        assert.equal((await ui('window.amadeusNext.request("pi.models")')).current, 'fixture/fixture-model', 'A new session must use the chosen model')
+        // Choosing again while on the new session, then reopening the old one: the old session follows the choice.
+        await ui('window.amadeusNext.request("pi.model.set", {model:"fixture/fixture-alternate"})')
+        await composer('fixture-alternate')
+        await ui(`window.amadeusNext.request("session.load", {session_id:${JSON.stringify(originalSession)}})`)
+        await composer('fixture-alternate')
+        assert.equal((await ui('window.amadeusNext.request("pi.models")')).current, 'fixture/fixture-alternate', 'An opened session must follow the chosen model')
+        console.log('PASS: the model chosen in the GUI is remembered and used by new and reopened sessions')
       } catch (error) {
+        // Report the real failure first: the diagnostics below can themselves throw once the frame was replaced.
+        console.error(error)
         console.error(await frame.executeJavaScript('({character:window.__amadeusCharacter,playback:window.__amadeusPlayback,diagnostic:document.getElementById("amadeus-diagnostic")?.textContent})'))
         throw error
       }
@@ -322,6 +342,7 @@ app.whenReady().then(async () => {
   writeFileSync(path.join(process.env.AMADEUS_PI_CREDENTIALS_DIR, 'models.json'), JSON.stringify({ providers: { fixture: {
     api: 'openai-completions', apiKey: 'fixture', baseUrl: `http://127.0.0.1:${modelServer.address().port}/v1`, models: [{ id: 'fixture-model' }, { id: 'fixture-alternate', reasoning: true }],
   } } }))
-  writeFileSync(path.join(process.env.PI_CODING_AGENT_DIR, 'settings.json'), JSON.stringify({ defaultProvider: 'fixture', defaultModel: 'fixture-model', retry: { enabled: false } }))
+  mkdirSync(path.join(process.env.AMADEUS_HOME, 'pi'), { recursive: true })
+  writeFileSync(path.join(process.env.AMADEUS_HOME, 'pi', 'settings.json'), JSON.stringify({ defaultProvider: 'fixture', defaultModel: 'fixture-model', retry: { enabled: false } }))
   await import(pathToFileURL(path.join(project, 'dist/main/index.js')).href)
 })

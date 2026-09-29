@@ -1,6 +1,7 @@
 import { DefaultResourceLoader, ModelRuntime, createAgentSession, getAgentDir, type AgentSession } from '@earendil-works/pi-coding-agent'
 import path from 'node:path'
 import { openPiSession } from './piSessions.ts'
+import { composePrompt } from './role.ts'
 
 type Json = Record<string, unknown>
 type ParentPortLike = {
@@ -12,14 +13,8 @@ const port = (process as NodeJS.Process & { parentPort?: ParentPortLike }).paren
 
 if (!port) throw new Error('Pi worker must run as an Electron utility process')
 
-const systemPrompt = [
-  'You are Amadeus, a warm desktop companion embedded in Amadeus.',
-  'Speak naturally and concisely. Keep the character present while using Pi tools when they help.',
-  'Explain tool results in the user-facing reply; never expose internal protocol details.',
-  'For natural character expression, optionally put [EMO preset=smile] before the matching phrase in your spoken reply.',
-  'Allowed presets: normal, smile, sad, shy, surprised, angry, thinking, serious_speaking. Use sparingly at emotional or topic changes.',
-  'These annotations are removed before display and speech. Never place them inside code or tool arguments. Do not call tools to change expressions.',
-].join('\n')
+// 身份在 ~/.amadeus/pi/ROLE.md，输出格式在 PRESENTATION.md；这里只保留与文件无关的协议。
+const protocol = 'Explain tool results in the user-facing reply; never expose internal protocol details.'
 
 let modelRuntime: ModelRuntime | null = null
 let resourceLoader: DefaultResourceLoader | null = null
@@ -29,12 +24,22 @@ const epochs = new Map<string, number>()
 const cwd = process.env.AMADEUS_NEXT_PI_CWD || process.cwd()
 
 async function initialize(): Promise<void> {
-  modelRuntime = await ModelRuntime.create()
+  const agentDir = getAgentDir()
+  modelRuntime = await ModelRuntime.create({
+    authPath: process.env.AMADEUS_NEXT_PI_AUTH,
+    modelsPath: process.env.AMADEUS_NEXT_PI_MODELS,
+    // 模型缓存留在应用目录，不写回共享的 models.json 所在目录。
+    modelsStorePath: path.join(agentDir, 'models-store.json'),
+  })
   if (modelRuntime.getError()) throw new Error('Pi model configuration is invalid')
   resourceLoader = new DefaultResourceLoader({
     cwd,
-    agentDir: getAgentDir(),
-    systemPrompt,
+    agentDir,
+    systemPrompt: protocol,
+    // 每次 reload 重新读取提示词文件，编辑后不需要重启。
+    systemPromptOverride: base => composePrompt(agentDir, base ?? protocol),
+    // 系统提示词只有 ROLE.md、PRESENTATION.md 和协议：不加载开发环境的 AGENTS.md、扩展、技能和提示词模板。
+    noContextFiles: true, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true,
   })
   await resourceLoader.reload()
   if (resourceLoader.getExtensions().errors.length) throw new Error('Pi extensions could not be loaded')

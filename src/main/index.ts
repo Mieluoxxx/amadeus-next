@@ -9,6 +9,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { SceneHost } from './sceneHost.ts'
 import { FishTts } from './fishTts.ts'
 import { PiHost } from './piHost.ts'
+import { ensurePromptFiles } from './role.ts'
 import { PresentationText } from '../shared/presentation.ts'
 import { sameTurn, isTurnKey, type TurnKey, type VoiceEvent, type PlaybackEvent, type Calibration } from '../shared/voice.ts'
 
@@ -34,9 +35,30 @@ function jsonFile(file: string, fallback: Json): Json {
   }
 }
 
-// 与 Electron userData 分开：设置文件放在用户可见、可手改的 XDG 位置；API key 仍走 safeStorage 加密。
+// 与 Electron userData 分开：设置文件放在用户可见、可手改的 ~/.amadeus；API key 仍走 safeStorage 加密。
+function amadeusHome(): string {
+  return process.env.AMADEUS_HOME || path.join(os.homedir(), '.amadeus')
+}
+
 function settingsPath(): string {
-  return path.join(process.env.AMADEUS_CONFIG_DIR || path.join(os.homedir(), '.config', 'amadeus'), 'settings.yaml')
+  return path.join(amadeusHome(), 'settings.yaml')
+}
+
+// 角色不能继承开发环境：扩展、技能、AGENTS.md、提示词模板、Pi 包都留在应用自己的目录里，只共享凭据和模型定义。
+function piHome(): { agentDir: string; cwd: string; authPath: string; modelsPath: string } {
+  const agentDir = path.join(amadeusHome(), 'pi')
+  const shared = process.env.AMADEUS_PI_CREDENTIALS_DIR || path.join(os.homedir(), '.pi', 'agent')
+  const cwd = path.join(amadeusHome(), 'workspace')
+  mkdirSync(cwd, { recursive: true })
+  ensurePromptFiles(agentDir)
+  const settings = path.join(agentDir, 'settings.json')
+  if (!existsSync(settings)) {
+    // 首次启动只带过来默认模型，免得隔离后落到任意一个可用模型上。
+    const source = jsonFile(path.join(shared, 'settings.json'), {})
+    const seed = Object.fromEntries(['defaultProvider', 'defaultModel', 'defaultThinkingLevel'].filter(key => key in source).map(key => [key, source[key]]))
+    writeFileSync(settings, JSON.stringify(seed, null, 2), 'utf8')
+  }
+  return { agentDir, cwd, authPath: path.join(shared, 'auth.json'), modelsPath: path.join(shared, 'models.json') }
 }
 
 function readYaml(file: string): Json {
@@ -184,12 +206,20 @@ class AppRuntime {
     }
     return file
   }
-  private readonly pi = new PiHost(() => utilityProcess.fork(path.join(MODULE_DIR, 'pi-worker.js'), [], {
-    cwd: process.cwd(),
-    env: { ...process.env, ...this.piEnv(), AMADEUS_NEXT_PI_CWD: process.cwd(), AMADEUS_NEXT_PI_SESSIONS: path.join(app.getPath('userData'), 'pi-sessions') },
-    serviceName: 'Amadeus Pi Runtime',
-    stdio: 'ignore',
-  }))
+  private readonly pi = new PiHost(() => {
+    const home = piHome()
+    return utilityProcess.fork(path.join(MODULE_DIR, 'pi-worker.js'), [], {
+      cwd: home.cwd,
+      env: {
+        ...process.env, ...this.piEnv(),
+        PI_CODING_AGENT_DIR: home.agentDir, AMADEUS_NEXT_PI_CWD: home.cwd,
+        AMADEUS_NEXT_PI_AUTH: home.authPath, AMADEUS_NEXT_PI_MODELS: home.modelsPath,
+        AMADEUS_NEXT_PI_SESSIONS: path.join(app.getPath('userData'), 'pi-sessions'),
+      },
+      serviceName: 'Amadeus Pi Runtime',
+      stdio: 'ignore',
+    })
+  })
   private readonly windows = new Set<BrowserWindow>()
   private readonly config: Json = {
     llm_provider: 'pi',
