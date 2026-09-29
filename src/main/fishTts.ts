@@ -72,7 +72,7 @@ export class FishTts {
       if (this.failure !== fail) { socket.close(); return }
       this.phase = 'synthesis'
       if (!this.send({ event: 'start', request: {
-        text: '', format: 'pcm', sample_rate: 24000, latency: 'balanced', chunk_length: 200, min_chunk_length: 50,
+        text: '', format: 'pcm', sample_rate: 24000, latency: 'normal', chunk_length: 200, min_chunk_length: 50,
         ...(config.FISH_VOICE_ID ? { reference_id: String(config.FISH_VOICE_ID) } : {}),
       } })) return
       for (const text of this.queue.splice(0)) if (!this.send({ event: 'text', text })) return
