@@ -3,6 +3,14 @@ declare const currentTime: number
 declare class AudioWorkletProcessor { port: MessagePort }
 declare function registerProcessor(name: string, processor: typeof AudioWorkletProcessor): void
 
+/**
+ * Playback is held until this much audio is queued, and held again after starving.
+ * Fish delivers one chunk at a time, so playing whatever has arrived turns every
+ * gap between chunks into audible silence.
+ */
+// ponytail: fixed 400ms lead; raise it if stutter persists, accepting a later start.
+const LEAD_FRAMES = Math.round(sampleRate * 0.4)
+
 /** One queue and one consumption clock, including silence caused by starvation. */
 class AmadeusPcmProcessor extends AudioWorkletProcessor {
   private queue: Float32Array[] = []
@@ -10,6 +18,7 @@ class AmadeusPcmProcessor extends AudioWorkletProcessor {
   private offset = 0
   private consumed = 0
   private buffered = 0
+  private primed = false
   private generation = -1
   private inputEnded = false
   private state = 'idle'
@@ -24,6 +33,7 @@ class AmadeusPcmProcessor extends AudioWorkletProcessor {
         this.generation = message.generation
         this.queue = []; this.head = 0; this.offset = 0; this.consumed = 0; this.buffered = 0
         this.inputEnded = false; this.state = 'idle'; this.meterFrames = 0; this.energy = 0
+        this.primed = false
       } else if (message.generation === this.generation) {
         if (message.type === 'pcm' && message.buffer instanceof ArrayBuffer && !this.inputEnded && this.state !== 'ended' && this.state !== 'error') {
           const samples = new Float32Array(message.buffer)
@@ -44,13 +54,17 @@ class AmadeusPcmProcessor extends AudioWorkletProcessor {
     if (!output) return true
     output.fill(0)
     let written = 0
-    while (written < output.length && this.head < this.queue.length) {
-      const current = this.queue[this.head]
-      const count = Math.min(output.length - written, current.length - this.offset)
-      output.set(current.subarray(this.offset, this.offset + count), written)
-      written += count; this.offset += count
-      if (this.offset === current.length) { this.head++; this.offset = 0 }
+    // The lead is filled once, then playback drains continuously; a starved queue drops it again.
+    if (this.primed || this.inputEnded || this.buffered >= LEAD_FRAMES) {
+      while (written < output.length && this.head < this.queue.length) {
+        const current = this.queue[this.head]
+        const count = Math.min(output.length - written, current.length - this.offset)
+        output.set(current.subarray(this.offset, this.offset + count), written)
+        written += count; this.offset += count
+        if (this.offset === current.length) { this.head++; this.offset = 0 }
+      }
     }
+    this.primed = written > 0
     if (this.head > 32) { this.queue.splice(0, this.head); this.head = 0 }
     this.consumed += written
     this.buffered -= written

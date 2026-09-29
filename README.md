@@ -157,7 +157,9 @@ scenario stills are now served as the idle artwork in
 Pi can annotate a phrase with `[EMO preset=smile]`. The incremental parser strips
 valid annotations before display and synthesis, preserves literal code, and
 binds cues to text offsets. Fish's `/v1/tts/live/with-timestamp` supplies the
-alignment. Playback starts immediately; late corrections never replay audio or
+alignment. Playback waits for a short lead of queued audio before it starts, and
+re-fills that lead after starving, so a late Fish chunk becomes a bounded pause
+instead of an audible stutter; late corrections never replay audio or
 rewind expressions. If normalized text cannot be matched, the current/default
 expression continues rather than inventing an alignment.
 
