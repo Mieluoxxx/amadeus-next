@@ -31,3 +31,24 @@ test('scene resources reload on the same host and invalid geometry leaves the la
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('scene URLs pin a cache generation so PSB and metadata cannot cross during reload', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'amadeus-scene-generation-'))
+  const cache = path.join(root, 'cache')
+  const host = new SceneHost(root, root, cache)
+  try {
+    for (const generation of ['first', 'second']) {
+      await mkdir(path.join(cache, generation), { recursive: true })
+      await writeFile(path.join(cache, generation, 'kurisu_ab_white.meta.json'), JSON.stringify({ generation }))
+    }
+    await host.start()
+    host.setEmoteAssets(path.join(root, 'imported'), path.join(cache, 'first'))
+    const first = (await (await fetch(host.origin + '/next/init')).json()).character
+    host.setEmoteAssets(path.join(root, 'imported'), path.join(cache, 'second'))
+    const second = (await (await fetch(host.origin + '/next/init')).json()).character
+    assert.notEqual(first.psbUrl, second.psbUrl)
+    assert.equal((await (await fetch(host.origin + first.metaUrl)).json()).generation, 'first')
+    assert.equal((await (await fetch(host.origin + second.metaUrl)).json()).generation, 'second')
+    assert.throws(() => host.setEmoteAssets(root, path.join(root, 'outside')), /outside/)
+  } finally { host.close(); await rm(root, { recursive: true, force: true }) }
+})

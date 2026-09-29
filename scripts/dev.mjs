@@ -6,10 +6,14 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import electron from 'electron'
 import { compileSpeechHelper } from './build.mjs'
+import { prepareEmoteLoader } from './emote-loader.mjs'
 
 const project = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const port = Number(process.argv.find(arg => arg.startsWith('--port='))?.split('=')[1] || 5199)
-const server = await createServer({ configFile: path.join(project, 'vite.renderer.config.mjs'), server: { host: '127.0.0.1', port, strictPort: true } })
+// macOS 原生文件事件不可用时，Rolldown 可能在首次构建写入前静默结束。
+const polling = process.env.CHOKIDAR_USEPOLLING?.toLowerCase()
+const watchOptions = { usePolling: polling === undefined ? process.platform === 'darwin' : ['1', 'true'].includes(polling), interval: 100 }
+const server = await createServer({ configFile: path.join(project, 'vite.renderer.config.mjs'), server: { host: '127.0.0.1', port, strictPort: true, watch: watchOptions } })
 const watchers = []
 const pending = new Set()
 let timer, nativeTimer, child, closing = false, nativeBuild = Promise.resolve()
@@ -31,7 +35,8 @@ async function watchBuild(configFile, outputs) {
   const ready = new Promise((yes, no) => { resolve = yes; reject = no })
   const watcher = await build({
     configFile: path.join(project, configFile),
-    build: { watch: {}, emptyOutDir: false },
+    // Vite 8 的构建监听走原生 watcher，不会自动读取 Chokidar 的环境开关。
+    build: { watch: { chokidar: watchOptions }, emptyOutDir: false },
     plugins: [{
       name: 'amadeus-safe-reload',
       async writeBundle() {
@@ -47,6 +52,7 @@ async function watchBuild(configFile, outputs) {
   })
   watchers.push(watcher)
   watcher.on('event', event => {
+    if (event.code === 'END' && !initialized) reject(new Error('初始监听构建没有产物；文件事件不可用时请使用 CHOKIDAR_USEPOLLING=1 npm run dev'))
     if (event.code !== 'ERROR') return
     console.error(event.error)
     if (!initialized) reject(event.error)
@@ -69,11 +75,11 @@ function launch() {
   delete env.ELECTRON_RUN_AS_NODE
   child = spawn(electron, ['.'], { cwd: project, env, stdio: 'inherit' })
   child.once('error', error => { console.error(error); void close(1) })
-  child.once('exit', code => {
+  child.once('exit', (code, signal) => {
     child = null
     if (closing) return
     if (code === 75) launch()
-    else void close(code || 0)
+    else { if (signal) console.error(`Electron exited with ${signal}`); void close(code ?? (signal ? 1 : 0)) }
   })
 }
 
@@ -86,6 +92,7 @@ try {
     watchBuild('vite.preload.config.mjs', [['dist/preload/index.cjs', 'preload']]),
     watchBuild('vite.scene.config.mjs', [['dist/scene/scene.js', 'scene'], ['dist/scene/audio-worklet.js', 'scene']]),
     compileSpeechHelper(),
+    prepareEmoteLoader(project),
   ])
   const resourceRoots = [path.join(project, 'resources'), process.env.AMADEUS_NEXT_PROJECT_ROOT].filter(Boolean).map(root => path.resolve(root))
   server.watcher.add([...resourceRoots, path.join(project, 'native')])

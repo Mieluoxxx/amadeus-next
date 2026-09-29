@@ -3,7 +3,7 @@
 This directory contains independent local copies of the assets the Electron
 scene host serves:
 
-- `emote/`: locally provisioned FreeMote runtime, verified PSB adapter and all four AB/C ordinary-clothes/white-coat model packs. Developer-local; excluded from packaging.
+- `emote/`: locally provisioned FreeMote runtime and all four AB/C ordinary-clothes/white-coat model packs. Developer-local; excluded from packaging. The PSB parser is a pinned native artifact under `vendor/emote-loader/` (see `docs/emote-loader-integration.md`).
 - `assets/idle/`: the idle scene stills and `scenario_graph.json`.
 - `assets/images/`: room background, ambient layers, and subtitle frame.
 - `render/web/`: room drawing scripts, PixiJS, retained Basis/KTX2 decoding,
@@ -28,23 +28,28 @@ Provision the model and runtime once, from the project root:
 npm run assets:emote -- ../amadeus-next-emote
 ```
 
+The source argument is required and is used only during import. No symlinks are
+created. The packaged app's scene error page can copy this prepared `emote/`
+directory into its own `<userData>/emote/`; it never depends on the source path.
+
 This copies the four upstream packs into `models/` under ASCII names —
 `kurisu_ab`, `kurisu_ab_white`, `kurisu_c` and `kurisu_c_white` — including
-model JSON, resource indexes, textures and binary resources, plus the SHA-256
-verified PSB adapter and source READMEs. The upstream pack directories and their
+model JSON, resource indexes, textures and binary resources, plus the source
+READMEs. The upstream pack directories and their
 inner file names are Japanese; the import renames them and rewrites the
 pack-relative paths inside each `*.psb.m.resx.json` so no scene URL carries a
-non-ASCII segment. The adapter's only local edit is its `./models/` base path;
-the pinned hash still covers the unmodified upstream source.
+non-ASCII segment. Nothing else is rewritten: the parser reads those indexes
+relative to the pack directory.
 It downloads the pinned FreeMote v3.9 scripts once and verifies their
 SHA-256 hashes (subsequent imports reuse valid local scripts). At runtime all
 requests go to the loopback asset server; no CDN or sibling checkout is needed.
-The HTML's `/emote/` base preserves the original adapter's relative model URLs.
+The HTML's `/emote/` base still serves the runtime; baked models are served from the read-only `/emote-cache/` route.
 The scene continues to load the white-coat AB pack, explicitly selecting B
 (crossed arms); copying the other packs does not add a model-switching UI.
-The adapter converts neutral `cw` alpha keyframes into legacy `opa` keyframes.
-The renderer updates all custom part visibility, including head/body activation
-and mutually exclusive A/B sleeves, before its first frame and on every update.
+The parser converts neutral `cw` alpha keyframes into legacy `opa` keyframes at
+bake time and also exports the part-visibility lookup table, so the renderer can
+keep writing head/body activation and mutually exclusive A/B sleeves every frame
+without depending on an adapter module.
 Layers and source art are not deleted or reordered to hide rendering errors.
 
 Some media are **intentionally not tracked by Git** (see `.gitignore`):
@@ -53,7 +58,7 @@ Some media are **intentionally not tracked by Git** (see `.gitignore`):
   the ambient blend layers and subtitle frame are not.
 - `/resources/assets/audio/sfx/*.wav` — only `computer_use_keyboard_loop.wav` is
   tracked; other sound effects are not.
-- `/resources/emote/` — imported runtime, adapter and private model resources.
+- `/resources/emote/` — imported runtime and private model resources.
 
 A fresh clone therefore cannot run a complete scene until those files are copied
 in from the asset source. Missing ambient layers do not stop the room. Missing
@@ -62,11 +67,12 @@ E-mote data produces a visible error and does not claim character/voice readines
 Only the foreground monitor role is replaced. Computer-use and blackboard
 background scenarios in the old Salieri checkout remain untouched; this import
 does not migrate that separate scenario layer into Next. The packaged app ships
-no `emote/` runtime, no model packs and no scenario stills; other assets and the
+no `emote/` runtime or model packs; the idle scenario stills, other assets and the
 retained texture decoders are copied unchanged.
 
-The imported runtime/adapter are **CC BY-NC-SA 4.0**; character assets retain
-their original rights. Both are developer-local and excluded from packaging. See
+The imported runtime is **CC BY-NC-SA 4.0**; the parser is a separate **Apache-2.0** project; character assets retain
+their original rights. The FreeMote runtime and models are developer-local and
+excluded from packaging; the Apache-2.0 parser and its notices are shipped. See
 `LICENSES/FreeMote-NOTICE.md` before redistribution.
 This is a local non-commercial compatibility preview: the old 3.9 runtime uses
 `all_parts / 全体構造`, not all original top-level composition effects. Its heap

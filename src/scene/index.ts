@@ -31,7 +31,8 @@ let conversationIdle = false
 /** 空闲演出只由主进程的 conversation-idle 驱动；回合是否进行中由主进程统一判定。 */
 function applyIdle(): void {
   host.wallpaperApp?.scene?.setIdleLoop(conversationIdle ? idleUrls : null)
-  host.renderApp?.setForegroundVisible(!conversationIdle)
+  // 有静帧时前景与静帧交叉淡入淡出；没有静帧就直接隐藏，和以前一样。
+  host.renderApp?.setForegroundVisible(!conversationIdle, idleUrls.length > 0)
 }
 
 Object.defineProperty(host, '__amadeusPlayback', { get: () => ({
@@ -267,7 +268,7 @@ window.addEventListener('amadeus:scene-ready', () => {
     host.wallpaperApp.initDesktopScene(init.scene)
     idleUrls = Array.isArray(init.scene.idleUrls) ? (init.scene.idleUrls as unknown[]).map(item => String(item)) : []
     if (init.character?.renderer !== 'emote' || init.character.model !== 'kurisu_ab_white') throw new Error('不支持的 E-mote 模型')
-    sprite = await loadCharacter(init.character.model, diagnostic)
+    sprite = await loadCharacter(init.character.model, diagnostic, init.character)
     dispatch({ type: 'reset' })
     const token = new URLSearchParams(location.search).get('sceneLoadToken')
     window.addEventListener('message', event => {

@@ -2,10 +2,17 @@
 import { createServer } from 'node:http'
 import path from 'node:path'
 import { SceneHost } from '../src/main/sceneHost.ts'
+import { ensureBakedModel, verifyEmoteRuntime } from '../src/main/emoteBake.ts'
+import { mkdtemp, rm } from 'node:fs/promises'
+import os from 'node:os'
 
 const root = path.resolve(import.meta.dirname, '../resources')
-const scene = new SceneHost(root, path.resolve(import.meta.dirname, '../dist/scene'))
+const cache = await mkdtemp(path.join(os.tmpdir(), 'amadeus-scene-cache-'))
+await verifyEmoteRuntime(path.join(root, 'emote'))
+const baked = await ensureBakedModel('kurisu_ab_white', { moduleDir: path.resolve(import.meta.dirname, '../dist/main'), modelRoot: path.join(root, 'emote/models'), cacheDir: cache })
+const scene = new SceneHost(root, path.resolve(import.meta.dirname, '../dist/scene'), cache)
 await scene.start()
+scene.setEmoteAssets(path.join(root, 'emote'), path.dirname(baked.psb))
 const html = `<!doctype html><html><body style="margin:0;background:#05070b"><iframe id="scene" allow="autoplay" src="/render/web/wallpaper_engine.html?sceneLoadToken=acceptance" style="border:0;width:100vw;height:100vh"></iframe><script>
 const frame = document.getElementById('scene'); let port; let generation=0;
 window.events=[]; window.ready=false;
@@ -38,4 +45,4 @@ const server = createServer(async (request, response) => {
   } catch { response.writeHead(500); response.end('Fixture error') }
 })
 server.listen(0, '127.0.0.1', () => console.log('Acceptance scene: http://127.0.0.1:' + server.address().port))
-process.on('SIGINT', () => { scene.close(); server.closeAllConnections(); server.close(); process.exit() })
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => { scene.close(); server.closeAllConnections(); server.close(); await rm(cache, { recursive: true, force: true }); process.exit() })

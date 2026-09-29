@@ -16,15 +16,16 @@ directory; Amadeus does not add a provider registry around it.
 
 ```bash
 npm ci
-npm run assets:emote -- ../amadeus-next-emote
-npm run build
+npm run assets:emote -- /path/to/amadeus-next-emote
 npm start
 ```
 
 Run these commands from this project's directory. For development, use `npm run
-dev`. The one-time asset import defaults to the sibling `amadeus-next-emote`
-project; pass its path explicitly if it lives elsewhere. Once imported, runtime
-loading is offline and no longer depends on that checkout.
+dev`. Pass the asset source explicitly for the one-time import. Once imported,
+runtime loading is offline and no longer depends on that checkout. The macOS
+arm64 Rust loader is already included under `vendor/emote-loader/`; ordinary
+builds do not need Rust, Cargo, or an adjacent loader repository. Without model
+resources the window still opens and offers import/retry instead of failing startup.
 
 To create the macOS arm64 zip, run `npm run package:mac:zip`. The generated app is
 unsigned until a Developer ID certificate is supplied.
@@ -35,7 +36,12 @@ retained texture decoders, and CRT geometry. Development reads that directory
 directly, so no external asset path is needed once the directory is populated.
 
 The E-mote model packs and runtime under `resources/emote/` are developer-local
-and excluded from packaging (see `resources/THIRD_PARTY_NOTICES.md`).
+and excluded from packaging (see `resources/THIRD_PARTY_NOTICES.md`). The PSB
+parser is delivered as a versioned binary; `build` and `dev` verify and copy it
+into `dist/bin/AmadeusEmoteLoader`. The scene's import action copies a prepared
+`emote/` directory into the application's own `userData/emote/`. After the window
+opens, the main process bakes the model into `userData/emote-cache/` on demand — see
+`docs/emote-loader-integration.md`.
 
 Some of those media are deliberately not tracked by Git (the ambient layers,
 the subtitle frame, and the whole character pack), so **a fresh clone must be
@@ -71,6 +77,12 @@ builds request a reload; changes are coalesced and routed to the smallest owner:
 Use `npm run dev -- --port=5207` for another port, or add `--server-only` to run
 the development server and build watchers without launching Electron. Production
 does not accept development restart commands.
+
+On macOS, polling is enabled by default for both the Vite server and its build
+watchers because unavailable native file events can prevent the initial build
+from writing output. Set `CHOKIDAR_USEPOLLING=0` to opt into native file events,
+or `CHOKIDAR_USEPOLLING=1` to enable polling on other platforms. `test:dev` uses
+the same defaults as `dev` and honors this override.
 
 Settings apply through the existing runtime IPC, not through a process restart.
 Fish credentials/model/voice apply to the next synthesis; calibration changes
@@ -132,9 +144,10 @@ desk character still uses `kurisu_ab_white`, explicitly selecting B (crossed
 arms); A/B share a source pack. The verified adapter translates `cw` alpha
 keyframes to legacy opacity, and the renderer maintains all custom visibility
 bindings each frame so unused sleeves stay hidden without hiding the body.
-The imported packs and the PSB adapter are verified against pinned SHA-256
-checks; the adapter is byte-identical upstream except for its `./models/` base
-path, and the model directory and file names are ASCII on disk.
+The runtime and loader binary are verified against pinned SHA-256 checks; the
+loader owns PSB compatibility conversion. Model input contents and the loader
+fingerprint invalidate baked caches. Model directory and file names are ASCII
+on disk; neither the parser nor the model uses a symlink to another repository.
 
 This change replaces **only the foreground monitor character**. The legacy
 scenario stills are now served as the idle artwork in

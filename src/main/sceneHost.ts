@@ -23,7 +23,8 @@ export class SceneHost {
         return
       }
       // Replace only the foreground character; background scene assets keep their existing route.
-      const roots: [string, string][] = [['/next/', this.bundle], ['/emote/', path.join(this.root, 'emote')], ['/render/web/', path.join(this.root, 'render/web')], ['/assets/', path.join(this.root, 'assets')]]
+      // 烘焙产物（成品 PSB 与随附数据）由主进程写到用户目录，这里只把它挂成一个只读路由。
+      const roots: [string, string][] = [['/next/', this.bundle], ['/emote/', this.emoteRoot], ['/render/web/', path.join(this.root, 'render/web')], ['/assets/', path.join(this.root, 'assets')], ...(this.emoteCache ? [['/emote-cache/', this.emoteCache] as [string, string]] : [])]
       const route = roots.find(([prefix]) => url.pathname.startsWith(prefix))
       const file = route && safeFilePath(route[1], url.pathname.slice(route[0].length))
       if (!route || !file || !existsSync(file) || !statSync(file).isFile()) { response.writeHead(404); response.end('not found'); return }
@@ -39,9 +40,23 @@ export class SceneHost {
 
   private root: string
   private bundle: string
-  constructor(root: string, bundle: string) {
+  private emoteCache: string | null
+  private emoteRoot: string
+  private bakedUrls: { psbUrl: string; metaUrl: string } | undefined
+  constructor(root: string, bundle: string, emoteCache: string | null = null) {
     this.root = root
     this.bundle = bundle
+    this.emoteCache = emoteCache
+    this.emoteRoot = path.join(root, 'emote')
+  }
+  setEmoteAssets(root: string, cache: string): void {
+    if (!this.emoteCache) throw new Error('Scene cache root is not configured')
+    const relative = path.relative(this.emoteCache, cache)
+    if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Scene cache is outside its root')
+    const prefix = '/emote-cache/' + relative.split(path.sep).map(encodeURIComponent).join('/')
+    this.emoteRoot = root
+    this.bakedUrls = { psbUrl: `${prefix}/kurisu_ab_white.psb`, metaUrl: `${prefix}/kurisu_ab_white.meta.json` }
+    if (this.initialization) this.initialization.character = { renderer: 'emote', model: 'kurisu_ab_white', ...this.bakedUrls }
   }
   get origin(): string { return `http://127.0.0.1:${this.port}` }
   get url(): string { return `${this.origin}/render/web/wallpaper_engine.html` }
@@ -75,7 +90,7 @@ export class SceneHost {
       } catch { return [] }
     })()
     this.initialization = {
-      character: { renderer: 'emote', model: 'kurisu_ab_white' },
+      character: { renderer: 'emote', model: 'kurisu_ab_white', ...this.bakedUrls },
       scene: {
         backgroundUrl: `${this.origin}/assets/images/amadeus_desktop_wallpaper.png`,
         ambientUrl: `${this.origin}/assets/images/amadeus_ambient_high_blend.png`,

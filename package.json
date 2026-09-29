@@ -12,9 +12,10 @@
     "build": "node scripts/build.mjs",
     "build:main": "node scripts/build.mjs --main-only",
     "assets:emote": "node scripts/provision-emote.mjs",
+    "emote:loader": "node scripts/emote-loader.mjs",
     "dev": "node scripts/dev.mjs",
-    "package:mac": "npm run build && electron-builder --mac",
-    "package:mac:zip": "npm run build && electron-builder --mac zip",
+    "package:mac": "npm run build -- --require-emote && electron-builder --mac",
+    "package:mac:zip": "npm run build -- --require-emote && electron-builder --mac zip",
     "start": "npm run build && electron .",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test test/*.test.mjs",
@@ -52,12 +53,14 @@
   },
   "build": {
     "appId": "com.amadeus.next",
+    "beforePack": "./scripts/emote-loader.mjs",
     "productName": "Amadeus",
     "directories": {
       "output": "release"
     },
     "files": [
       "dist/**/*",
+      "!dist/bin/**/*",
       "!dist/amadeus-assets/**/*",
       "package.json"
     ],
@@ -74,6 +77,7 @@
     ],
     "mac": {
       "category": "public.app-category.productivity",
+      "binaries": ["Contents/Resources/AmadeusEmoteLoader", "Contents/Resources/AmadeusSpeechRecognizer"],
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Amadeus uses the microphone for voice conversations.",
         "NSSpeechRecognitionUsageDescription": "Amadeus uses speech recognition to turn your voice into conversation."

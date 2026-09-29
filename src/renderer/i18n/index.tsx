@@ -224,7 +224,7 @@ const EN = {
   'chat.remove_image': 'Remove image', 'chat.refresh': 'Refresh',
 
   'scene.attach_image': 'Attach a picture', 'scene.attach_needs_visual_provider': 'Select an OpenAI, Anthropic or Gemini protocol provider to attach a picture',
-  'scene.character_missing': 'The scene is up, but Amadeus has not appeared yet', 'scene.approval_unavailable': 'Approval details are incomplete; refresh before deciding',
+  'scene.approval_unavailable': 'Approval details are incomplete; refresh before deciding',
   'scene.export_needs_recovery': 'Export needs your decision',
   'scene.approve_once': 'Allow once', 'scene.deny': 'Deny', 'scene.retry_export': 'Retry export', 'scene.abandon_export': 'Abandon export',
   'scene.transcript': 'Conversation',
@@ -236,6 +236,7 @@ const EN = {
   'scene.dismiss': 'Dismiss', 'scene.empty_transcript': 'This task has no conversation yet.',
   'scene.starting': 'Waking up the scene...', 'scene.waiting_backend': 'Waiting for the backend...',
   'scene.failed_title': 'The scene could not start', 'scene.retry': 'Retry',
+  'scene.import_assets': 'Import character resources', 'scene.importing_assets': 'Importing character resources…',
   'scene.role_user': 'You', 'scene.role_system': 'System', 'scene.role_assistant': 'Amadeus',
   'scene.settings': 'Settings',
 
@@ -280,7 +281,7 @@ const ZH: Messages = {
   'chat.remove_image': '移除图片', 'chat.refresh': '刷新',
 
   'scene.attach_image': '附加图片', 'scene.attach_needs_visual_provider': '请选择 OpenAI / Anthropic / Gemini 系协议提供方以附加图片',
-  'scene.character_missing': '场景已就绪，但 Amadeus 还没有出现', 'scene.approval_unavailable': '授权信息不完整，请刷新后再决定',
+  'scene.approval_unavailable': '授权信息不完整，请刷新后再决定',
   'scene.export_needs_recovery': '导出需要你决定',
   'scene.approve_once': '仅此次允许', 'scene.deny': '拒绝', 'scene.retry_export': '重试导出', 'scene.abandon_export': '放弃导出',
   'scene.transcript': '对话记录',
@@ -292,6 +293,7 @@ const ZH: Messages = {
   'scene.dismiss': '收起', 'scene.empty_transcript': '这个任务还没有对话。',
   'scene.starting': '正在唤起场景…', 'scene.waiting_backend': '正在等待后端…',
   'scene.failed_title': '场景未能启动', 'scene.retry': '重试',
+  'scene.import_assets': '导入角色资源', 'scene.importing_assets': '正在导入角色资源…',
   'scene.role_user': '主人', 'scene.role_system': '系统', 'scene.role_assistant': 'Amadeus',
   'scene.settings': '设置',
 
@@ -325,7 +327,7 @@ const JA: Messages = {
   'chat.remove_image': '画像を削除', 'chat.refresh': '更新',
 
   'scene.attach_image': '画像を添付', 'scene.attach_needs_visual_provider': '画像を添付するには OpenAI / Anthropic / Gemini 系プロトコルを選択してください',
-  'scene.character_missing': 'シーンは表示されていますが、Amadeus はまだ現れていません', 'scene.approval_unavailable': '権限情報が不完全です。更新してから決定してください',
+  'scene.approval_unavailable': '権限情報が不完全です。更新してから決定してください',
   'scene.export_needs_recovery': 'エクスポートの判断が必要です',
   'scene.approve_once': '今回のみ許可', 'scene.deny': '拒否', 'scene.retry_export': 'エクスポートを再試行', 'scene.abandon_export': 'エクスポートを中止',
   'scene.transcript': '会話履歴',
@@ -337,6 +339,7 @@ const JA: Messages = {
   'scene.dismiss': '閉じる', 'scene.empty_transcript': 'このタスクにはまだ会話がありません。',
   'scene.starting': 'シーンを起動しています…', 'scene.waiting_backend': 'バックエンドを待機中…',
   'scene.failed_title': 'シーンを起動できませんでした', 'scene.retry': '再試行',
+  'scene.import_assets': 'キャラクター素材をインポート', 'scene.importing_assets': 'キャラクター素材をインポート中…',
   'scene.role_user': 'あなた', 'scene.role_system': 'システム', 'scene.role_assistant': 'Amadeus',
   'scene.settings': '設定',
 

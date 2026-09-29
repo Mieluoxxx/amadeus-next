@@ -190,6 +190,9 @@
     _idleUrls: [],
     _idleIndex: -1,
     _idleTimer: null,
+    // 静帧层整体淡入淡出：1 显示、0 隐藏；隐藏完成后才清理贴图，避免淡出时闪空。
+    _idleTarget: 0,
+    _idleFirst: false,
     _idleSignature: "",
     _idleFade: null,
 
@@ -470,15 +473,19 @@
       }
       if (this._idleTimer) { clearInterval(this._idleTimer); this._idleTimer = null; }
       if (!list.length) {
-        this.idleLayer.visible = false;
-        this._idleFade = null;
-        this.idleA.texture = null;
-        this.idleB.texture = null;
+        // 淡出结束后由 tick 收尾（隐藏并释放贴图）。
+        this._idleTarget = 0;
         return;
       }
       this._idleUrls = list;
       this._idleIndex = -1;
-      this.idleLayer.visible = true;
+      this._idleTarget = 1;
+      if (!this.idleLayer.visible) {
+        this.idleLayer.alpha = 0;
+        this.idleLayer.visible = true;
+        // 整层在淡入，第一帧不再自己淡入，否则两层相乘会变慢变暗。
+        this._idleFirst = true;
+      }
       this._idleAdvance();
       const self = this;
       this._idleTimer = setInterval(function () { self._idleAdvance(); }, 15000);
@@ -495,9 +502,19 @@
       const show = function () {
         if (!self.idleLayer || !texture.baseTexture || !texture.baseTexture.valid) return;
         incoming.texture = texture;
-        incoming.alpha = 0;
         incoming.visible = true;
-        self._idleFade = { incoming: incoming, outgoing: outgoing, t: 0 };
+        // 新图置顶淡入，旧图保持不透明，轮播过程中也不能透出底层。
+        self.idleLayer.addChild(incoming);
+        if (self._idleFirst) {
+          self._idleFirst = false;
+          incoming.alpha = 1;
+          outgoing.visible = false;
+          self._idleFade = null;
+        } else {
+          incoming.alpha = 0;
+          outgoing.alpha = 1;
+          self._idleFade = { incoming: incoming, outgoing: outgoing, t: 0 };
+        }
         self.idleA = incoming;
         self.idleB = outgoing;
         self.layout();
@@ -570,12 +587,29 @@
       if (v > this._mouthPulse) this._mouthPulse = v;
     },
 
+    /** 静帧层已完全盖住 E-mote：此时才可以放心隐藏前景。 */
+    idleOpaque() {
+      return !!(this.idleLayer && this.idleLayer.visible && this.idleLayer.alpha >= 1
+        && [this.idleA, this.idleB].some(sprite => sprite && sprite.visible && sprite.alpha >= 1
+          && sprite.texture && sprite.texture.baseTexture && sprite.texture.baseTexture.valid));
+    },
+
     tick(delta) {
+      if (this.idleLayer && this.idleLayer.visible) {
+        const layer = this.idleLayer;
+        const step = delta / 45;
+        layer.alpha = this._idleTarget ? Math.min(1, layer.alpha + step) : Math.max(0, layer.alpha - step);
+        if (!this._idleTarget && layer.alpha <= 0) {
+          layer.visible = false;
+          this._idleFade = null;
+          this.idleA.texture = null;
+          this.idleB.texture = null;
+        }
+      }
       if (this._idleFade) {
         const fade = this._idleFade;
         fade.t = Math.min(1, fade.t + delta / 45);
         fade.incoming.alpha = fade.t;
-        fade.outgoing.alpha = 1 - fade.t;
         if (fade.t >= 1) {
           fade.outgoing.visible = false;
           fade.outgoing.texture = null;

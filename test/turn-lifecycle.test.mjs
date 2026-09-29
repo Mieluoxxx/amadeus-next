@@ -10,22 +10,42 @@ import ts from 'typescript'
 import { PresentationText } from '../src/shared/presentation.ts'
 import { sameTurn, isTurnKey } from '../src/shared/voice.ts'
 
-function runtime(env = {}, clock = { value: Date.now() }) {
+function runtime(env = {}, clock = { value: Date.now() }, emote = {}) {
   const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
   const block = source.slice(source.indexOf('class AppRuntime {'), source.indexOf('\nlet runtime: AppRuntime'))
   const js = ts.transpileModule(block, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
-  const calls = [], prompts = [], intervals = []
+  const calls = [], prompts = [], timers = new Map()
+  let timerId = 0
   // Fake clock so the conversation-idle timer can be stepped without waiting.
   class FakeDate extends Date { static now() { return clock.value } }
+  const advance = ms => {
+    const end = clock.value + ms
+    while (true) {
+      const next = [...timers].filter(([, timer]) => timer.at <= end).sort((a, b) => a[1].at - b[1].at)[0]
+      if (!next) break
+      const [id, timer] = next
+      timers.delete(id)
+      clock.value = timer.at
+      timer.fn()
+    }
+    clock.value = end
+  }
   let emitFish
   const Runtime = vm.runInNewContext(js + '\nAppRuntime', {
-    path, randomUUID, setTimeout, clearTimeout, process: { env }, MODULE_DIR: '/fixture', projectRoot: () => '/fixture',
-    Date: FakeDate, setInterval: (fn, ms) => intervals.push({ fn, ms }),
+    path, randomUUID, process: { env }, MODULE_DIR: '/fixture', projectRoot: () => '/fixture', Date: FakeDate,
+    setTimeout(fn, ms) { const id = ++timerId; timers.set(id, { fn, at: clock.value + ms }); return id },
+    clearTimeout: id => timers.delete(id),
+    setInterval() { assert.fail('conversation idle must use a one-shot timer, not polling') },
     app: { getPath: () => '/fixture', exit: code => calls.push(['exit', code]) }, jsonFile: () => ({}), settingsPath: () => '/fixture/settings.yaml', readYaml: () => ({}), writeYaml() {}, safeStorage: { isEncryptionAvailable: () => false },
-    mkdirSync() {}, writeFileSync() {},
+    mkdirSync() {}, writeFileSync() {}, existsSync: () => false,
+    dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
     PresentationText, sameTurn, isTurnKey, URL,
     SessionStore: class { sessions = [{ id: 'one', title: 'One', messages: [] }, { id: 'two', title: 'Two', messages: [] }]; save() {} },
-    SceneHost: class { async start() {}; reload() { calls.push(['reload-scene']) }; close() {} },
+    SceneHost: class { url = 'http://127.0.0.1:1234/render/web/wallpaper_engine.html'; async start() {}; setEmoteAssets(...args) { calls.push(['emote-assets', ...args]) }; reload() { calls.push(['reload-scene']) }; close() {} },
+    // 模型烘焙是原生工具调用：被测类只依赖它的返回值。
+    ensureBakedModel: async () => ({ psb: '/fixture/model.psb', meta: '/fixture/model.meta.json' }),
+    verifyEmoteRuntime: async () => {}, importEmoteAssets: async () => {},
+    ...emote,
     PiHost: class {
       async init() {}
       prompt(id, text, callbacks) { return new Promise((resolve, reject) => prompts.push({ id, text, callbacks, resolve, reject })) }
@@ -34,13 +54,52 @@ function runtime(env = {}, clock = { value: Date.now() }) {
       async restart() { calls.push(['restart-pi']) }
       dispose() {}
     },
-    SpeechBridge: class { start(locale) { calls.push(['listen', locale]); return { ok: true } }; stop() { calls.push(['stop-listening']) }; dispose() { calls.push(['dispose-speech']) } },
+    SpeechBridge: class { start(locale) { calls.push(['listen', locale]); return { ok: true } }; stop() { calls.push(['stop-listening']) }; finish(manual) { calls.push(['finish-listening', manual]); return { ok: true } }; dispose() { calls.push(['dispose-speech']) } },
     FishTts: class { configured = true; constructor(_config, emit) { emitFish = emit }; start() {}; push() {}; finish() {}; abort() {} },
   })
   const app = new Runtime()
   app.emit = (method, params) => calls.push([method, params])
-  return { app, calls, prompts, intervals, clock, emitFish: event => emitFish(event) }
+  return { app, calls, prompts, timers, advance, emitFish: event => emitFish(event) }
 }
+
+test('missing character resources do not block application initialization and can be retried', async () => {
+  let missing = true, bakes = 0
+  const { app, calls } = runtime({}, undefined, {
+    ensureBakedModel: async () => { bakes++; if (missing) throw new Error('缺少模型包'); return { psb: '/cache/generation/model.psb' } },
+  })
+  await app.init()
+  assert.equal(bakes, 0, 'window startup must not bake the character')
+  assert.equal((await app.request('session.list')).sessions.length, 2)
+  const failed = await app.request('wallpaper.start')
+  assert.equal(failed.status, 'error')
+  assert.match(failed.error, /缺少模型包/)
+  assert.equal(failed.retryable, false)
+  missing = false
+  assert.equal((await app.request('wallpaper.start')).status, 'ready')
+  assert.equal(calls.some(([type]) => type === 'emote-assets'), true)
+  assert.equal((await app.request('emote.import')).cancelled, true)
+})
+
+test('resource import owns a copy, blocks overlapping operations, and keeps the previous root on failure', async () => {
+  let fail = true, releaseDialog, selected
+  const { app, calls } = runtime({}, undefined, {
+    dialog: { showOpenDialog: () => new Promise(resolve => { releaseDialog = () => resolve({ canceled: false, filePaths: ['/external/emote'] }) }) },
+    importEmoteAssets: async (source, destination) => { selected = [source, destination]; if (fail) throw new Error('invalid resources'); return { psb: '/cache/model.psb' } },
+  })
+  await app.init()
+  const first = app.request('emote.import')
+  assert.equal((await app.request('emote.import')).ok, false)
+  assert.equal((await app.request('chat.send', { text: 'wait' })).ok, false)
+  releaseDialog()
+  assert.match((await first).error, /invalid resources/)
+  assert.equal(calls.some(([type]) => type === 'emote-assets'), false)
+  fail = false
+  const next = app.request('emote.import')
+  releaseDialog()
+  assert.equal((await next).ok, true)
+  assert.deepEqual(selected, ['/external/emote', '/fixture/emote'])
+  assert.equal(calls.find(([type]) => type === 'emote-assets')[1], '/fixture/emote')
+})
 
 test('ASR resumes only after both Pi completion and playback drain; stale acknowledgements cannot release a new turn', async () => {
   const { app, calls, prompts } = runtime()
@@ -276,42 +335,53 @@ test('the network proxy setting is validated, persisted, and replaces only the P
   assert.equal(app.piEnv().HTTP_PROXY, undefined)
 })
 
-test('idle stills need 30 quiet seconds and never appear while a reply is running', async () => {
-  const { app, calls, intervals, clock, prompts } = runtime()
+test('disposing the runtime cancels its conversation-idle timer', async () => {
+  const { app, calls, timers, advance } = runtime()
+  await app.init()
+  assert.equal(timers.size, 1)
+  app.dispose()
+  app.dispose()
+  const before = calls.length
+  advance(180_000)
+  assert.equal(calls.length, before, 'a disposed runtime must not emit idle events')
+  assert.equal(timers.size, 0, 'dispose must cancel the timer, not just suppress its callback')
+})
+
+test('idle stills need 3 quiet minutes and never appear while a reply is running', async () => {
+  const { app, calls, timers, advance, prompts } = runtime()
   await app.init()
   const idleEvents = () => calls.filter(([method, value]) => method === 'voice.event' && value.type === 'conversation-idle')
-  assert.equal(intervals.length, 1, 'the runtime watches exactly one conversation-idle timer')
-  const tick = () => intervals[0].fn()
+  assert.equal(timers.size, 1, 'startup schedules one idle deadline')
   const settle = () => new Promise(resolve => setImmediate(resolve))
 
-  clock.value += 29_000
-  tick()
+  advance(179_999)
   assert.equal(idleEvents().length, 0)
 
   await app.request('chat.send', { text: 'hello', turn_id: 'one' })
-  clock.value += 30_000
-  tick()
+  assert.equal(timers.size, 0, 'a running reply cancels the idle deadline')
+  advance(600_000)
   assert.equal(idleEvents().length, 0, 'a running reply keeps the E-mote foreground past the deadline')
 
   prompts[0].resolve('done')
   await settle()
-  tick()
+  assert.equal(timers.size, 1)
   assert.equal(idleEvents().length, 0, 'finishing the reply restarts the clock')
 
-  clock.value += 30_000
-  tick()
+  advance(179_999)
+  assert.equal(idleEvents().length, 0, 'idle must wait three full minutes after the reply ends')
+  advance(1)
   assert.deepEqual(idleEvents().map(([, value]) => value.active), [true])
+  assert.equal(timers.size, 0, 'entering idle leaves no timer running')
+  advance(600_000)
+  assert.equal(idleEvents().length, 1, 'idle does not keep waking or broadcasting')
 
   await app.request('chat.send', { text: 'again', turn_id: 'two' })
-  tick()
   assert.deepEqual(idleEvents().map(([, value]) => value.active), [true, false], 'a new message ends the idle show at once')
-  tick()
-  assert.equal(idleEvents().length, 2)
+  assert.equal(timers.size, 0)
 
   prompts[1].resolve('done')
   await settle()
-  clock.value += 30_000
-  tick()
+  advance(180_000)
   assert.deepEqual(idleEvents().at(-1)[1].active, true)
 
   // A new scene starts blank and never sees the edge again, so the handshake resends the current state.
@@ -319,4 +389,64 @@ test('idle stills need 30 quiet seconds and never appear while a reply is runnin
   await app.request('scene.ready', { token: 'next' })
   assert.equal(idleEvents().length, before + 1)
   assert.equal(idleEvents().at(-1)[1].active, true)
+  assert.equal(timers.size, 0, 'a scene handshake does not restart the idle deadline')
+})
+
+test('idle countdown starts after both Pi and playback finish, in either order', async () => {
+  for (const playbackFirst of [false, true]) {
+    const { app, timers, advance, prompts } = runtime()
+    await app.init()
+    await app.request('scene.ready')
+    await app.request('chat.send', { text: 'hello' })
+    const turn = { ...app.activeTurn }
+    const finishPi = async () => { prompts[0].resolve('done'); await new Promise(resolve => setImmediate(resolve)) }
+    const finishPlayback = () => app.request('voice.playback', { ...turn, type: 'ended' })
+    await (playbackFirst ? finishPlayback() : finishPi())
+    assert.equal(timers.size, 0, 'finishing only one half must not schedule idle')
+    advance(600_000)
+    assert.equal(app.idleActive, false)
+    await (playbackFirst ? finishPi() : finishPlayback())
+    assert.equal(timers.size, 1)
+    advance(179_999)
+    assert.equal(app.idleActive, false)
+    advance(1)
+    assert.equal(app.idleActive, true)
+    assert.equal(timers.size, 0)
+  }
+})
+
+test('idle deadlines recover from interruptions and failures but never rearm after disposal', async () => {
+  for (const ending of ['abort', 'session', 'pi-error', 'playback-error', 'fish-error', 'scene-lost', 'dispose']) {
+    const { app, timers, advance, prompts, emitFish } = runtime()
+    await app.init()
+    await app.request('scene.ready')
+    await app.request('chat.send', { text: 'hello' })
+    const turn = { ...app.activeTurn }
+    const settle = () => new Promise(resolve => setImmediate(resolve))
+    if (['playback-error', 'fish-error', 'scene-lost'].includes(ending)) {
+      prompts[0].resolve('done')
+      await settle()
+    }
+    advance(600_000)
+    assert.equal(timers.size, 0, ending)
+    if (ending === 'abort') await app.request('chat.abort')
+    else if (ending === 'session') await app.request('session.load', { session_id: 'two' })
+    else if (ending === 'pi-error') prompts[0].reject(new Error('Pi failed'))
+    else if (ending === 'playback-error') await app.request('voice.playback', { ...turn, type: 'error' })
+    else if (ending === 'fish-error') emitFish({ ...turn, type: 'error', error: 'Fish failed' })
+    else if (ending === 'scene-lost') await app.request('scene.lost')
+    else app.dispose()
+    await settle()
+    advance(1000)
+    const deadlines = [...timers.keys()]
+    prompts[0].resolve('late completion')
+    await settle()
+    assert.deepEqual([...timers.keys()], deadlines, `${ending}: late completion must not restart idle`)
+    assert.equal(timers.size, ending === 'dispose' ? 0 : 1, ending)
+    advance(178_999)
+    assert.equal(app.idleActive, false, ending)
+    advance(1)
+    assert.equal(app.idleActive, ending !== 'dispose', ending)
+    assert.equal(timers.size, 0, ending)
+  }
 })

@@ -131,6 +131,7 @@ export function useSceneBridge({
     loadId: 0,
   })
   const frameRef = useRef<HTMLIFrameElement | null>(null)
+  const [importingAssets, setImportingAssets] = useState(false)
   const tokenRef = useRef('')
   const generationRef = useRef(0)
   /** Generation whose load may still report readiness. Not the same as `generationRef`. */
@@ -202,10 +203,12 @@ export function useSceneBridge({
     setState(previous => previous.status === 'starting'
       ? previous
       : { ...previous, url: '', loadToken: '', assetOrigin: '', status: 'starting', error: '' })
+    let retryable = true
     try {
       const response = await send('wallpaper.start', { scene: true, slice_host: 'wallpaper' })
       if (generationRef.current !== generation) return
       if (String(response.status) === 'error') {
+        retryable = response.retryable !== false
         throw new Error(String(response.error || '场景后端启动失败'))
       }
       if (!adopt(response, generation)) return
@@ -214,7 +217,7 @@ export function useSceneBridge({
       const detail = error instanceof Error ? error.message : String(error)
       attemptsRef.current += 1
       setState(previous => ({ ...previous, url: '', loadToken: '', assetOrigin: '', status: 'error', error: detail, character: null }))
-      if (attemptsRef.current < MAX_START_ATTEMPTS) {
+      if (retryable && attemptsRef.current < MAX_START_ATTEMPTS) {
         retryTimerRef.current = window.setTimeout(() => {
           retryTimerRef.current = null
           void startRef.current()
@@ -229,6 +232,23 @@ export function useSceneBridge({
     attemptsRef.current = 0
     await start()
   }, [start])
+
+  const importAssets = useCallback(async () => {
+    clearTimers()
+    const generation = ++generationRef.current
+    activeGenerationRef.current = -1
+    tokenRef.current = ''
+    originRef.current = ''
+    setImportingAssets(true)
+    try {
+      const result = await send('emote.import')
+      if (generationRef.current !== generation || result.cancelled) return
+      if (!result.ok) throw new Error(String(result.error || '角色资源导入失败'))
+      await retry()
+    } catch (error) {
+      if (generationRef.current === generation) setState(previous => ({ ...previous, status: 'error', error: error instanceof Error ? error.message : String(error) }))
+    } finally { setImportingAssets(false) }
+  }, [clearTimers, retry, send])
 
   /**
    * Stops the asset/bridge host behind the scene. Only the debug backend console
@@ -329,5 +349,5 @@ export function useSceneBridge({
     clearTimers()
   }, [clearTimers])
 
-  return { ...state, frameRef: frameRef as RefObject<HTMLIFrameElement | null>, retry, stop, reportFrameError }
+  return { ...state, frameRef: frameRef as RefObject<HTMLIFrameElement | null>, retry, importAssets, importingAssets, stop, reportFrameError }
 }

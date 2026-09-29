@@ -46,9 +46,6 @@ import {
 type SendFn = (method: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
 type SubscribeFn = (method: string, fn: (params: Record<string, unknown>) => void) => () => void
 
-/** How long the scene may be up without the character before saying so. */
-const CHARACTER_WAIT_MS = 8000
-
 function overlayStyle(region: SceneRegion) {
   return { left: region.x, top: region.y, width: region.width, height: region.height }
 }
@@ -76,13 +73,6 @@ export default function ScenePage({
   const [panel, setPanel] = useState<ScenePanelKind | null>(null)
   const [acknowledgedNotices, setAcknowledgedNotices] = useState<string[]>([])
   const [pendingAttachment, setPendingAttachment] = useState<VisualAttachment | null>(null)
-  /**
-   * True once the scene has been ready for a bounded wait without the character
-   * ever being drawn. The user's requirement is that Amadeus is always visible,
-   * so a perfect room with no character in it is a state worth saying out loud
-   * instead of showing silently.
-   */
-  const [characterMissing, setCharacterMissing] = useState(false)
   /**
    * Completions recorded in the window itself, newest first. They survive the
    * system notification being suppressed or unavailable, and clear only when
@@ -173,16 +163,6 @@ export default function ScenePage({
       }).catch(() => {})
     }
   }, [pendingCompletions, markAnnounced, t])
-
-  // The character arrives after the scene: give it a bounded window, then report.
-  useEffect(() => {
-    if (bridge.status !== 'ready' || bridge.character !== false) {
-      setCharacterMissing(false)
-      return
-    }
-    const timer = window.setTimeout(() => setCharacterMissing(true), CHARACTER_WAIT_MS)
-    return () => window.clearTimeout(timer)
-  }, [bridge.status, bridge.character, bridge.loadId])
 
   // React only to the accepted session-change record from useSceneSession. Raw
   // broadcasts are intentionally not consumed here: stale context events must
@@ -296,6 +276,8 @@ export default function ScenePage({
             error={bridge.error}
             connected={connected}
             onRetry={bridge.retry}
+            onImport={bridge.importAssets}
+            importing={bridge.importingAssets}
           />
         )}
         {bridge.url && bridge.status !== 'ready' ? (
@@ -305,6 +287,8 @@ export default function ScenePage({
               error={bridge.error}
               connected={connected}
               onRetry={bridge.retry}
+              onImport={bridge.importAssets}
+              importing={bridge.importingAssets}
             />
           </div>
         ) : null}
@@ -350,16 +334,6 @@ export default function ScenePage({
           onDismiss={key => setAcknowledgedNotices(previous => [...previous, key])}
           onOpenSettings={() => setPanel('more')}
         />
-
-        {characterMissing && (
-          <div
-            className="flex shrink-0 items-center gap-1.5 rounded-xl border border-amber-500/30 bg-[#1c1a12]/95 px-3 py-1.5 text-[11px] text-amber-200 backdrop-blur-xl"
-            data-testid="scene-character-missing"
-          >
-            <AlertTriangle className="w-3 h-3" />
-            <span className="min-w-0 flex-1 truncate">{t('scene.character_missing')}</span>
-          </div>
-        )}
 
       {/* In-window completion record. A system notification can be suppressed by
           Do Not Disturb or refused by the user; the completion remains visible
@@ -627,11 +601,15 @@ function ScenePlaceholder({
   error,
   connected,
   onRetry,
+  onImport,
+  importing,
 }: {
   status: string
   error: string
   connected: boolean
   onRetry: () => void
+  onImport: () => void
+  importing: boolean
 }) {
   const { t } = useI18n()
   return (
@@ -642,10 +620,19 @@ function ScenePlaceholder({
           <span className="max-w-[420px] text-[11px] text-[var(--muted)] break-words">{error}</span>
           <button
             onClick={onRetry}
+            disabled={importing || !connected}
             className="mt-1 flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-[11px] text-[var(--muted)] hover:text-[var(--text)]"
           >
             <RotateCw className="w-3.5 h-3.5" />
             {t('scene.retry')}
+          </button>
+          <button
+            onClick={onImport}
+            disabled={importing || !connected}
+            data-testid="scene-import-emote"
+            className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-[11px] text-[var(--text)] disabled:opacity-40"
+          >
+            {t(importing ? 'scene.importing_assets' : 'scene.import_assets')}
           </button>
         </>
       ) : (

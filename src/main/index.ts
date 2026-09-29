@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, safeStorage, utilityProcess } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, utilityProcess } from 'electron'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import os from 'node:os'
@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { SceneHost } from './sceneHost.ts'
+import { ensureBakedModel, importEmoteAssets, verifyEmoteRuntime } from './emoteBake.ts'
 import { FishTts } from './fishTts.ts'
 import { PiHost } from './piHost.ts'
 import { ensurePromptFiles } from './role.ts'
@@ -250,12 +251,20 @@ class AppRuntime {
   private disposed = false
   private reloadState: Json = { status: 'ready', targets: [] }
   private sceneReload: { resolve: () => void; reject: (error: Error) => void } | null = null
-  private lastActivityAt = Date.now()
   private idleActive = false
+  private idleTimer: ReturnType<typeof setTimeout> | null = null
+  private emoteCache: string
+  private emoteRoot: string
+  private emotePreparation: Promise<void> | null = null
+  private importingEmote = false
 
   constructor() {
     this.root = projectRoot()
-    this.scene = new SceneHost(this.root, path.join(MODULE_DIR, '../scene'))
+    // 解析器随应用交付；用户导入的资源和派生缓存都由本应用独立持有。
+    this.emoteCache = process.env.AMADEUS_EMOTE_CACHE || path.join(app.getPath('userData'), 'emote-cache')
+    const imported = path.join(app.getPath('userData'), 'emote')
+    this.emoteRoot = existsSync(imported) ? imported : path.join(this.root, 'emote')
+    this.scene = new SceneHost(this.root, path.join(MODULE_DIR, '../scene'), this.emoteCache)
     this.store = new SessionStore(this.adoptLegacyFile(path.join(app.getPath('userData'), 'amadeus-next-sessions.json')))
     this.settingsFile = settingsPath()
     this.loadPersistedSettings()
@@ -266,6 +275,7 @@ class AppRuntime {
       if (event.type === 'error' && this.activeTurn) {
         this.activeTurn.drained = true
         this.activeTurn.speech = false
+        this.markActivity()
         this.emit('tts.error', { error: event.error, diagnostic: event.diagnostic, turn_id: event.turnId })
         this.resumeListening()
       }
@@ -273,8 +283,9 @@ class AppRuntime {
   }
 
   async init(): Promise<void> {
+    // 角色资源不阻断窗口启动；首次 wallpaper.start 才校验和烘焙，失败由错误页接管。
     await this.scene.start()
-    this.watchConversationIdle()
+    this.markActivity()
     await this.pi.init()
     if (!this.store.sessions.length) {
       this.store.sessions.push({ id: randomUUID(), title: '新对话', messages: [] })
@@ -295,7 +306,15 @@ class AppRuntime {
         for (const window of this.windows) { window.show(); window.focus() }
         return { ok: true }
       case 'wallpaper.start':
-        return { ok: true, status: 'ready', url: this.scene.url }
+        try {
+          if (this.importingEmote) throw new Error('正在导入角色资源，请稍后重试')
+          await this.prepareEmote()
+          return { ok: true, status: 'ready', url: this.scene.url }
+        } catch (error) {
+          return { ok: false, status: 'error', retryable: false, error: error instanceof Error ? error.message : String(error) }
+        }
+      case 'emote.import':
+        return this.importEmoteResources()
       case 'wallpaper.stop':
         return { ok: true }
       case 'system.get_config':
@@ -360,7 +379,10 @@ class AppRuntime {
           this.listeningEnabled = false
           // Rendering can recover independently. Never replay or cancel model/tool work for a lost display.
           this.tts.abort()
-          if (this.activeTurn) { this.activeTurn.speech = false; this.activeTurn.drained = true }
+          if (this.activeTurn) {
+            this.activeTurn.speech = false
+            if (!this.activeTurn.drained) { this.activeTurn.drained = true; this.markActivity() }
+          }
         }
         this.speech.stop()
         this.resumeListening()
@@ -389,12 +411,49 @@ class AppRuntime {
 
   dispose(): void {
     this.disposed = true
+    if (this.idleTimer !== null) {
+      clearTimeout(this.idleTimer)
+      this.idleTimer = null
+    }
     this.reloadTargets.clear()
     this.sceneReload?.reject(new Error('Application closed'))
     this.speech.dispose()
     this.tts.abort()
     this.scene.close()
     this.pi.dispose()
+  }
+
+  private prepareEmote(): Promise<void> {
+    if (!this.emotePreparation) {
+      this.emotePreparation = (async () => {
+        await verifyEmoteRuntime(this.emoteRoot)
+        const baked = await ensureBakedModel('kurisu_ab_white', { moduleDir: MODULE_DIR, modelRoot: path.join(this.emoteRoot, 'models'), cacheDir: this.emoteCache })
+        this.scene.setEmoteAssets(this.emoteRoot, path.dirname(baked.psb))
+      })().finally(() => { this.emotePreparation = null })
+    }
+    return this.emotePreparation
+  }
+
+  private async importEmoteResources(): Promise<Json> {
+    if (this.importingEmote || this.reloading || this.reloadTargets.size || this.activeTurn && (!this.activeTurn.piDone || !this.activeTurn.drained)) {
+      return { ok: false, error: '请等待当前回复或资源操作完成后再导入' }
+    }
+    this.importingEmote = true
+    try {
+      const selection = await dialog.showOpenDialog({
+        title: '导入 E-mote 角色资源', properties: ['openDirectory'],
+        message: '选择包含 FreeMoteDriver.js、emoteplayer.js 和 models/ 的 emote 目录。资源将复制到本应用，不使用软链接。',
+      })
+      if (selection.canceled || !selection.filePaths[0]) return { ok: true, cancelled: true }
+      await this.emotePreparation?.catch(() => {})
+      const destination = path.join(app.getPath('userData'), 'emote')
+      const baked = await importEmoteAssets(selection.filePaths[0], destination, { moduleDir: MODULE_DIR, cacheDir: this.emoteCache })
+      this.emoteRoot = destination
+      this.scene.setEmoteAssets(destination, path.dirname(baked.psb))
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    } finally { this.importingEmote = false }
   }
 
   private queueReload(params: Json, development: boolean): Json {
@@ -464,10 +523,18 @@ class AppRuntime {
     }
   }
 
-  /** 回合结束（无语音的回合到 piDone 即结束，有语音的回合等播放排空）也算活动。 */
+  /** 活动时取消旧闹钟；回复和语音都结束后才安排一次三分钟后的空闲演出。 */
   private markActivity(): void {
-    this.lastActivityAt = Date.now()
+    if (this.idleTimer !== null) clearTimeout(this.idleTimer)
+    this.idleTimer = null
+    if (this.disposed) return
     this.publishIdle(false)
+    const turn = this.activeTurn
+    if (turn && (!turn.piDone || !turn.drained)) return
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null
+      this.publishIdle(true)
+    }, 180_000)
   }
 
   /** 空闲演出的单一状态源：只在翻转时广播。 */
@@ -475,18 +542,6 @@ class AppRuntime {
     if (idle === this.idleActive) return
     this.idleActive = idle
     this.emit('voice.event', { type: 'conversation-idle', active: idle })
-  }
-
-  /** 距上次活动超过 30 秒且回合已结束时轮播 idle 静帧；回复进行中无论多久都不轮播，回合刚结束也要重新计时。 */
-  private watchConversationIdle(): void {
-    // 测试 VM 无 timers，直接跳过
-    if (typeof setInterval !== 'function') return
-    const idleAfterMs = 30_000
-    setInterval(() => {
-      const turn = this.activeTurn
-      const running = !!turn && (!turn.piDone || !turn.drained)
-      this.publishIdle(!running && Date.now() - this.lastActivityAt >= idleAfterMs)
-    }, 1000)
   }
 
   private emit(method: string, params: Json): void {
@@ -672,6 +727,7 @@ class AppRuntime {
 
   private sendChat(params: Json): Json {
     this.markActivity()
+    if (this.importingEmote) return { ok: false, error: '正在导入角色资源，请稍后重试' }
     if (this.reloading || this.reloadTargets.size) return { ok: false, error: 'Runtime reload pending; please retry after it completes' }
     const sessionId = String(params.session_id || this.currentSessionId)
     const session = this.store.sessions.find(item => item.id === sessionId)
@@ -693,6 +749,7 @@ class AppRuntime {
     const turn = { sessionId: session.id, turnId, generation: ++this.generation, piDone: false, drained: false, speech: this.tts.configured && this.sceneReady, text: '' }
     turn.drained = !turn.speech
     this.activeTurn = turn
+    this.markActivity()
     const parser = new PresentationText()
     let receivedText = false
     let synthesisStarted = false
@@ -760,9 +817,9 @@ class AppRuntime {
     return { mouthGain: number(this.config.mouth_gain, 8, 0, 32), silenceThreshold: number(this.config.mouth_silence_threshold, 0.08, 0, 1), syncOffsetMs: number(this.config.voice_sync_offset_ms, 0, -1000, 1000) }
   }
   private cancelTurn(): void {
-    this.markActivity()
     const turn = this.activeTurn
     this.activeTurn = null
+    this.markActivity()
     this.tts.abort()
     if (turn && !turn.piDone) {
       void this.pi.abort(turn.sessionId).catch(() => {})
@@ -795,9 +852,12 @@ class AppRuntime {
     }
   }
   private onSpeech(method: string, params: Json): void {
+    if (this.disposed) return
     if (method === 'asr.recognized' && params.is_final === true) {
       if (this.reloading || this.reloadTargets.size) return
-      if (!this.listeningEnabled || (this.activeTurn && (!this.activeTurn.piDone || !this.activeTurn.drained))) return
+      if (this.activeTurn && (!this.activeTurn.piDone || !this.activeTurn.drained)) return
+      if (params.source === 'manual') { this.emit(method, params); return }
+      if (!this.listeningEnabled) return
       const text = String(params.text || '').trim()
       if (!text) return
       this.speech.stop()

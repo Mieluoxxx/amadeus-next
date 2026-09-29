@@ -53,7 +53,7 @@ app.on('browser-window-created', (_event, window) => {
       await wait(() => frame.executeJavaScript('!!window.__amadeusCharacter && !!window.__sceneLastReport?.character'), 'Character did not render')
       const idle = active => window.webContents.send('next.event', { method: 'voice.event', params: { type: 'conversation-idle', active } })
       idle(true)
-      await wait(() => frame.executeJavaScript('window.wallpaperApp.scene.idleLayer?.visible && window.wallpaperApp.scene.idleA.texture.baseTexture.valid && !window.wallpaperApp.scene._idleFade'), 'Idle frame did not render')
+      await wait(() => frame.executeJavaScript('window.wallpaperApp.scene.idleLayer?.visible && window.wallpaperApp.scene.idleA.texture.baseTexture.valid && !window.wallpaperApp.scene._idleFade && window.wallpaperApp.scene.idleOpaque()'), 'Idle frame did not render')
       const inspectIdle = () => frame.executeJavaScript(`(() => {
         const scene = window.wallpaperApp.scene, app = scene.app
         const original = [app.screen.width, app.screen.height]
@@ -93,6 +93,14 @@ app.on('browser-window-created', (_event, window) => {
       for (let index = 0; index < idleCount; index++) {
         if (index) {
           await frame.executeJavaScript('window.wallpaperApp.scene._idleAdvance()')
+          const transition = await wait(() => frame.executeJavaScript(`(() => {
+            const scene = window.wallpaperApp.scene, fade = scene._idleFade
+            if (!fade || fade.t < 0.25 || fade.t > 0.75) return null
+            return { foreground: window.renderApp._sprite.sprite.visible, covered: scene.idleOpaque(),
+              outgoingAlpha: fade.outgoing.alpha, incomingOnTop: scene.idleLayer.children.at(-1) === fade.incoming }
+          })()`), 'Idle transition midpoint was not observed')
+          assert.deepEqual(transition, { foreground: false, covered: true, outgoingAlpha: 1, incomingOnTop: true },
+            'Idle-to-idle transitions must not expose E-mote or the underlying room')
           await wait(() => frame.executeJavaScript('(() => { const s = window.wallpaperApp.scene; return s.idleA.texture === PIXI.Texture.from(s._idleUrls[' + index + ']) && !s._idleFade && s.idleA.texture.baseTexture.valid })()'), 'Next idle frame did not render')
         }
         const idlePixels = await inspectIdle()
@@ -106,9 +114,19 @@ app.on('browser-window-created', (_event, window) => {
         assert.equal(idlePixels.foreground, false, 'Idle stills replace only the E-mote foreground')
       }
       await writeFile('/tmp/amadeus-electron-idle.png', (await window.webContents.capturePage()).toPNG())
+      const state = 'JSON.stringify((() => { const s = window.wallpaperApp.scene; return { layer: s.idleLayer.visible, alpha: s.idleLayer.alpha, foreground: window.renderApp._sprite.sprite.visible } })())'
+      const observe = async predicate => predicate(JSON.parse(await frame.executeJavaScript(state)))
       idle(false)
+      // Leaving idle crossfades: the character is already there beneath the stills as they fade out.
+      await wait(() => observe(s => s.layer && s.alpha > 0 && s.alpha < 1 && s.foreground), 'Leaving idle must fade out, not cut')
       await wait(() => frame.executeJavaScript('!window.wallpaperApp.scene.idleLayer.visible && window.renderApp._sprite.sprite.visible'), 'Leaving idle did not restore E-mote')
-      console.log('PASS: every idle frame aligns with the original background at both viewport sizes; exterior unchanged; leaving idle restores E-mote')
+      idle(true)
+      // Entering idle crossfades too: the character stays until the stills fully cover it.
+      await wait(() => observe(s => s.layer && s.alpha > 0 && s.alpha < 1 && s.foreground), 'Entering idle must fade in over the character, not cut')
+      await wait(() => frame.executeJavaScript('window.wallpaperApp.scene.idleOpaque() && !window.renderApp._sprite.sprite.visible'), 'The character must hide once the stills cover it')
+      idle(false)
+      await wait(() => frame.executeJavaScript('!window.wallpaperApp.scene.idleLayer.visible && window.renderApp._sprite.sprite.visible'), 'Leaving idle again did not restore E-mote')
+      console.log('PASS: every idle frame aligns with the original background at both viewport sizes; exterior unchanged; leaving and entering idle crossfade with E-mote')
       const visibility = await frame.executeJavaScript(`(async () => {
         const { player: p, canvas: c } = window.__amadeusEmote
         const saved = { scale: p.scale, coord: p.coord, speed: p.speed, step: p.stepUpdate }
