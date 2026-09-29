@@ -247,7 +247,12 @@ app.on('browser-window-created', (_event, window) => {
       const key = { sessionId: 'acceptance', turnId: 'audio', generation: 1000 }
       const send = params => window.webContents.send('next.event', { method: 'voice.event', params: { ...key, ...params } })
       send({ type: 'begin', speech: true, calibration: { mouthGain: 8, silenceThreshold: 0.08, syncOffsetMs: 0 } })
-      send({ type: 'text', value: { text: 'Hello world', cues: [{ offset: 0, emotion: 'smile' }] } })
+      await frame.executeJavaScript(`(() => {
+        window.__acceptanceSubtitles = []
+        const native = window.wallpaperApp.setSubtitle.bind(window.wallpaperApp)
+        window.wallpaperApp.setSubtitle = text => { window.__acceptanceSubtitles.push(text); return native(text) }
+      })()`)
+      send({ type: 'text', value: { text: 'Hello world', display: '你好世界', cues: [{ offset: 0, emotion: 'smile' }], subtitles: [{ offset: 0, text: '你好' }, { offset: 6, text: '世界' }] } })
       const pcm = new Uint8Array(24000 * 2 * 3)
       const view = new DataView(pcm.buffer)
       for (let i = 0; i < 72000; i++) view.setInt16(i * 2, Math.sin(i / 24000 * Math.PI * 440) * 1200, true)
@@ -263,6 +268,7 @@ app.on('browser-window-created', (_event, window) => {
         assert.equal(await frame.executeJavaScript('window.__amadeusPlayback.generation'), 1000)
         await writeFile('/tmp/amadeus-electron-speaking.png', (await window.webContents.capturePage()).toPNG())
         await wait(() => frame.executeJavaScript('window.__amadeusPlayback.status === "ended"'), 'Playback did not drain')
+        assert.deepEqual(await frame.executeJavaScript('window.__acceptanceSubtitles.filter(Boolean)'), ['你好', '世界'], 'Subtitles must follow the utterance being spoken, in order')
         assert.equal(await frame.executeJavaScript('window.__amadeusEmote.player.getVariable("face_talk")'), 0, 'Drained audio must close the native mouth')
         await wait(() => frame.executeJavaScript('window.__amadeusCharacter.label === "表情_普通"'), 'Missing return to the native idle expression')
         send({ type: 'begin', generation: 1001, speech: true, calibration: { mouthGain: 8, silenceThreshold: 0.08, syncOffsetMs: 0 } })
@@ -313,7 +319,7 @@ app.on('browser-window-created', (_event, window) => {
 })
 app.whenReady().then(async () => {
   await new Promise(resolve => modelServer.listen(0, '127.0.0.1', resolve))
-  writeFileSync(path.join(process.env.PI_CODING_AGENT_DIR, 'models.json'), JSON.stringify({ providers: { fixture: {
+  writeFileSync(path.join(process.env.AMADEUS_PI_CREDENTIALS_DIR, 'models.json'), JSON.stringify({ providers: { fixture: {
     api: 'openai-completions', apiKey: 'fixture', baseUrl: `http://127.0.0.1:${modelServer.address().port}/v1`, models: [{ id: 'fixture-model' }, { id: 'fixture-alternate', reasoning: true }],
   } } }))
   writeFileSync(path.join(process.env.PI_CODING_AGENT_DIR, 'settings.json'), JSON.stringify({ defaultProvider: 'fixture', defaultModel: 'fixture-model', retry: { enabled: false } }))

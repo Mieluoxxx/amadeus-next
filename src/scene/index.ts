@@ -9,7 +9,9 @@ let sprite: EmoteCharacter | null = null
 let port: MessagePort | null = null
 let key: TurnKey | null = null
 let speech = false
-let text = ''
+let display = ''
+let shownSubtitle = ''
+let hasSubtitles = false
 let timeline = new AlignmentTimeline()
 let calibration: Calibration = { mouthGain: 8, silenceThreshold: 0.08, syncOffsetMs: 0 }
 let context: AudioContext | null = null
@@ -170,7 +172,7 @@ function receive(event: VoiceEvent | ConversationIdleEvent): void {
     if (key && event.generation < key.generation) return
     key = { sessionId: event.sessionId, turnId: event.turnId, generation: event.generation }
     pending = []; reports = []; timeline = new AlignmentTimeline(); trailingByte = null; inputEnded = false; playbackStatus = ''; lastPosition = 0
-    text = ''; failed = false; speech = event.type === 'begin' && event.speech
+    display = ''; shownSubtitle = ''; hasSubtitles = false; failed = false; speech = event.type === 'begin' && event.speech
     worklet?.port.postMessage({ type: 'reset', generation: key.generation })
     sprite?.setMouth(0); dispatch({ type: 'reset' })
     applyIdle()
@@ -189,9 +191,12 @@ function receive(event: VoiceEvent | ConversationIdleEvent): void {
   if (event.type === 'activity') {
     dispatch({ type: 'activity', activity: event.activity, random: Math.random() })
   } else if (event.type === 'text') {
-    text += event.value.text
-    timeline.append(event.value.text, event.value.cues)
-    host.wallpaperApp.setSubtitle(text)
+    const { subtitles = [] } = event.value
+    display += event.value.display ?? event.value.text
+    timeline.append(event.value.text, event.value.cues, subtitles)
+    if (subtitles.length) hasSubtitles = true
+    // Timed subtitles follow the audio; everything else (silent, plain, or after a speech failure) shows the reply.
+    if (!hasSubtitles || !speech) host.wallpaperApp.setSubtitle(display)
     if (!speech) for (const cue of event.value.cues) dispatch({ type: 'cue', emotion: cue.emotion, random: Math.random() })
   } else if (event.type === 'audio') {
     if (event.alignment) timeline.update(event.alignment)
@@ -205,12 +210,19 @@ function receive(event: VoiceEvent | ConversationIdleEvent): void {
     // A producer failure is already reported by the main process. Stop speech without
     // destroying a healthy audio processor or echoing it back as a playback failure.
     speech = false; inputEnded = true; pending = []; reports = []; trailingByte = null
+    host.wallpaperApp.setSubtitle(display)
     worklet?.port.postMessage({ type: 'reset', generation: key?.generation ?? -1 })
     sprite?.setMouth(0)
     dispatch({ type: 'reset' })
     playbackStatus = 'error'
     applyIdle()
   }
+}
+
+function syncSubtitle(): void {
+  if (!hasSubtitles || !speech) return
+  const line = timeline.subtitleAt(lastPosition + calibration.syncOffsetMs / 1000)
+  if (line && line !== shownSubtitle) { shownSubtitle = line; host.wallpaperApp.setSubtitle(line) }
 }
 
 function tick(): void {
@@ -223,6 +235,7 @@ function tick(): void {
       if (report.type === 'playing' || report.type === 'buffering') {
         const emotion = timeline.take(lastPosition + calibration.syncOffsetMs / 1000)
         if (emotion) dispatch({ type: 'cue', emotion, random: Math.random() })
+        syncSubtitle()
         dispatch({ type: 'playback', status: report.type, now: performance.now(), random: Math.random() })
         playback(report.type)
       } else if (report.type === 'ended') {
@@ -239,6 +252,7 @@ function tick(): void {
     if (playbackStatus === 'playing' || playbackStatus === 'buffering') {
       const emotion = timeline.take(lastPosition + calibration.syncOffsetMs / 1000)
       if (emotion) dispatch({ type: 'cue', emotion, random: Math.random() })
+      syncSubtitle()
     }
   }
   dispatch({ type: 'tick', now: performance.now(), random: Math.random() })

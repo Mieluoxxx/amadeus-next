@@ -13,7 +13,8 @@ test('streamed EMO tags become cues while literal Markdown stays literal', () =>
 
 test('every streaming split preserves escaped/code literals and strips only valid emotion cues', () => {
   const input = 'Hi \\[EMO preset=sad] `code [EMO preset=angry]`\n~~~text\n[EMO preset=smile]\n~~~\n[EMO preset=shy]End'
-  const whole = new PresentationText().push(input, true)
+  const full = new PresentationText().push(input, true)
+  const whole = { text: full.text, cues: full.cues }
   for (let at = 0; at <= input.length; at++) {
     const parser = new PresentationText()
     const parts = [parser.push(input.slice(0, at)), parser.push(input.slice(at)), parser.finish()]
@@ -33,4 +34,54 @@ test('alignment corrections replace snapshots; stale cues never run backwards', 
   assert.equal(timeline.take(2), null)
   timeline.update({ chunk_seq: 0, content: 'Hello world', chunk_audio_offset_sec: 1, alignment: null })
   assert.equal(timeline.take(2), null)
+})
+
+const bilingual = '<zh>都说了，不要加「蒂娜」！</zh><jp>[EMO preset=shy]だから、ティーナって呼ばないでって言ってるでしょ！</jp>\n<zh>……我在，找我什么事？</zh><jp>……いるわよ。何の用？</jp>'
+
+test('zh/jp pairs split the subtitle from the spoken line at every streaming boundary', () => {
+  const expectation = {
+    text: 'だから、ティーナって呼ばないでって言ってるでしょ！\n……いるわよ。何の用？',
+    display: '都说了，不要加「蒂娜」！\n……我在，找我什么事？',
+    cues: [{ offset: 0, emotion: 'shy' }],
+    subtitles: [{ offset: 0, text: '都说了，不要加「蒂娜」！' }, { offset: 26, text: '……我在，找我什么事？' }],
+  }
+  const whole = new PresentationText().push(bilingual, true)
+  assert.equal(whole.text.length, 26 + '……いるわよ。何の用？'.length)
+  assert.deepEqual(whole, expectation)
+  for (let at = 0; at <= bilingual.length; at++) {
+    const parser = new PresentationText()
+    const parts = [parser.push(bilingual.slice(0, at)), parser.push(bilingual.slice(at)), parser.finish()]
+    assert.deepEqual({
+      text: parts.map(p => p.text).join(''), display: parts.map(p => p.display).join(''),
+      cues: parts.flatMap(p => p.cues), subtitles: parts.flatMap(p => p.subtitles),
+    }, expectation, `split ${at}`)
+  }
+})
+
+test('a reply without blocks is unchanged, and blocks fall back gracefully', () => {
+  const plain = new PresentationText().push('Hello [EMO preset=smile]world', true)
+  assert.deepEqual(plain, { text: 'Hello world', display: 'Hello world', cues: [{ offset: 6, emotion: 'smile' }], subtitles: [] })
+  // A spoken line with no subtitle of its own is its own subtitle.
+  const bare = new PresentationText().push('<jp>こんにちは</jp>', true)
+  assert.deepEqual({ text: bare.text, display: bare.display, subtitles: bare.subtitles }, { text: 'こんにちは', display: 'こんにちは', subtitles: [{ offset: 0, text: 'こんにちは' }] })
+  // Unclosed blocks are flushed, and tags in code stay literal.
+  const open = new PresentationText().push('<zh>字幕<jp>音声', true)
+  assert.deepEqual({ text: open.text, display: open.display }, { text: '音声', display: '字幕' })
+  const code = new PresentationText().push('`<zh>x</zh>`', true)
+  assert.equal(code.text, '`<zh>x</zh>`')
+  assert.deepEqual(code.subtitles, [])
+  // A zh-only block (code, paths) is shown but never spoken.
+  const silent = new PresentationText().push('<zh>运行 `npm test`</zh>', true)
+  assert.equal(silent.text, '')
+  assert.equal(silent.display, '运行 `npm test`')
+})
+
+test('the subtitle follows the utterance being spoken, not the whole reply', () => {
+  const timeline = new AlignmentTimeline()
+  const parsed = new PresentationText().push('<zh>一</zh><jp>Hello </jp><zh>二</zh><jp>world</jp>', true)
+  timeline.append(parsed.text, parsed.cues, parsed.subtitles)
+  assert.equal(timeline.subtitleAt(0), null)
+  timeline.update({ chunk_seq: 0, content: 'Hello world', chunk_audio_offset_sec: 0, alignment: { segments: [{ text: 'Hello', start: 0, end: 0.4 }, { text: 'world', start: 0.6, end: 1 }] } })
+  assert.equal(timeline.subtitleAt(0.2), '一')
+  assert.equal(timeline.subtitleAt(0.7), '二')
 })

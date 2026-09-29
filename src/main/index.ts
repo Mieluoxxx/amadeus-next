@@ -667,7 +667,7 @@ class AppRuntime {
     this.voice({ ...turn, type: 'activity', activity: 'thinking' })
     const present = (value: ReturnType<PresentationText['push']>) => {
       if (!sameTurn(this.activeTurn, turn)) return
-      turn.text += value.text
+      turn.text += value.display
       this.emit('chat.token', { session_id: session.id, turn_id: turnId, token: turn.text })
       this.voice({ ...turn, type: 'text', value })
       if (turn.speech && value.text) {

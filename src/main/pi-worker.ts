@@ -1,4 +1,5 @@
 import { DefaultResourceLoader, ModelRuntime, createAgentSession, getAgentDir, type AgentSession } from '@earendil-works/pi-coding-agent'
+import path from 'node:path'
 import { openPiSession } from './piSessions.ts'
 
 type Json = Record<string, unknown>
