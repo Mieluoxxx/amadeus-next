@@ -792,6 +792,12 @@ export function useSceneSession({
       const activeId = applySessionPayload(params, { notify: true })
       if (activeId) void hydrateActivities(activeId)
     }))
+    // 首次发送后主进程才会给默认标题落时间戳；这里只更新列表标题，不触碰其它会话状态。
+    unsubscribers.push(subscribe('session.titled', params => {
+      const id = String(params.session_id || '')
+      const title = String(params.title || '')
+      if (id && title) setSessions(previous => previous.map(item => item.id === id ? { ...item, title } : item))
+    }))
     unsubscribers.push(subscribe('asr.recognized', params => {
       const text = String(params.text ?? '')
       if (!text || params.is_final !== true) return

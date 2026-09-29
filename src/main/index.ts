@@ -21,6 +21,13 @@ type StoredSession = { id: string; title: string; messages: StoredMessage[] }
 const DEV_SERVER_URL = process.env.AMADEUS_NEXT_DEV_URL || 'http://127.0.0.1:5199'
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
 
+/** 新建会话的标题带本地时间戳，便于按时间审计。 */
+function timestampedSessionTitle(): string {
+  const now = new Date()
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `新对话-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}-${pad(now.getMinutes())}`
+}
+
 function projectRoot(): string {
   if (process.env.AMADEUS_NEXT_PROJECT_ROOT) return process.env.AMADEUS_NEXT_PROJECT_ROOT
   const bundledAssets = path.join(process.resourcesPath || '', 'amadeus-assets')
@@ -798,6 +805,11 @@ class AppRuntime {
     this.speech.stop()
     this.currentSessionId = sessionId
     this.store.currentId = sessionId
+    // 默认标题在真正发出第一条消息时才落本地时间戳，未发送的空会话保持“新对话”。
+    if (session.title === '新对话') {
+      session.title = timestampedSessionTitle()
+      this.emit('session.titled', { session_id: session.id, title: session.title })
+    }
     session.messages.push({ role: 'user', text, turn_id: turnId })
     this.store.save()
     void this.runChat(session, text, turnId)

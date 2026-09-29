@@ -63,6 +63,22 @@ function runtime(env = {}, clock = { value: Date.now() }, emote = {}) {
   return { app, calls, prompts, timers, advance, emitFish: event => emitFish(event) }
 }
 
+test('a default-titled session is stamped only when its first message is sent', async () => {
+  const { app, calls } = runtime({}, undefined, {
+    SessionStore: class { sessions = [{ id: 'blank', title: '新对话', messages: [] }]; save() {} },
+    timestampedSessionTitle: () => '新对话-2026-09-30-01-00',
+  })
+  await app.init()
+  assert.equal((await app.request('chat.send', { text: '你好' })).ok, true)
+  const titled = calls.find(([method]) => method === 'session.titled')
+  assert.ok(titled, 'the first message must emit session.titled')
+  assert.equal(titled[1].session_id, 'blank')
+  assert.equal(titled[1].title, '新对话-2026-09-30-01-00')
+  assert.equal((await app.request('session.list')).sessions[0].title, '新对话-2026-09-30-01-00')
+  await app.request('chat.send', { text: '再说一次' })
+  assert.equal(calls.filter(([method]) => method === 'session.titled').length, 1, 'an already stamped session must not be renamed again')
+})
+
 test('missing character resources do not block application initialization and can be retried', async () => {
   let missing = true, bakes = 0
   const { app, calls } = runtime({}, undefined, {
