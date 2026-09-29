@@ -16,13 +16,13 @@ directory; Amadeus does not add a provider registry around it.
 
 ```bash
 npm ci
-npm run assets:emote -- ../salieri-next-emote
+npm run assets:emote -- ../amadeus-next-emote
 npm run build
 npm start
 ```
 
 Run these commands from this project's directory. For development, use `npm run
-dev`. The one-time asset import defaults to the sibling `salieri-next-emote`
+dev`. The one-time asset import defaults to the sibling `amadeus-next-emote`
 project; pass its path explicitly if it lives elsewhere. Once imported, runtime
 loading is offline and no longer depends on that checkout.
 
@@ -128,11 +128,13 @@ energy to `src/scene/emote.ts`. FreeMote owns native expression timelines and
 blinking; audio energy drives `face_talk` (0–5), closing on silence, buffering,
 drain and cancellation. Pixi still owns the room, CRT polygon and subtitles.
 All four Kurisu AB/C ordinary-clothes/white-coat packs are copied locally. The
-desk character still uses `牧瀬紅莉栖ab_白衣`, explicitly selecting B (crossed
+desk character still uses `kurisu_ab_white`, explicitly selecting B (crossed
 arms); A/B share a source pack. The verified adapter translates `cw` alpha
 keyframes to legacy opacity, and the renderer maintains all custom visibility
 bindings each frame so unused sleeves stay hidden without hiding the body.
-The PSB adapter and runtime are copied unmodified with pinned SHA-256 checks.
+The imported packs and the PSB adapter are verified against pinned SHA-256
+checks; the adapter is byte-identical upstream except for its `./models/` base
+path, and the model directory and file names are ASCII on disk.
 
 This change replaces **only the foreground monitor character**. The legacy
 scenario stills are now served as the idle artwork in

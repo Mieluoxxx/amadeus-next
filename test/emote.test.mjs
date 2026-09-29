@@ -11,8 +11,11 @@ const assetRoot = path.resolve(import.meta.dirname, '../resources/emote')
 test('local model copies retain layers and translate hidden cw keyframes for the legacy runtime', { skip: !existsSync(path.join(assetRoot, 'psb.mjs')) }, async () => {
   const adapter = await import('../resources/emote/psb.mjs')
   assert.equal(typeof adapter.partVariables, 'function', 'the verified visibility adapter must be provisioned')
-  for (const name of ['牧瀬紅莉栖ab', '牧瀬紅莉栖ab_白衣', '牧瀬紅莉栖c', '牧瀬紅莉栖c_白衣']) {
-    const folder = path.join(assetRoot, '红莉栖E-mote模型', name)
+  const adapterSource = await readFile(path.join(assetRoot, 'psb.mjs'), 'utf8')
+  assert.match(adapterSource, /const folder = `\.\/models\/\$\{name\}\/`/, 'the adapter must resolve the packed models through its ASCII base path')
+  assert.equal(adapterSource.split('./models/').length, 2)
+  for (const name of ['kurisu_ab', 'kurisu_ab_white', 'kurisu_c', 'kurisu_c_white']) {
+    const folder = path.join(assetRoot, 'models', name)
     const original = JSON.parse(await readFile(path.join(folder, `${name}.psb.m.json`), 'utf8'))
     const resx = JSON.parse(await readFile(path.join(folder, `${name}.psb.m.resx.json`), 'utf8'))
     for (const resource of [...Object.values(resx.Resources), ...Object.values(resx.ExtraResources)]) assert.ok(existsSync(path.join(folder, resource)), resource)
@@ -108,7 +111,7 @@ test('scene serves local E-mote modules, preserves background assets, and reject
     await symlink(path.join(root, 'secret.txt'), path.join(root, 'emote/escaped.txt'))
     await host.start()
     const init = await (await fetch(host.origin + '/next/init')).json()
-    assert.deepEqual(init.character, { renderer: 'emote', model: '牧瀬紅莉栖ab_白衣' })
+    assert.deepEqual(init.character, { renderer: 'emote', model: 'kurisu_ab_white' })
     assert.equal('definition' in init, false)
     const module = await fetch(host.origin + '/emote/psb.mjs')
     assert.equal(module.headers.get('content-type'), 'text/javascript')

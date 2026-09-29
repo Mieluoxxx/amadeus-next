@@ -25,12 +25,17 @@ checkout or an external path.
 Provision the model and runtime once, from the project root:
 
 ```bash
-npm run assets:emote -- ../salieri-next-emote
+npm run assets:emote -- ../amadeus-next-emote
 ```
 
-This copies `牧瀬紅莉栖ab`, `牧瀬紅莉栖ab_白衣`, `牧瀬紅莉栖c`, and
-`牧瀬紅莉栖c_白衣`, including model JSON, resource indexes, textures and binary
-resources, plus the unmodified verified PSB adapter and source READMEs.
+This copies the four upstream packs into `models/` under ASCII names —
+`kurisu_ab`, `kurisu_ab_white`, `kurisu_c` and `kurisu_c_white` — including
+model JSON, resource indexes, textures and binary resources, plus the SHA-256
+verified PSB adapter and source READMEs. The upstream pack directories and their
+inner file names are Japanese; the import renames them and rewrites the
+pack-relative paths inside each `*.psb.m.resx.json` so no scene URL carries a
+non-ASCII segment. The adapter's only local edit is its `./models/` base path;
+the pinned hash still covers the unmodified upstream source.
 It downloads the pinned FreeMote v3.9 scripts once and verifies their
 SHA-256 hashes (subsequent imports reuse valid local scripts). At runtime all
 requests go to the loopback asset server; no CDN or sibling checkout is needed.

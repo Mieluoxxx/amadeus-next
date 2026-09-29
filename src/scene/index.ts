@@ -252,7 +252,7 @@ window.addEventListener('amadeus:scene-ready', () => {
     const init = await response.json() as SceneInitialization
     host.wallpaperApp.initDesktopScene(init.scene)
     idleUrls = Array.isArray(init.scene.idleUrls) ? (init.scene.idleUrls as unknown[]).map(item => String(item)) : []
-    if (init.character?.renderer !== 'emote' || init.character.model !== '牧瀬紅莉栖ab_白衣') throw new Error('不支持的 E-mote 模型')
+    if (init.character?.renderer !== 'emote' || init.character.model !== 'kurisu_ab_white') throw new Error('不支持的 E-mote 模型')
     sprite = await loadCharacter(init.character.model, diagnostic)
     dispatch({ type: 'reset' })
     const token = new URLSearchParams(location.search).get('sceneLoadToken')

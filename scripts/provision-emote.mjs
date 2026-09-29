@@ -1,12 +1,21 @@
-import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 
 // Local, non-commercial import only. See resources/LICENSES/FreeMote-NOTICE.md.
 const project = path.resolve(import.meta.dirname, '..')
-const source = path.resolve(process.argv[2] || path.join(project, '../salieri-next-emote'))
+const source = path.resolve(process.argv[2] || path.join(project, '../amadeus-next-emote'))
 const output = path.join(project, 'resources/emote')
-const models = ['牧瀬紅莉栖ab', '牧瀬紅莉栖ab_白衣', '牧瀬紅莉栖c', '牧瀬紅莉栖c_白衣']
+// The upstream packs keep their Japanese directory names; the imported tree is ASCII so the
+// loopback scene URLs carry no non-ASCII segment.
+const models = {
+  '牧瀬紅莉栖ab': 'kurisu_ab',
+  '牧瀬紅莉栖ab_白衣': 'kurisu_ab_white',
+  '牧瀬紅莉栖c': 'kurisu_c',
+  '牧瀬紅莉栖c_白衣': 'kurisu_c_white',
+}
+const adapterBase = './红莉栖E-mote模型/'
+const asciiBase = './models/'
 const revision = '4340e8fc2138f013157d5b9cd40ba17d01347093'
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
 const loader = await readFile(path.join(source, 'psb.mjs'))
@@ -27,12 +36,24 @@ for (const [name, hash] of Object.entries({
   if (sha256(bytes) !== hash) throw new Error(`FreeMote integrity mismatch: ${name}`)
   await writeFile(file, bytes)
 }
-await writeFile(path.join(output, 'psb.mjs'), loader)
+const adapter = loader.toString('utf8')
+if (adapter.split(adapterBase).length !== 2) throw new Error('The source PSB adapter base path changed; review it before importing.')
+// The only local edit to the adapter: the model directory name it resolves against.
+await writeFile(path.join(output, 'psb.mjs'), adapter.replace(adapterBase, asciiBase))
 await cp(path.join(source, 'README.md'), path.join(output, 'SOURCE-README.md'))
-const artwork = path.join(output, '红莉栖E-mote模型')
+const artwork = path.join(output, 'models')
 await mkdir(artwork, { recursive: true })
 await cp(path.join(source, '红莉栖E-mote模型/README.md'), path.join(artwork, 'README.md'))
-for (const model of models) {
-  await cp(path.join(source, '红莉栖E-mote模型', model), path.join(artwork, model), { recursive: true, filter: file => path.basename(file) !== '.DS_Store' })
+for (const [name, ascii] of Object.entries(models)) {
+  const folder = path.join(artwork, ascii)
+  await cp(path.join(source, '红莉栖E-mote模型', name), folder, { recursive: true, filter: file => path.basename(file) !== '.DS_Store' })
+  for (const entry of await readdir(folder)) {
+    if (!entry.startsWith(name)) continue
+    await rename(path.join(folder, entry), path.join(folder, `${ascii}${entry.slice(name.length)}`))
+  }
+  const index = path.join(folder, `${ascii}.psb.m.resx.json`)
+  const text = await readFile(index, 'utf8')
+  if (!text.includes(name)) throw new Error(`The resource index for ${name} does not reference its own pack.`)
+  await writeFile(index, text.replaceAll(name, ascii))
 }
-console.log(`Provisioned ${models.length} model packs and the verified visibility adapter at ${output}; runtime loading is entirely local.`)
+console.log(`Provisioned ${Object.keys(models).length} ASCII-named model packs under ${artwork} and the verified visibility adapter at ${output}; runtime loading is entirely local.`)

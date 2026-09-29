@@ -75,7 +75,7 @@ export class SceneHost {
       } catch { return [] }
     })()
     this.initialization = {
-      character: { renderer: 'emote', model: '牧瀬紅莉栖ab_白衣' },
+      character: { renderer: 'emote', model: 'kurisu_ab_white' },
       scene: {
         backgroundUrl: `${this.origin}/assets/images/amadeus_desktop_wallpaper.png`,
         ambientUrl: `${this.origin}/assets/images/amadeus_ambient_high_blend.png`,
