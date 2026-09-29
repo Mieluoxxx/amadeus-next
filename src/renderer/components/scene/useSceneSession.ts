@@ -163,6 +163,8 @@ export function useSceneSession({
   const [streaming, setStreaming] = useState(false)
   const [asrListening, setAsrListening] = useState(false)
   const [provider, setProvider] = useState('')
+  const [model, setModel] = useState('')
+  const [models, setModels] = useState<{ value: string; label: string }[]>([])
   const [translationEnabled, setTranslationEnabled] = useState(false)
   const [translations, setTranslations] = useState<Record<string, string>>({})
   const [sessionChange, setSessionChange] = useState<SceneSessionChange | null>(null)
@@ -581,6 +583,38 @@ export function useSceneSession({
     return () => unsubscribe()
   }, [connected, send, subscribe])
 
+  // The model in use, for the composer. It belongs to the session (a new one starts on the default),
+  // so it is re-read whenever the session changes. `pi.models` is refused while a reply is running,
+  // so a read that could not happen is retried when the turn ends, not on every turn.
+  const modelSessionRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!connected) return
+    return subscribe('pi.model', payload => {
+      if (typeof payload.current === 'string') { setModel(payload.current); modelSessionRef.current = sessionId }
+    })
+  }, [connected, subscribe, sessionId])
+
+  const [modelRetry, setModelRetry] = useState(0)
+  useEffect(() => {
+    if (!connected || streaming) return
+    if (modelSessionRef.current === sessionId && model && models.length) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    if (modelSessionRef.current !== sessionId) setModel('')
+    send('pi.models', {}).then(result => {
+      if (cancelled) return
+      if (!result.ok) {
+        // Refused while a reload or reply is in flight; nothing else re-triggers this read.
+        if (modelRetry < 10) timer = setTimeout(() => setModelRetry(count => count + 1), 1000)
+        return
+      }
+      if (typeof result.current === 'string') { setModel(result.current); modelSessionRef.current = sessionId }
+      if (Array.isArray(result.models)) setModels(result.models as { value: string; label: string }[])
+      setModelRetry(0)
+    }).catch(() => {})
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [connected, send, sessionId, streaming, model, models.length, modelRetry])
+
   useEffect(() => {
     if (!translationEnabled) {
       translationGenerationRef.current += 1
@@ -960,6 +994,16 @@ export function useSceneSession({
     }
   }, [connected, send, asrListening])
 
+  const selectModel = useCallback(async (value: string) => {
+    try {
+      const result = await send('pi.model.set', { model: value })
+      if (!result.ok) throw new Error(String(result.error || 'Model switch failed'))
+      if (typeof result.current === 'string') setModel(result.current)
+    } catch (error) {
+      reportProblem(error instanceof Error ? error.message : String(error))
+    }
+  }, [send, reportProblem])
+
   const activeSession = useMemo(
     () => sessions.find(session => session.id === sessionId) || null,
     [sessions, sessionId],
@@ -977,6 +1021,9 @@ export function useSceneSession({
     streaming,
     asrListening,
     provider,
+    model,
+    models,
+    selectModel,
     translationEnabled,
     translations,
     translationKey: chatTranslationKey,

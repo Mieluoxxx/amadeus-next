@@ -672,8 +672,10 @@ html.desktop-work-slice-window #root {
 }
 .scene-composer-icon svg, .scene-composer-send svg { width: 15px; height: 15px; }
 .scene-composer-icon:hover:not(:disabled) { color: var(--text); background: #9bc7b812; }
-.scene-provider-control { flex: 0 0 auto; }
-.scene-provider-control span {
+.scene-provider-control { flex: 0 1 auto; min-width: 0; }
+.scene-provider-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-style: normal; }
+.scene-provider-control > button {
+  max-width: 180px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -687,6 +689,48 @@ html.desktop-work-slice-window #root {
   font: 11px var(--font-mono);
   white-space: nowrap;
 }
+.scene-provider-control > button:hover:not(:disabled) { color: var(--text); border-color: rgba(159, 203, 189, 0.55); }
+.scene-model-menu {
+  /* Portalled to the body, outside the dock frame's clipping and its scoped palette. */
+  --text: #d8e9e4;
+  --muted: #93aaa3;
+  --accent: #9bc7b8;
+  position: fixed;
+  z-index: 1000;
+  /* Five options tall (28px each, 4px padding, 1px border), or the room above the button when that is less. */
+  max-height: min(calc(28px * 5 + 8px + 2px), var(--menu-room, 100vh));
+  min-width: 220px;
+  max-width: min(360px, calc(100vw - 16px));
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  color-scheme: dark;
+  border: 1px solid rgba(159, 203, 189, 0.28);
+  border-radius: 9px;
+  background: rgba(3, 11, 13, 0.97);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.scene-model-menu button {
+  display: block;
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  line-height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: 11px var(--font-mono);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scene-model-menu button { cursor: pointer; }
+.scene-model-menu button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.scene-model-menu button:hover { background: #9bc7b812; color: var(--text); }
+.scene-model-menu [aria-selected='true'] button { color: var(--accent); }
 .scene-composer-spacer { flex: 1; }
 .scene-session-title { min-width: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10px; padding-left: 6px; }
 .scene-translation-indicator { color: var(--accent); font-size: 11px; }
@@ -733,7 +777,7 @@ html.desktop-work-slice-window #root {
   .scene-composer-input { min-height: 22px; max-height: 44px; padding: 0 3px; font-size: 12px; }
   .scene-composer-toolbar { flex-basis: 28px; }
   .scene-composer-icon { height: 28px; flex-basis: 28px; }
-  .scene-composer-send, .scene-provider-control span { height: 28px; }
+  .scene-composer-send, .scene-provider-control > button { height: 28px; }
   .scene-composer-context { flex-basis: 22px; }
   .scene-context-chip > button { height: 20px; }
 }
@@ -741,7 +785,7 @@ html.desktop-work-slice-window #root {
   .scene-conversation { padding: 2px; gap: 2px; }
   .scene-composer { padding: 2px 4px; }
   .scene-composer-toolbar { flex-basis: 26px; }
-  .scene-composer-icon, .scene-composer-send, .scene-provider-control span { height: 26px; }
+  .scene-composer-icon, .scene-composer-send, .scene-provider-control > button { height: 26px; }
   .scene-composer-context { flex-basis: 20px; }
   .scene-context-chip > button { height: 18px; }
 }

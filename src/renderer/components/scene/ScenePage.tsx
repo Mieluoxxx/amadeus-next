@@ -234,6 +234,9 @@ export default function ScenePage({
       asrListening={session.asrListening}
       streaming={session.streaming}
       sessionTitle={session.activeSession?.title || ''}
+      model={session.model}
+      models={session.models}
+      onSelectModel={value => void session.selectModel(value)}
       translationEnabled={session.translationEnabled}
       attachment={pendingAttachment}
       onClearAttachment={() => setPendingAttachment(null)}

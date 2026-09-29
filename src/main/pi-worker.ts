@@ -1,4 +1,5 @@
 import { DefaultResourceLoader, ModelRuntime, createAgentSession, getAgentDir, type AgentSession } from '@earendil-works/pi-coding-agent'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { openPiSession } from './piSessions.ts'
 import { composePrompt } from './role.ts'
@@ -45,9 +46,30 @@ async function initialize(): Promise<void> {
   if (resourceLoader.getExtensions().errors.length) throw new Error('Pi extensions could not be loaded')
 }
 
+// 用户在界面里选的模型是全局的：新会话从它开始，打开旧会话时也切到它，而不是沿用会话里上次的模型。
+// 每个会话的 SettingsManager 各自缓存，别的会话写下的选择只能从文件里读到。
+function readSelection(): { provider?: string; model?: string; thinkingLevel?: string } {
+  try {
+    const stored = JSON.parse(readFileSync(path.join(getAgentDir(), 'settings.json'), 'utf8')) as Json
+    const text = (value: unknown) => typeof value === 'string' && value ? value : undefined
+    return { provider: text(stored.defaultProvider), model: text(stored.defaultModel), thinkingLevel: text(stored.defaultThinkingLevel) }
+  } catch { return {} }
+}
+
+async function followSelection(session: AgentSession): Promise<void> {
+  if (!modelRuntime) return
+  const selection = readSelection()
+  const model = selection.provider && selection.model ? modelRuntime.getModel(selection.provider, selection.model) : undefined
+  try {
+    if (model && (session.model?.provider !== model.provider || session.model?.id !== model.id)) await session.setModel(model)
+    const level = selection.thinkingLevel as Parameters<AgentSession['setThinkingLevel']>[0] | undefined
+    if (level && session.getAvailableThinkingLevels().includes(level) && session.thinkingLevel !== level) session.setThinkingLevel(level)
+  } catch { /* 选中的模型暂不可用（如缺凭据）时保持会话原有模型 */ }
+}
+
 async function getSession(id: string): Promise<AgentSession> {
   const existing = sessions.get(id)
-  if (existing) return existing
+  if (existing) { await followSelection(existing); return existing }
   if (!modelRuntime || !resourceLoader) throw new Error('Pi runtime is unavailable')
   const directory = process.env.AMADEUS_NEXT_PI_SESSIONS
   if (!directory) throw new Error('Pi session directory is required')
@@ -58,6 +80,7 @@ async function getSession(id: string): Promise<AgentSession> {
     resourceLoader,
   })
   sessions.set(id, result.session)
+  await followSelection(result.session)
   return result.session
 }
 
@@ -139,8 +162,9 @@ async function handle(message: Json, epoch = 0): Promise<void> {
           const level = message.thinkingLevel as Parameters<AgentSession['setThinkingLevel']>[0]
           if (session.model?.provider !== model.provider || session.model?.id !== model.id) throw new Error('Select the model before changing its thinking level')
           if (!session.getAvailableThinkingLevels().includes(level)) throw new Error('Unsupported thinking level')
-          session.setThinkingLevel(level)
-        } else await session.setModel(model)
+          session.setThinkingLevel(level, { persist: true })
+        } else await session.setModel(model, { persist: true })
+        await session.settingsManager.flush()
       }
       const models = await modelRuntime.getAvailable(undefined, { signal: AbortSignal.timeout(15000) })
       port.postMessage({ type: 'done', id: requestId,

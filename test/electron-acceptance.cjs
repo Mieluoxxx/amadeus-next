@@ -189,6 +189,38 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(models.current, 'fixture/fixture-model')
       assert.equal((await ui('window.amadeusNext.request("pi.model.set", {model:"fixture/fixture-alternate"})')).current, 'fixture/fixture-alternate')
       assert.equal((await ui('window.amadeusNext.request("pi.model.set", {model:"fixture/fixture-alternate",thinkingLevel:"high"})')).thinkingLevel, 'high')
+      await wait(() => ui('document.querySelector(\'[data-testid="scene-provider"]\')?.textContent === "fixture-alternate"'), 'The composer must show the model in use, not the runtime name')
+      // Switching from the composer: the menu must be reachable (not clipped) and drive the real runtime.
+      await wait(() => ui('!document.querySelector(\'[data-testid="scene-provider"]\')?.disabled'), 'The model control must be enabled while idle')
+      await ui('document.querySelector(\'[data-testid="scene-provider"]\').click()')
+      await wait(() => ui('!!document.querySelector(\'[data-model="fixture/fixture-model"]\')'), 'The model menu did not open')
+      // A long list shows five options and scrolls instead of growing past the window.
+      assert.deepEqual(await ui(`(() => {
+        const menu = document.querySelector('[data-testid="scene-model-menu"]'), box = menu.getBoundingClientRect()
+        const visible = [...menu.querySelectorAll('[data-model]')].filter(item => {
+          const rect = item.getBoundingClientRect()
+          return rect.top >= box.top && rect.bottom <= box.bottom
+        }).length
+        return { scrolls: menu.scrollHeight > menu.clientHeight, visible, inWindow: box.top >= 0 }
+      })()`), { scrolls: true, visible: 5, inWindow: true }, 'A long model list must show five options and scroll')
+      // The dock frame clips its overflow, so every option must be hit-testable from outside it.
+      assert.equal(await ui(`(() => {
+        const menu = document.querySelector('[data-testid="scene-model-menu"]')
+        if (menu.parentElement !== document.body) return 'not portalled'
+        for (const item of menu.querySelectorAll('[data-model]')) {
+          item.scrollIntoView({ block: 'nearest' })
+          const box = item.getBoundingClientRect()
+          if (box.top < 0 || box.bottom > innerHeight) return 'outside the window: ' + item.dataset.model
+          if (document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) !== item) return 'covered: ' + item.dataset.model
+        }
+        return 'ok'
+      })()`), 'ok', 'The model menu must not be clipped or covered')
+      await ui('document.querySelector(\'[data-model="fixture/fixture-model"]\').click()')
+      await wait(() => ui('document.querySelector(\'[data-testid="scene-provider"]\')?.textContent === "fixture-model"'), 'Choosing a model in the composer did not update it')
+      assert.equal((await ui('window.amadeusNext.request("pi.models")')).current, 'fixture/fixture-model', 'The runtime must be on the chosen model')
+      await ui('window.amadeusNext.request("pi.model.set", {model:"fixture/fixture-alternate"})')
+      await wait(() => ui('document.querySelector(\'[data-testid="scene-provider"]\')?.textContent === "fixture-alternate"'), 'A model changed elsewhere must update the composer')
+      await ui('window.amadeusNext.request("pi.model.set", {model:"fixture/fixture-alternate",thinkingLevel:"high"})')
       await ui('document.querySelector(\'[data-testid="scene-open-more"]\').click()')
       await wait(() => ui('document.querySelectorAll(".settings-section-nav button").length === 4'), 'Settings did not reopen')
       await ui('document.querySelectorAll(".settings-section-nav button")[1].click()')
@@ -340,7 +372,7 @@ app.on('browser-window-created', (_event, window) => {
 app.whenReady().then(async () => {
   await new Promise(resolve => modelServer.listen(0, '127.0.0.1', resolve))
   writeFileSync(path.join(process.env.AMADEUS_PI_CREDENTIALS_DIR, 'models.json'), JSON.stringify({ providers: { fixture: {
-    api: 'openai-completions', apiKey: 'fixture', baseUrl: `http://127.0.0.1:${modelServer.address().port}/v1`, models: [{ id: 'fixture-model' }, { id: 'fixture-alternate', reasoning: true }],
+    api: 'openai-completions', apiKey: 'fixture', baseUrl: `http://127.0.0.1:${modelServer.address().port}/v1`, models: [{ id: 'fixture-model' }, { id: 'fixture-alternate', reasoning: true }, ...Array.from({ length: 14 }, (_, index) => ({ id: `fixture-extra-${index}` }))],
   } } }))
   mkdirSync(path.join(process.env.AMADEUS_HOME, 'pi'), { recursive: true })
   writeFileSync(path.join(process.env.AMADEUS_HOME, 'pi', 'settings.json'), JSON.stringify({ defaultProvider: 'fixture', defaultModel: 'fixture-model', retry: { enabled: false } }))

@@ -317,7 +317,10 @@ class AppRuntime {
         if (this.reloading || this.reloadTargets.size || (this.activeTurn && !this.activeTurn.piDone)) return { ok: false, error: 'Wait for the current reply or reload to finish' }
         if (method === 'pi.model.set' && typeof params.model !== 'string') return { ok: false, error: 'Invalid model' }
         try {
-          return { ok: true, ...await this.pi.request(method === 'pi.models' ? 'models' : 'set-model', { sessionId: this.currentSessionId, model: params.model, thinkingLevel: params.thinkingLevel }) }
+          const result = await this.pi.request(method === 'pi.models' ? 'models' : 'set-model', { sessionId: this.currentSessionId, model: params.model, thinkingLevel: params.thinkingLevel })
+          // 场景输入框显示当前模型；设置页换模型时通知它。
+          if (method === 'pi.model.set') this.emit('pi.model', { current: result.current })
+          return { ok: true, ...result }
         } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) } }
       case 'provider.list':
         return { provider_availability: [{ provider_id: 'pi', configured: !this.pi.error, ready: !this.pi.error, registered: true, reason: this.pi.error || 'ready' }], provider_manifests: [{ provider_id: 'pi', display_name: 'Pi', runtime_kind: 'embedded' }] }

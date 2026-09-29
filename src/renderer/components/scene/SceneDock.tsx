@@ -1,4 +1,5 @@
-import { useRef } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
 import { ImagePlus, Mic, MicOff, Send, X } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import type { VisualAttachment } from './visualAttachment'
@@ -7,7 +8,7 @@ import type { VisualAttachment } from './visualAttachment'
  * opening and closing panels cannot lose an edit. */
 export default function SceneDock({
   connected, draft, onDraftChange, onSubmit, onToggleMic, asrListening, streaming,
-  sessionTitle,
+  sessionTitle, model, models, onSelectModel,
   translationEnabled,
   attachment, onClearAttachment, onPickAttachment, canAttach,
 }: {
@@ -19,6 +20,10 @@ export default function SceneDock({
   asrListening: boolean
   streaming: boolean
   sessionTitle: string
+  /** `provider/id` of the model in use; empty until it is known. */
+  model: string
+  models: { value: string; label: string }[]
+  onSelectModel: (value: string) => void
   translationEnabled: boolean
   attachment: VisualAttachment | null
   onClearAttachment: () => void
@@ -27,6 +32,30 @@ export default function SceneDock({
 }) {
   const { t } = useI18n()
   const imageInputRef = useRef<HTMLInputElement>(null)
+  // The dock frame clips its overflow, so the menu is portalled to the body and positioned from the button.
+  const [menu, setMenu] = useState<{ left: number; bottom: number; room: number } | null>(null)
+  const modelButtonRef = useRef<HTMLButtonElement>(null)
+  const modelMenuRef = useRef<HTMLUListElement>(null)
+  const openMenu = () => {
+    const box = modelButtonRef.current?.getBoundingClientRect()
+    if (!box) return
+    setMenu({ left: Math.max(8, box.left), bottom: window.innerHeight - box.top + 6, room: box.top - 12 })
+  }
+  useEffect(() => {
+    if (!menu) return
+    const close = (event: MouseEvent | KeyboardEvent | Event) => {
+      if (event instanceof KeyboardEvent) { if (event.key === 'Escape') setMenu(null); return }
+      const target = event.target as Node | null
+      if (event.type === 'mousedown' && (modelButtonRef.current?.contains(target) || modelMenuRef.current?.contains(target))) return
+      setMenu(null)
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', close)
+    window.addEventListener('resize', close)
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', close); window.removeEventListener('resize', close) }
+  }, [menu])
+  // A reply in flight owns the model; the runtime refuses a switch until it ends.
+  const canSwitchModel = connected && !streaming && models.length > 1
   const canSend = connected && Boolean(draft.trim() || attachment)
   const micLabel = asrListening ? t('scene.mic_stop') : t('scene.mic_start')
   const attachmentLabel = canAttach ? t('scene.attach_image') : t('scene.attach_needs_visual_provider')
@@ -87,9 +116,38 @@ export default function SceneDock({
           >
             <ImagePlus />
           </button>
-          <div className="scene-provider-control" data-testid="scene-provider" title={t('chat.provider')}>
-            <span>Pi</span>
-          </div>
+          {model && (
+            <div className="scene-provider-control">
+              <button
+                ref={modelButtonRef}
+                type="button"
+                data-testid="scene-provider"
+                title={model}
+                aria-haspopup="listbox"
+                aria-expanded={menu !== null}
+                disabled={!canSwitchModel}
+                onClick={() => (menu ? setMenu(null) : openMenu())}
+              >
+                <i className="scene-provider-name">{model.slice(model.indexOf('/') + 1)}</i>
+              </button>
+              {menu && createPortal(
+                <ul
+                  ref={modelMenuRef}
+                  className="scene-model-menu"
+                  role="listbox"
+                  data-testid="scene-model-menu"
+                  style={{ left: menu.left, bottom: menu.bottom, '--menu-room': `${menu.room}px` } as CSSProperties}
+                >
+                  {models.map(item => (
+                    <li key={item.value} role="option" aria-selected={item.value === model}>
+                      <button type="button" data-model={item.value} onClick={() => { setMenu(null); if (item.value !== model) onSelectModel(item.value) }}>{item.label}</button>
+                    </li>
+                  ))}
+                </ul>,
+                document.body,
+              )}
+            </div>
+          )}
           {translationEnabled && <span className="scene-translation-indicator" title={t('settings.label.chat_translation')} aria-label={t('settings.label.chat_translation')}>译</span>}
           {sessionTitle && <span className="scene-session-title" title={sessionTitle}>{sessionTitle}</span>}
           <span className="scene-composer-spacer" />
