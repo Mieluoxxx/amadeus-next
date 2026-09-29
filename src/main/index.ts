@@ -293,6 +293,8 @@ class AppRuntime {
   private generation = 0
   private activeTurn: (TurnKey & { piDone: boolean; drained: boolean; speech: boolean; text: string }) | null = null
   private listeningEnabled = false
+  private listeningResumeAt = 0
+  private listeningResumeTimer: ReturnType<typeof setTimeout> | null = null
   private sceneReady = false
   private sceneToken = ''
   private readonly reloadTargets = new Set<string>()
@@ -443,12 +445,15 @@ class AppRuntime {
         this.listeningEnabled = true
         if (this.reloading || this.reloadTargets.size) return { ok: true }
         if (this.activeTurn && (!this.activeTurn.piDone || !this.activeTurn.drained)) return { ok: true }
+        if (performance.now() < this.listeningResumeAt) { this.resumeListening(); return { ok: true } }
+        this.cancelListeningResume()
         const result = this.speech.start(String(this.config.asr_language || 'zh-CN'))
         if (!result.ok) this.listeningEnabled = false
         return result
       }
       case 'asr.stop':
         this.listeningEnabled = false
+        this.cancelListeningResume()
         this.voice({ ...(this.activeTurn || this.idleKey()), type: 'activity', activity: 'idle' })
         return this.speech.finish(true)
       case 'work.permission.resolve':
@@ -460,6 +465,7 @@ class AppRuntime {
 
   dispose(): void {
     this.disposed = true
+    this.cancelListeningResume()
     if (this.idleTimer !== null) {
       clearTimeout(this.idleTimer)
       this.idleTimer = null
@@ -866,6 +872,7 @@ class AppRuntime {
     return { mouthGain: number(this.config.mouth_gain, 8, 0, 32), silenceThreshold: number(this.config.mouth_silence_threshold, 0.08, 0, 1), syncOffsetMs: number(this.config.voice_sync_offset_ms, 0, -1000, 1000) }
   }
   private cancelTurn(): void {
+    this.cancelListeningResume()
     const turn = this.activeTurn
     this.activeTurn = null
     this.markActivity()
@@ -881,6 +888,8 @@ class AppRuntime {
     const turn = this.activeTurn
     if (!turn) return
     if (event.type === 'ended' || event.type === 'error') {
+      // 从实际播放排空起留一秒余韵；重复回执不能延长等待，Pi 完成也不能提前开麦。
+      if (event.type === 'ended' && !turn.drained) this.listeningResumeAt = performance.now() + 1000
       turn.drained = true
       if (event.type === 'error') {
         this.tts.abort()
@@ -891,11 +900,21 @@ class AppRuntime {
       this.resumeListening()
     }
   }
+  private cancelListeningResume(): void {
+    if (this.listeningResumeTimer !== null) clearTimeout(this.listeningResumeTimer)
+    this.listeningResumeTimer = null
+  }
   private resumeListening(): void {
+    this.cancelListeningResume()
     if (this.disposed) return
     if (this.reloadTargets.size) this.flushReload()
     if (this.reloading || this.reloadTargets.size) return
     if (this.listeningEnabled && this.sceneReady && (!this.activeTurn || (this.activeTurn.piDone && this.activeTurn.drained))) {
+      const delay = this.listeningResumeAt - performance.now()
+      if (delay > 0) {
+        this.listeningResumeTimer = setTimeout(() => this.resumeListening(), delay)
+        return
+      }
       const result = this.speech.start(String(this.config.asr_language || 'zh-CN'))
       if (!result.ok) this.listeningEnabled = false
     }
@@ -917,7 +936,10 @@ class AppRuntime {
     }
     this.emit(method, params)
     if (method === 'asr.status') {
-      if (params.status === 'error') this.listeningEnabled = false
+      if (params.status === 'error' || (params.status === 'idle' && params.reason === 'no-speech')) {
+        this.listeningEnabled = false
+        this.cancelListeningResume()
+      }
       if (params.status === 'listening') this.voice({ ...(this.activeTurn || this.idleKey()), type: 'activity', activity: 'listening' })
     }
   }

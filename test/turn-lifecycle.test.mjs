@@ -32,13 +32,14 @@ function runtime(env = {}, clock = { value: Date.now() }, emote = {}) {
   }
   let emitFish
   const Runtime = vm.runInNewContext(js + '\nAppRuntime', {
-    path, randomUUID, process: { env }, MODULE_DIR: '/fixture', projectRoot: () => '/fixture', Date: FakeDate,
+    path, randomUUID, process: { env }, MODULE_DIR: '/fixture', projectRoot: () => '/fixture', Date: FakeDate, performance: { now: () => clock.value },
     setTimeout(fn, ms) { const id = ++timerId; timers.set(id, { fn, at: clock.value + ms }); return id },
     clearTimeout: id => timers.delete(id),
     setInterval() { assert.fail('conversation idle must use a one-shot timer, not polling') },
     app: { getPath: () => '/fixture', exit: code => calls.push(['exit', code]) }, jsonFile: () => ({}), settingsPath: () => '/fixture/settings.yaml', readYaml: () => ({}), writeYaml() {}, safeStorage: { isEncryptionAvailable: () => false },
     mkdirSync() {}, writeFileSync() {}, existsSync: () => false,
     dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
+    timestampedSessionTitle: () => '新对话-2026-01-01-00-00',
     PresentationText, sameTurn, isTurnKey, URL,
     SessionStore: class { sessions = [{ id: 'one', title: 'One', messages: [] }, { id: 'two', title: 'Two', messages: [] }]; save() {} },
     SceneHost: class { url = 'http://127.0.0.1:1234/render/web/wallpaper_engine.html'; async start() {}; setEmoteAssets(...args) { calls.push(['emote-assets', ...args]) }; reload() { calls.push(['reload-scene']) }; close() {} },
@@ -101,8 +102,8 @@ test('resource import owns a copy, blocks overlapping operations, and keeps the 
   assert.equal(calls.find(([type]) => type === 'emote-assets')[1], '/fixture/emote')
 })
 
-test('ASR resumes only after both Pi completion and playback drain; stale acknowledgements cannot release a new turn', async () => {
-  const { app, calls, prompts } = runtime()
+test('ASR waits one second after playback drain; repeated or stale events cannot bypass the delay', async () => {
+  const { app, calls, prompts, advance } = runtime()
   await app.init()
   await app.request('scene.ready')
   await app.request('asr.start')
@@ -111,16 +112,80 @@ test('ASR resumes only after both Pi completion and playback drain; stale acknow
   prompts[0].callbacks.onText('Hello [EMO preset=smile]there')
   prompts[0].resolve('unused')
   await new Promise(resolve => setImmediate(resolve))
+  advance(5000)
   assert.equal(calls.filter(([type]) => type === 'listen').length, 1)
   await app.request('voice.playback', { ...first, type: 'ended' })
+  assert.equal(calls.filter(([type]) => type === 'listen').length, 1, 'audio completion must not reopen the microphone immediately')
+  advance(500)
+  await app.request('scene.ready')
+  await app.request('asr.start')
+  await app.request('voice.playback', { ...first, type: 'ended' })
+  advance(499)
+  assert.equal(calls.filter(([type]) => type === 'listen').length, 1)
+  advance(1)
   assert.equal(calls.filter(([type]) => type === 'listen').length, 2)
   await app.request('chat.send', { text: 'again', turn_id: 'second' })
   const before = calls.filter(([type]) => type === 'listen').length
   await app.request('voice.playback', { ...first, type: 'ended' })
+  advance(1000)
   assert.equal(calls.filter(([type]) => type === 'listen').length, before)
   assert.ok(calls.some(([type, value]) => type === 'chat.complete' && value.full_text === 'Hello there'))
   prompts[1].resolve('done')
   await new Promise(resolve => setImmediate(resolve))
+})
+
+test('ASR cooldown is measured from playback completion, even if Pi finishes later', async () => {
+  for (const modelDelay of [500, 1500]) {
+    const { app, calls, prompts, advance } = runtime()
+    await app.init()
+    await app.request('scene.ready')
+    await app.request('asr.start')
+    await app.request('chat.send', { text: 'hello' })
+    await app.request('voice.playback', { ...app.activeTurn, type: 'ended' })
+    advance(modelDelay)
+    assert.equal(calls.filter(([type]) => type === 'listen').length, 1, 'Pi still owns the turn')
+    prompts[0].resolve('done')
+    await new Promise(resolve => setImmediate(resolve))
+    if (modelDelay < 1000) {
+      advance(1000 - modelDelay - 1)
+      assert.equal(calls.filter(([type]) => type === 'listen').length, 1)
+      advance(1)
+    }
+    assert.equal(calls.filter(([type]) => type === 'listen').length, 2, 'do not add a second delay after Pi completion')
+    app.dispose()
+  }
+})
+
+test('pending microphone recovery is cancelled when the turn or listening context changes', async () => {
+  for (const action of ['new-turn', 'mic-off', 'session', 'new-session', 'scene-lost', 'closed', 'dispose', 'asr-error', 'no-speech']) {
+    const { app, calls, prompts, timers, advance } = runtime()
+    const window = new EventEmitter()
+    window.webContents = new EventEmitter()
+    app.attach(window)
+    await app.init()
+    await app.request('scene.ready')
+    await app.request('asr.start')
+    await app.request('chat.send', { text: 'hello' })
+    prompts[0].resolve('done')
+    await new Promise(resolve => setImmediate(resolve))
+    await app.request('voice.playback', { ...app.activeTurn, type: 'ended' })
+    const pending = app.listeningResumeTimer
+    assert.ok(timers.has(pending), action)
+    advance(500)
+    if (action === 'new-turn') await app.request('chat.send', { text: 'again' })
+    else if (action === 'mic-off') await app.request('asr.stop')
+    else if (action === 'session') await app.request('session.load', { session_id: 'two' })
+    else if (action === 'new-session') await app.request('session.create')
+    else if (action === 'scene-lost') await app.request('scene.lost')
+    else if (action === 'closed') window.emit('closed')
+    else if (action === 'asr-error') app.onSpeech('asr.status', { status: 'error', error: 'fixture' })
+    else if (action === 'no-speech') app.onSpeech('asr.status', { status: 'idle', reason: 'no-speech' })
+    else app.dispose()
+    assert.equal(timers.has(pending), false, action)
+    advance(2000)
+    assert.equal(calls.filter(([type]) => type === 'listen').length, 1, action)
+    app.dispose()
+  }
 })
 
 test('manual ASR finish stays in the draft while automatic finals start exactly one reply', async () => {
@@ -166,7 +231,7 @@ test('session switching cancels audio and suppresses all late text/tool/completi
 
 test('both settings endpoints apply recognition language live without interrupting an active turn', async () => {
   for (const method of ['system.set_config', 'desktop.settings.update']) {
-    const { app, calls, prompts } = runtime()
+    const { app, calls, prompts, advance } = runtime()
     await app.init()
     await app.request('scene.ready')
     await app.request('asr.start')
@@ -184,12 +249,13 @@ test('both settings endpoints apply recognition language live without interrupti
     prompts[0].resolve('done')
     await new Promise(resolve => setImmediate(resolve))
     await app.request('voice.playback', { ...app.activeTurn, type: 'ended' })
+    advance(1000)
     assert.equal(calls.filter(([type]) => type === 'listen').at(-1)[1], 'zh-CN')
   }
 })
 
 test('resource reload waits for Pi and playback, coalesces requests, and preserves listening across a new scene handshake', async () => {
-  const { app, calls, prompts } = runtime()
+  const { app, calls, prompts, advance } = runtime()
   app.attach({ on() {}, isDestroyed: () => false, webContents: { on() {} } })
   await app.init()
   await app.request('scene.ready', { token: 'old' })
@@ -212,6 +278,8 @@ test('resource reload waits for Pi and playback, coalesces requests, and preserv
   await app.request('scene.ready', { token: 'new' })
   await new Promise(resolve => setImmediate(resolve))
   assert.equal((await app.request('runtime.status')).status, 'ready')
+  assert.equal(calls.filter(([type]) => type === 'listen').length, 1, 'reload must not skip the post-playback pause')
+  advance(1000)
   assert.equal(calls.filter(([type]) => type === 'listen').length, 2)
   assert.equal(prompts.length, 1, 'Reload must never replay a prompt')
 })
