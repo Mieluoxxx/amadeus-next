@@ -813,7 +813,9 @@ export function useSceneSession({
       setAsrListening(false)
     }))
     unsubscribers.push(subscribe('asr.status', params => {
-      if (params.status === 'idle') setAsrListening(false)
+      if (params.status === 'listening') setAsrListening(true)
+      else if (['idle', 'processing', 'error'].includes(String(params.status))) setAsrListening(false)
+      if (params.status === 'error') setOperationError(`语音识别失败：${String(params.error || 'Apple Speech unavailable')}`)
     }))
     return () => {
       unsubscribers.forEach(unsubscribe => unsubscribe())
@@ -981,16 +983,19 @@ export function useSceneSession({
 
   const toggleMic = useCallback(async () => {
     if (!connected) return
+    setOperationError('')
     try {
       if (asrListening) {
-        await send('asr.stop', {})
+        const result = await send('asr.stop', {})
+        if (result.ok === false) throw new Error(String(result.error || 'Apple Speech could not stop'))
         setAsrListening(false)
       } else {
-        await send('asr.start', {})
-        setAsrListening(true)
+        const result = await send('asr.start', {})
+        if (result.ok === false) throw new Error(String(result.error || 'Apple Speech could not start'))
       }
-    } catch {
+    } catch (error) {
       setAsrListening(false)
+      setOperationError(`语音识别失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }, [connected, send, asrListening])
 

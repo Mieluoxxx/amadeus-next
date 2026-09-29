@@ -106,6 +106,11 @@ class SpeechBridge {
   private buffer = ''
   private recognitionId = 0
   private listening = false
+  private finishing = false
+  private manualResult = false
+  private transcript = ''
+  private timer: ReturnType<typeof setTimeout> | undefined
+  private readonly pauseMs = Math.min(10000, Math.max(500, Number(process.env.AMADEUS_SPEECH_PAUSE_MS) || 1500))
   private readonly emit: (method: string, params: Json) => void
 
   constructor(emit: (method: string, params: Json) => void) {
@@ -131,14 +136,16 @@ class SpeechBridge {
       child.stdout?.on('data', chunk => { if (this.process === child) this.read(chunk.toString('utf8')) })
       child.on('exit', () => {
         if (this.process !== child) return
+        const unexpected = this.listening
         this.process = null
-        this.listening = false
-        this.emit('asr.status', { status: 'idle' })
+        this.buffer = ''
+        this.clearRecognition()
+        this.emit('asr.status', unexpected ? { status: 'error', error: 'Apple Speech helper exited before recognition completed' } : { status: 'idle' })
       })
       child.on('error', () => {
         if (this.process !== child) return
         this.process = null
-        this.listening = false
+        this.clearRecognition()
         this.emit('asr.status', { status: 'error', error: 'Apple Speech helper could not start' })
       })
     }
@@ -148,19 +155,42 @@ class SpeechBridge {
   }
 
   stop(): { ok: boolean } {
-    this.listening = false
+    this.clearRecognition()
     this.recognitionId++
     this.write({ command: 'stop' })
+    return { ok: true }
+  }
+
+  finish(manual = false): { ok: boolean } {
+    if (!this.listening) return { ok: true }
+    this.manualResult ||= manual
+    if (this.finishing) return { ok: true }
+    this.finishing = true
+    clearTimeout(this.timer)
+    this.timer = setTimeout(() => {
+      this.stop()
+      this.emit('asr.status', { status: 'error', error: 'Apple Speech timed out waiting for the final transcript; please retry' })
+    }, 5000)
+    this.write({ command: 'finish' })
     return { ok: true }
   }
 
   dispose(): void {
     const previous = this.process
     this.process = null
-    this.listening = false
+    this.clearRecognition()
     this.buffer = ''
     this.recognitionId++
     previous?.kill()
+  }
+
+  private clearRecognition(): void {
+    clearTimeout(this.timer)
+    this.timer = undefined
+    this.listening = false
+    this.finishing = false
+    this.manualResult = false
+    this.transcript = ''
   }
 
   private write(value: Json): void {
@@ -177,9 +207,28 @@ class SpeechBridge {
         try {
           const message = JSON.parse(line) as Json
           if (message.recognition_id !== this.recognitionId) { newline = this.buffer.indexOf('\n'); continue }
-          if (message.type === 'error' || (message.type === 'status' && message.status === 'idle')) this.listening = false
-          if (message.type === 'recognized') this.emit('asr.recognized', message)
-          else if (message.type === 'status') this.emit('asr.status', message)
+          if (message.type === 'error' || (message.type === 'status' && message.status === 'idle')) this.clearRecognition()
+          if (message.type === 'status' && message.status === 'listening' && this.listening && !this.finishing && !this.transcript) {
+            clearTimeout(this.timer)
+            this.timer = setTimeout(() => {
+              this.stop()
+              this.emit('asr.status', { status: 'error', error: 'No transcription received within 30 seconds; check the microphone input and Apple Speech availability' })
+            }, 30000)
+          }
+          if (message.type === 'recognized' && this.listening) {
+            const text = String(message.text || '').trim()
+            if (message.is_final === true) {
+              if (this.manualResult) message.source = 'manual'
+              this.clearRecognition()
+            } else if (!this.finishing && text && text !== this.transcript) {
+              this.transcript = text
+              clearTimeout(this.timer)
+              // ponytail: stable text approximates an utterance boundary; use audio VAD if recognition latency causes early cuts.
+              this.timer = setTimeout(() => this.finish(), this.pauseMs)
+            }
+            if (text) this.emit('asr.recognized', message)
+            else if (message.is_final === true) this.emit('asr.status', { status: 'error', error: 'No speech was recognized; check the microphone input and try again' })
+          } else if (message.type === 'status') this.emit('asr.status', message)
           else if (message.type === 'error') this.emit('asr.status', { status: 'error', error: message.error })
         } catch {
           // A malformed helper line is ignored; the next valid event remains usable.
@@ -401,7 +450,7 @@ class AppRuntime {
       case 'asr.stop':
         this.listeningEnabled = false
         this.voice({ ...(this.activeTurn || this.idleKey()), type: 'activity', activity: 'idle' })
-        return this.speech.stop()
+        return this.speech.finish(true)
       case 'work.permission.resolve':
         return { ok: false, error: 'Native Pi permissions are handled by Pi' }
       default:

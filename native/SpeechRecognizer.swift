@@ -3,19 +3,15 @@ import Foundation
 import Speech
 
 final class SpeechService: NSObject {
-    private let recognizer: SFSpeechRecognizer?
+    private var recognizer: SFSpeechRecognizer?
     private let audioEngine = AVAudioEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var running = false
+    private var finishing = false
     private var generation = 0
     private var starting = false
     private var recognitionId = 0
-
-    override init() {
-        recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
-        super.init()
-    }
 
     private func emit(_ value: [String: Any]) {
         var payload = value
@@ -37,6 +33,7 @@ final class SpeechService: NSObject {
             emit(["type": "error", "error": "Apple Speech is unavailable"])
             return
         }
+        self.recognizer = recognizer
         starting = true
         SFSpeechRecognizer.requestAuthorization { [weak self] status in
             DispatchQueue.main.async {
@@ -59,8 +56,8 @@ final class SpeechService: NSObject {
         request.shouldReportPartialResults = true
         let input = audioEngine.inputNode
         input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { [weak self] buffer, _ in
-            self?.request?.append(buffer)
+        input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in
+            request.append(buffer)
         }
         audioEngine.prepare()
         do {
@@ -92,17 +89,32 @@ final class SpeechService: NSObject {
         }
     }
 
+    func finish() {
+        if starting { stop(); return }
+        guard running, !finishing else { return }
+        finishing = true
+        if audioEngine.isRunning {
+            audioEngine.stop()
+            audioEngine.inputNode.removeTap(onBus: 0)
+        }
+        request?.endAudio()
+        task?.finish()
+        emit(["type": "status", "status": "processing"])
+    }
+
     func stop() {
         generation += 1
         starting = false
-        guard running else { return }
         running = false
-        audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
-        request?.endAudio()
-        task?.finish()
+        finishing = false
+        if audioEngine.isRunning {
+            audioEngine.stop()
+            audioEngine.inputNode.removeTap(onBus: 0)
+        }
+        task?.cancel()
         task = nil
         request = nil
+        recognizer = nil
         emit(["type": "status", "status": "idle"])
     }
 }
@@ -120,6 +132,8 @@ DispatchQueue.global(qos: .userInitiated).async {
                 service.start(locale: (command["locale"] as? String) ?? "zh-CN", recognitionId: (command["recognition_id"] as? Int) ?? 0)
             case "stop":
                 service.stop()
+            case "finish":
+                service.finish()
             default:
                 break
             }

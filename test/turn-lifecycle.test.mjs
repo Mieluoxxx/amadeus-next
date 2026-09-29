@@ -123,6 +123,31 @@ test('ASR resumes only after both Pi completion and playback drain; stale acknow
   await new Promise(resolve => setImmediate(resolve))
 })
 
+test('manual ASR finish stays in the draft while automatic finals start exactly one reply', async () => {
+  for (const manual of [true, false]) {
+    const { app, calls, prompts } = runtime()
+    await app.init()
+    await app.request('asr.start')
+    app.onSpeech('asr.recognized', { text: '语音', is_final: false })
+    assert.equal(prompts.length, 0, 'partial speech must not start a reply')
+    if (manual) {
+      await app.request('asr.stop')
+      assert.ok(calls.some(([type, value]) => type === 'finish-listening' && value === true))
+    }
+    app.onSpeech('asr.recognized', { text: '语音测试', is_final: true, ...(manual ? { source: 'manual' } : {}) })
+    const final = calls.findLast(([method, value]) => method === 'asr.recognized' && value.is_final)[1]
+    assert.equal(final.source, manual ? 'manual' : 'wake')
+    assert.equal(prompts.length, manual ? 0 : 1)
+    if (!manual) {
+      app.onSpeech('asr.recognized', { text: '重复回调', is_final: true })
+      assert.equal(prompts.length, 1)
+      prompts[0].resolve('done')
+      await new Promise(resolve => setImmediate(resolve))
+    }
+    app.dispose()
+  }
+})
+
 test('session switching cancels audio and suppresses all late text/tool/completion events', async () => {
   const { app, calls, prompts } = runtime()
   await app.init()
@@ -235,7 +260,7 @@ test('speech helper replacement resets listening and ignores the retired helper 
   const block = source.slice(source.indexOf('class SpeechBridge {'), source.indexOf('class AppRuntime {'))
   const children = [], writes = [], events = []
   const Bridge = vm.runInNewContext(ts.transpileModule(block, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText + '\nSpeechBridge', {
-    path, MODULE_DIR: '/fixture', existsSync: () => true, process: { platform: 'darwin', env: {} },
+    path, setTimeout, clearTimeout, MODULE_DIR: '/fixture', existsSync: () => true, process: { platform: 'darwin', env: {} },
     spawn() {
       const child = new EventEmitter()
       child.stdout = new EventEmitter()
