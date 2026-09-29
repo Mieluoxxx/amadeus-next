@@ -82,7 +82,8 @@ final class SpeechService: NSObject {
                 if result.isFinal { self.stop(); return }
             }
             if let error {
-                self.emit(["type": "error", "error": error.localizedDescription])
+                let failure = error as NSError
+                self.emit(["type": "error", "error": failure.localizedDescription, "domain": failure.domain, "code": failure.code])
                 self.stop()
             }
           }

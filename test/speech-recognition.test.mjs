@@ -83,12 +83,31 @@ test('a listening refresh during finalization cannot cancel the pending transcri
   assert.equal(events.at(-1).is_final, true)
 })
 
-test('empty final results report an actionable error instead of silently disappearing', () => {
+test('empty final results end quietly without an error or a submitted message', () => {
   const { receive, events, timers } = bridge()
   receive({ type: 'recognized', text: '   ', is_final: true })
-  assert.equal(events.at(-1).status, 'error')
-  assert.match(events.at(-1).error, /No speech/i)
+  assert.equal(events.at(-1).status, 'idle')
+  assert.equal(events.at(-1).reason, 'no-speech')
+  assert.equal(events.some(event => event.error || event.method === 'asr.recognized'), false)
   assert.equal(timers.size, 0)
+})
+
+test('no-speech errors are quiet across locales while real recognition failures remain visible', () => {
+  for (const [failure, quiet] of [
+    [{ domain: 'kAFAssistantErrorDomain', code: 1110, error: 'No speech detected' }, true],
+    [{ domain: 'kAFAssistantErrorDomain', code: 1110, error: '未检测到语音' }, true],
+    [{ error: 'No speech detected' }, true],
+    [{ domain: 'kAFAssistantErrorDomain', code: 1700, error: 'Not authorized' }, false],
+    [{ domain: 'OtherDomain', code: 1110, error: 'Device failed' }, false],
+  ]) {
+    const { receive, events, timers } = bridge()
+    receive({ type: 'status', status: 'listening' })
+    receive({ type: 'error', ...failure })
+    assert.equal(events.at(-1).status, quiet ? 'idle' : 'error')
+    assert.equal(events.at(-1).error, quiet ? undefined : failure.error)
+    if (quiet) assert.equal(events.at(-1).reason, 'no-speech')
+    assert.equal(timers.size, 0)
+  }
 })
 
 test('finalization timeout and disposal cancel pending speech timers', () => {

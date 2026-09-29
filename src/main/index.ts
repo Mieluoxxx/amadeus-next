@@ -227,9 +227,13 @@ class SpeechBridge {
               this.timer = setTimeout(() => this.finish(), this.pauseMs)
             }
             if (text) this.emit('asr.recognized', message)
-            else if (message.is_final === true) this.emit('asr.status', { status: 'error', error: 'No speech was recognized; check the microphone input and try again' })
+            else if (message.is_final === true) this.emit('asr.status', { status: 'idle', reason: 'no-speech' })
           } else if (message.type === 'status') this.emit('asr.status', message)
-          else if (message.type === 'error') this.emit('asr.status', { status: 'error', error: message.error })
+          else if (message.type === 'error') {
+            const noSpeech = (message.domain === 'kAFAssistantErrorDomain' && message.code === 1110)
+              || (message.domain === undefined && message.code === undefined && message.error === 'No speech detected')
+            this.emit('asr.status', noSpeech ? { status: 'idle', reason: 'no-speech' } : { status: 'error', error: message.error })
+          }
         } catch {
           // A malformed helper line is ignored; the next valid event remains usable.
         }

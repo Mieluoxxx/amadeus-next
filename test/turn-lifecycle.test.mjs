@@ -213,6 +213,19 @@ test('manual ASR finish stays in the draft while automatic finals start exactly 
   }
 })
 
+test('a quiet no-speech result disables listening without reporting a failure or restarting the microphone', async () => {
+  const { app, calls } = runtime()
+  await app.init()
+  await app.request('asr.start')
+  app.onSpeech('asr.status', { status: 'idle', reason: 'no-speech' })
+  assert.equal(app.listeningEnabled, false)
+  const listens = calls.filter(([type]) => type === 'listen').length
+  await app.request('scene.ready')
+  assert.equal(calls.filter(([type]) => type === 'listen').length, listens)
+  assert.equal(calls.some(([type, value]) => type === 'asr.status' && value.status === 'error'), false)
+  app.dispose()
+})
+
 test('session switching cancels audio and suppresses all late text/tool/completion events', async () => {
   const { app, calls, prompts } = runtime()
   await app.init()
