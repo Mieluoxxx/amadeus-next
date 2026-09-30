@@ -11,15 +11,6 @@ interface Props {
   subscribe: (method: string, fn: (p: Record<string, unknown>) => void) => () => void
 }
 
-type SettingsSection = 'general' | 'models' | 'asr' | 'tts'
-
-const SECTION_BG: Record<SettingsSection, string> = {
-  general: 'bg-[#0071e3]',
-  models: 'bg-[#af52de]',
-  asr: 'bg-[#ff2d55]',
-  tts: 'bg-[#34c759]',
-}
-
 // Which settings card holds each remote recognizer. They differ in protocol — the
 // OpenAI-compatible slot posts multipart to /audio/transcriptions, while MiMo posts
 // input_audio to /chat/completions — so one shared card cannot describe both.
@@ -77,10 +68,6 @@ function asConfigurationGroups(value: unknown): ConfigurationGroup[] {
   return Array.isArray(value) ? value as ConfigurationGroup[] : []
 }
 
-function GroupTitle({ children }: { children: string }) {
-  return <h3 className="text-[14px] font-[700]" style={{ color: 'var(--text)', lineHeight: '20px', letterSpacing: '-0.012em' }}>{children}</h3>
-}
-
 function CardShell({ children, vertical = false }: { children: ReactNode; vertical?: boolean }) {
   return (
     <div
@@ -96,30 +83,68 @@ function CardShell({ children, vertical = false }: { children: ReactNode; vertic
 
 type ComboOption = string | { value: string; label: string }
 
+function ComboSelect({ value, onChange, options, disabled, fullWidth }: {
+  value: string; onChange: (v: string) => void; options: ComboOption[]; disabled?: boolean; fullWidth?: boolean
+}) {
+  const { locale } = useI18n()
+  return (
+    <select
+      value={value}
+      onChange={event => onChange(event.target.value)}
+      disabled={disabled}
+      className={cn('text-xs font-semibold bg-white/80 border border-black/[0.08] rounded-xl px-3 py-1.5 text-[#1d1d1f] outline-none hover:border-black/[0.15] focus:ring-2 focus:ring-[#0071e3]/40 disabled:opacity-40 cursor-pointer', fullWidth ? 'w-full min-w-0' : 'shrink-0')}
+      style={fullWidth ? { height: 34 } : { minWidth: 145, height: 34 }}
+    >
+      {options.map(option => {
+        const optionValue = typeof option === 'string' ? option : option.value
+        const label = typeof option === 'string' ? option : option.label
+        return <option key={optionValue} value={optionValue}>{translateDynamic(locale, 'settings.option', optionValue, label)}</option>
+      })}
+    </select>
+  )
+}
+
 function ComboCard({ icon, title, value, onChange, options, disabled }: {
   icon: FluentIconName; title: string; value: string
   onChange: (v: string) => void; options: ComboOption[]; disabled?: boolean
 }) {
-  const { locale } = useI18n()
   return (
     <CardShell>
       <CardIcon name={icon} />
       <div className="flex-1 min-w-0 pr-4">
         <div className="text-[13px] font-semibold text-[#1d1d1f] leading-snug">{title}</div>
       </div>
-      <select
-        value={value}
-        onChange={event => onChange(event.target.value)}
-        disabled={disabled}
-        className="text-xs font-semibold bg-white/80 border border-black/[0.08] rounded-xl px-3 py-1.5 text-[#1d1d1f] outline-none hover:border-black/[0.15] focus:ring-2 focus:ring-[#0071e3]/40 disabled:opacity-40 shrink-0 cursor-pointer"
-        style={{ minWidth: 145, height: 34 }}
-      >
-        {options.map(option => {
-          const optionValue = typeof option === 'string' ? option : option.value
-          const label = typeof option === 'string' ? option : option.label
-          return <option key={optionValue} value={optionValue}>{translateDynamic(locale, 'settings.option', optionValue, label)}</option>
-        })}
-      </select>
+      <ComboSelect value={value} onChange={onChange} options={options} disabled={disabled} />
+    </CardShell>
+  )
+}
+
+function ModelCard({ model, modelOptions, thinking, thinkingOptions, disabled, onModelChange, onThinkingChange }: {
+  model: string; modelOptions: ComboOption[]
+  thinking: string; thinkingOptions: string[]
+  disabled?: boolean
+  onModelChange: (v: string) => void; onThinkingChange: (v: string) => void
+}) {
+  const { t } = useI18n()
+  const row = (title: string, control: ReactNode, divided = false) => (
+    <div className={cn('flex flex-col gap-2', divided && 'border-t border-black/[0.06] pt-3')}>
+      <div className="flex items-center">
+        <CardIcon name="Robot" />
+        <div className="min-w-0 text-[13px] font-semibold text-[#1d1d1f] leading-snug">{title}</div>
+      </div>
+      {control}
+    </div>
+  )
+  return (
+    <CardShell vertical>
+      {row(t('settings.label.current_model'), modelOptions.length
+        ? <ComboSelect fullWidth value={model} onChange={onModelChange} options={modelOptions} disabled={disabled} />
+        : <span className="text-[12px] font-[550]" style={{ color: 'var(--text)' }}>{model || 'Pi'}</span>)}
+      {thinkingOptions.length > 1 ? row(
+        t('settings.thinking_level'),
+        <ComboSelect fullWidth value={thinking} onChange={onThinkingChange} options={thinkingOptions} disabled={disabled} />,
+        true,
+      ) : null}
     </CardShell>
   )
 }
@@ -132,21 +157,6 @@ function CardIcon({ name }: { name: FluentIconName }) {
       </div>
       <div style={{ width: 12, flexShrink: 0 }} />
     </>
-  )
-}
-
-function InfoCard({ icon, title, content, value }: {
-  icon: FluentIconName; title: string; content?: string; value: string
-}) {
-  return (
-    <CardShell>
-      <CardIcon name={icon} />
-      <div className="flex-1 min-w-0" style={{ paddingRight: 16 }}>
-        <div className="text-[13px] font-[600]" style={{ color: 'var(--text)', lineHeight: '19px' }}>{title}</div>
-        {content ? <div className="text-[11.5px] mt-0.5" style={{ color: 'var(--muted)', lineHeight: '17px' }}>{content}</div> : null}
-      </div>
-      <span className="shrink-0 text-[12px] font-[550] text-right" style={{ color: 'var(--text)', maxWidth: 300 }}>{value}</span>
-    </CardShell>
   )
 }
 
@@ -409,18 +419,16 @@ function ConfigurationCollection({ groups, desktop, onSave, empty }: {
   )
 }
 
-function SettingsGroup({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section>
-      <GroupTitle>{title}</GroupTitle>
-      <div className="flex flex-col" style={{ gap: 8, marginTop: 14 }}>{children}</div>
-    </section>
-  )
+function SettingsGroup({ children }: { children: ReactNode }) {
+  return <section className="flex flex-col" style={{ gap: 8 }}>{children}</section>
+}
+
+function SettingsSection({ id, children }: { id: 'general' | 'models' | 'asr' | 'tts'; children: ReactNode }) {
+  return <section data-section={id} className="flex flex-col settings-section-content">{children}</section>
 }
 
 export default function SettingsPage({ send, subscribe }: Props) {
   const { locale, setLocale, t, formatNumber } = useI18n()
-  const [section, setSection] = useState<SettingsSection>('general')
   const [config, setConfig] = useState<Record<string, unknown>>({})
   const [desktop, setDesktop] = useState<DesktopSettingsSnapshot | null>(null)
   const [saving, setSaving] = useState<string | null>(null)
@@ -459,7 +467,7 @@ export default function SettingsPage({ send, subscribe }: Props) {
   }, [send, subscribe])
 
   useEffect(() => {
-    if (section !== 'models' || reloading) return
+    if (reloading) return
     let cancelled = false
     void send('pi.models').then(result => {
       if (cancelled) return
@@ -470,7 +478,7 @@ export default function SettingsPage({ send, subscribe }: Props) {
       setThinkingLevels(result.thinkingLevels as string[])
     }).catch(reason => { if (!cancelled) setError({ key: 'settings.loading_error', fallback: String(reason) }) })
     return () => { cancelled = true }
-  }, [section, reloading, send])
+  }, [reloading, send])
 
   const changeModel = async (model: string, thinkingLevel?: string) => {
     setSaving('pi_model')
@@ -558,16 +566,6 @@ export default function SettingsPage({ send, subscribe }: Props) {
     ['tts_embedded_v3', 'tts_remote', 'tts_mimo', 'voice_reference_profile'].includes(group.id)
     && !group.active
   ))
-  const sectionDefinitions: Array<{
-    id: SettingsSection
-    label: string
-    icon: FluentIconName
-  }> = [
-    { id: 'general', label: t('settings.section.general'), icon: 'Setting' },
-    { id: 'models', label: t('settings.section.models'), icon: 'Robot' },
-    { id: 'asr', label: t('settings.section.asr'), icon: 'Microphone' },
-    { id: 'tts', label: t('settings.section.tts'), icon: 'Play' },
-  ]
 
   return (
     <div className="settings-scroll-area flex-1 overflow-y-auto" tabIndex={0}>
@@ -582,116 +580,76 @@ export default function SettingsPage({ send, subscribe }: Props) {
           </div>
         </div>
 
-        <div className="settings-layout flex gap-6 items-start" style={{ width: '100%' }}>
-          <nav className="settings-section-nav shrink-0 flex flex-col sticky" aria-label={t('settings.aria_sections')}>
-            {sectionDefinitions.map(item => {
-              const active = section === item.id
-              const colorBg = SECTION_BG[item.id]
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setSection(item.id)}
-                  aria-current={active ? 'page' : undefined}
-                  className={cn(
-                    'flex items-center gap-3 w-full p-2.5 rounded-xl text-left transition-all duration-150',
-                    active
-                      ? 'bg-white shadow-[0_2px_8px_rgba(0,0,0,0.06),0_1px_1px_rgba(0,0,0,0.04)] border border-black/[0.04]'
-                      : 'hover:bg-black/[0.03] text-[#48484a]'
-                  )}
-                >
-                  <span className={cn('w-7 h-7 rounded-lg flex items-center justify-center text-white shrink-0 shadow-xs', colorBg)}>
-                    <FluentIcon name={item.icon} size={15} color="#ffffff" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className={cn('block text-xs font-bold leading-tight', active ? 'text-[#1d1d1f]' : 'text-[#48484a]')}>
-                      {item.label}
-                    </span>
-                  </span>
-                </button>
-              )
-            })}
-          </nav>
+        <main className="settings-main">
+          <div className="flex flex-col settings-page-sections">
+            <SettingsSection id="general">
+              <SettingsGroup>
+                {/* The panel remounts whenever it is reopened, so `config` is empty until the fetch lands. The interface language the renderer is already using is the only true value available then; an English literal would misreport the active choice. */}
+                <ComboCard icon="Language" title={t('settings.label.interface_language')} value={val('presentation_locale', locale)} onChange={value => void handleChange('presentation_locale', value)} options={[{ value: 'en-US', label: t('settings.option.english') }, { value: 'zh-CN', label: t('settings.option.chinese') }, { value: 'ja-JP', label: t('settings.option.japanese') }]} />
+              </SettingsGroup>
 
-          <main className="settings-main flex-1 min-w-0">
-            {section === 'general' ? (
-              <div className="flex flex-col settings-section-content">
-                <SettingsGroup title={t('settings.group.chat_voice')}>
-                  {/* The panel remounts whenever it is reopened, so `config` is empty until the fetch lands. The interface language the renderer is already using is the only true value available then; an English literal would misreport the active choice. */}
-                  <ComboCard icon="Language" title={t('settings.label.interface_language')} value={val('presentation_locale', locale)} onChange={value => void handleChange('presentation_locale', value)} options={[{ value: 'en-US', label: t('settings.option.english') }, { value: 'zh-CN', label: t('settings.option.chinese') }, { value: 'ja-JP', label: t('settings.option.japanese') }]} />
+              {generalGroups.length ? (
+                <SettingsGroup>
+                  <ConfigurationCollection groups={generalGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
                 </SettingsGroup>
+              ) : null}
+            </SettingsSection>
+            <SettingsSection id="models">
+              <SettingsGroup>
+                <ModelCard
+                model={piModel}
+                modelOptions={piModels}
+                thinking={thinkingLevel}
+                thinkingOptions={thinkingLevels}
+                disabled={Boolean(saving) || reloading}
+                onModelChange={value => void changeModel(value)}
+                onThinkingChange={value => void changeModel(piModel, value)}
+              />
+              </SettingsGroup>
+            </SettingsSection>
+            <SettingsSection id="asr">
+              {/* 1. Which configuration is in force, remote or embedded. */}
+              <SettingsGroup>
+                <ComboCard icon="Microphone" title={t('settings.label.asr_mode')} value={asrBackendId} onChange={value => void handleChange('asr_backend', value)} options={asrBackendOptions} />
+              </SettingsGroup>
 
-                {generalGroups.length ? (
-                  <SettingsGroup title={t('settings.group.network')}>
-                    <ConfigurationCollection groups={generalGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-                  </SettingsGroup>
-                ) : null}
+              {/* 2. Everything that belongs to the selected recognizer, including the
+                     language and vocabulary it consumes. */}
+              <SettingsGroup>
+                <ConfigurationCollection groups={activeAsrGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
+              </SettingsGroup>
 
-              </div>
-            ) : null}
-
-            {section === 'models' ? (
-              <div className="flex flex-col settings-section-content">
-                <SettingsGroup title={t('settings.group.main_model')}>
-                  {piModels.length ? <ComboCard icon="Robot" title={t('settings.label.current_model')} value={piModel} options={piModels} disabled={Boolean(saving) || reloading} onChange={value => void changeModel(value)} />
-                    : <InfoCard icon="Robot" title={t('settings.label.current_model')} value={piModel || 'Pi'} />}
-                  {thinkingLevels.length > 1 ? <ComboCard icon="Robot" title={t('settings.thinking_level')} value={thinkingLevel} options={thinkingLevels} disabled={Boolean(saving) || reloading} onChange={value => void changeModel(piModel, value)} /> : null}
+              {captureGroups.length ? (
+                <SettingsGroup>
+                  <ConfigurationCollection groups={captureGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
                 </SettingsGroup>
+              ) : null}
 
-              </div>
-            ) : null}
-
-            {section === 'asr' ? (
-              <div className="flex flex-col settings-section-content">
-
-                {/* 1. Which configuration is in force, remote or embedded. */}
-                <SettingsGroup title={t('settings.group.asr_current')}>
-                  <ComboCard icon="Microphone" title={t('settings.label.asr_mode')} value={asrBackendId} onChange={value => void handleChange('asr_backend', value)} options={asrBackendOptions} />
+              {wakeGroups.length ? (
+                <SettingsGroup>
+                  <ConfigurationCollection groups={wakeGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
                 </SettingsGroup>
+              ) : null}
+            </SettingsSection>
+            <SettingsSection id="tts">
+              <SettingsGroup>
+                <ConfigurationCollection groups={activeOutputGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_active_connection')} />
+              </SettingsGroup>
 
-                {/* 2. Everything that belongs to the selected recognizer, including the
-                       language and vocabulary it consumes. */}
-                <SettingsGroup title={t('settings.group.asr_configuration')}>
-                  <ConfigurationCollection groups={activeAsrGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-                </SettingsGroup>
+              {otherOutputGroups.length ? (
+                <details className="settings-secondary-disclosure">
+                  <summary>{t('settings.other_voice_backends')}</summary>
+                  <div className="flex flex-col gap-2 mt-3">
+                    <ConfigurationCollection groups={otherOutputGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
+                  </div>
+                </details>
+              ) : null}
+            </SettingsSection>
+          </div>
 
-                {captureGroups.length ? (
-                  <SettingsGroup title={t('settings.group.asr_capture')}>
-                    <ConfigurationCollection groups={captureGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-                  </SettingsGroup>
-                ) : null}
-
-                {wakeGroups.length ? (
-                  <SettingsGroup title={t('settings.group.asr_remaining')}>
-                    <ConfigurationCollection groups={wakeGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-                  </SettingsGroup>
-                ) : null}
-              </div>
-            ) : null}
-
-            {section === 'tts' ? (
-              <div className="flex flex-col settings-section-content">
-
-
-                <SettingsGroup title={t('settings.group.voice_output')}>
-                  <ConfigurationCollection groups={activeOutputGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_active_connection')} />
-                </SettingsGroup>
-
-                {otherOutputGroups.length ? (
-                  <details className="settings-secondary-disclosure">
-                    <summary>{t('settings.other_voice_backends')}</summary>
-                    <div className="flex flex-col gap-2 mt-3">
-                      <ConfigurationCollection groups={otherOutputGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-                    </div>
-                  </details>
-                ) : null}
-              </div>
-            ) : null}
-
-
-            {saving ? <div className="settings-feedback text-[11px] animate-pulse" style={{ color: 'var(--accent)' }}>{t('settings.saving', undefined, { key: saving })}</div> : null}
-            {error ? <div className="settings-feedback text-[11px] rounded-md p-3" style={{ color: '#b42318', background: '#FEF3F2' }}>{error.fallback ?? t(error.key, undefined, error.values)}</div> : null}
-          </main>
-        </div>
+          {saving ? <div className="settings-feedback text-[11px] animate-pulse" style={{ color: 'var(--accent)' }}>{t('settings.saving', undefined, { key: saving })}</div> : null}
+          {error ? <div className="settings-feedback text-[11px] rounded-md p-3" style={{ color: '#b42318', background: '#FEF3F2' }}>{error.fallback ?? t(error.key, undefined, error.values)}</div> : null}
+        </main>
       </div>
     </div>
   )

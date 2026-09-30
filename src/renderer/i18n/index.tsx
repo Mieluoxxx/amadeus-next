@@ -39,10 +39,6 @@ const EN = {
   'settings.update_error': 'Could not update {key}',
   'settings.saving': 'Saving {key}…',
   'settings.saving_label': 'Saving…',
-  'settings.section.general': 'Overview',
-  'settings.section.models': 'Models',
-  'settings.section.asr': 'Speech recognition',
-  'settings.section.tts': 'Speech synthesis',
 
 
 
@@ -53,19 +49,22 @@ const EN = {
 
 
 
-  'settings.aria_sections': 'Settings sections',
+
+
+
+
   'settings.security.available': 'Secrets protected by the operating system',
   'settings.security.unavailable': 'System secret encryption unavailable',
   'settings.restart_pending': 'Saved changes need a backend restart',
   'settings.restart_pending_detail': 'Applied automatically. Use the button if this backend cannot be restarted from here.',
 
-  'settings.group.chat_voice': 'Chat & Voice',
-  'settings.group.main_model': 'Main chat model',
 
-  'settings.group.asr_current': 'Current configuration',
-  'settings.group.asr_configuration': 'Recognition settings',
-  'settings.group.asr_capture': 'Microphone & endpointing',
-  'settings.group.asr_remaining': 'Other settings',
+
+
+
+
+
+
   'settings.label.asr_mode': 'Recognition backend',
   // Backend labels live under their own prefix: `settings.option.*` is shared with
   // the TTS backend select, and both registries use the ids openai_compatible and
@@ -74,7 +73,7 @@ const EN = {
   'settings.asrBackend.sense_voice': 'SenseVoice (local)',
   'settings.asrBackend.openai_compatible': 'OpenAI-compatible transcription (remote)',
   'settings.asrBackend.mimo': 'MiMo ASR model (Xiaomi, remote)',
-  'settings.group.voice_output': 'Speaking & synthesis',
+
 
 
 
@@ -94,7 +93,7 @@ const EN = {
 
   'settings.other_voice_backends': 'Other synthesis backends',
   'settings.advanced': 'Advanced (live calibration)',
-  'settings.group.network': 'Network',
+
 
 
 
@@ -252,18 +251,17 @@ const ZH: Messages = {
   'locale.en-US': 'English', 'locale.zh-CN': '简体中文', 'locale.ja-JP': '日本語',
   'settings.title': '设置', 'settings.restart': '重启后端以应用设置', 'settings.restarting': '正在重启…',
   'settings.loading_error': '无法加载设置', 'settings.save_error': '无法保存 {key}', 'settings.update_error': '无法更新 {key}', 'settings.saving': '正在保存 {key}…',
-  'settings.saving_label': '正在保存…', 'settings.section.general': '总览', 'settings.section.models': '模型', 'settings.section.asr': '语音识别', 'settings.section.tts': '语音合成',
+  'settings.saving_label': '正在保存…',
 
   'settings.security.available': '密钥受操作系统保护', 'settings.security.unavailable': '系统密钥加密不可用', 'settings.restart_pending': '已保存的更改需要重启后端才能生效', 'settings.restart_pending_detail': '本应用会自动重启；若该后端无法从这里自动重启，请点击右侧按钮。',
-  'settings.aria_sections': '设置分区',
-  'settings.group.chat_voice': '界面与字幕', 'settings.group.main_model': '主聊天模型', 'settings.group.voice_output': '说话与合成',
-  'settings.group.asr_current': '当前配置', 'settings.group.asr_configuration': '识别设置', 'settings.group.asr_capture': '麦克风与端点', 'settings.group.asr_remaining': '其余设置', 'settings.label.asr_mode': '识别后端', 'settings.asrBackend.qwen3_asr': 'Qwen3-ASR（本地）', 'settings.asrBackend.sense_voice': 'SenseVoice（本地）', 'settings.asrBackend.openai_compatible': 'OpenAI 兼容转写（远程）', 'settings.asrBackend.mimo': '小米 ASR 模型（远程）',
+
+'settings.label.asr_mode': '识别后端', 'settings.asrBackend.qwen3_asr': 'Qwen3-ASR（本地）', 'settings.asrBackend.sense_voice': 'SenseVoice（本地）', 'settings.asrBackend.openai_compatible': 'OpenAI 兼容转写（远程）', 'settings.asrBackend.mimo': '小米 ASR 模型（远程）',
 
 
 
 
 
-  'settings.note.no_user_settings': '没有用户管理的连接设置。', 'settings.note.no_active_connection': '当前没有选中的活动连接。', 'settings.other_voice_backends': '其他语音合成后端', 'settings.advanced': '高级（实时校准）', 'settings.group.network': '网络',
+  'settings.note.no_user_settings': '没有用户管理的连接设置。', 'settings.note.no_active_connection': '当前没有选中的活动连接。', 'settings.other_voice_backends': '其他语音合成后端', 'settings.advanced': '高级（实时校准）',
 
   'settings.placeholder.secret_replace': '已配置——输入以替换', 'settings.placeholder.secret_empty': '未配置', 'settings.action.save': '保存', 'settings.action.clear': '清除', 'settings.action.on': '开', 'settings.action.off': '关',
   'settings.restart_error': '后端重启失败', 'settings.restart_unowned': '该后端不是由本应用启动的，无法从这里自动重启；请在启动它的地方重启。', 'settings.provider_needs_key': '{provider} 尚未配置 API Key，请在下方填写后即可生效。',
@@ -309,13 +307,13 @@ const JA: Messages = {
   'locale.en-US': 'English', 'locale.zh-CN': '简体中文', 'locale.ja-JP': '日本語',
   'settings.title': '設定', 'settings.restart': '適用するにはバックエンドを再起動', 'settings.restarting': '再起動中…',
   'settings.loading_error': '設定を読み込めません', 'settings.save_error': '{key} を保存できません', 'settings.update_error': '{key} を更新できません', 'settings.saving': '{key} を保存中…',
-  'settings.section.general': '概要', 'settings.section.models': 'モデル', 'settings.section.asr': '音声認識', 'settings.section.tts': '音声合成', 'settings.aria_sections': '設定セクション',
+
 
   'settings.security.available': '秘密情報は OS により保護されています', 'settings.security.unavailable': 'OS の秘密情報暗号化を利用できません', 'settings.restart_pending': '保存済みの変更はバックエンドの再起動で反映されます', 'settings.restart_pending_detail': '自動で再起動します。ここから再起動できない場合は右のボタンを使用してください。',
-  'settings.group.chat_voice': '表示と言語', 'settings.group.main_model': 'メインチャットモデル', 'settings.group.voice_output': '合成と出力',
-  'settings.group.asr_current': '現在の設定', 'settings.group.asr_configuration': '認識設定', 'settings.group.asr_capture': 'マイクと端点検出', 'settings.group.asr_remaining': 'その他の設定', 'settings.label.asr_mode': '認識バックエンド', 'settings.asrBackend.qwen3_asr': 'Qwen3-ASR（ローカル）', 'settings.asrBackend.sense_voice': 'SenseVoice（ローカル）', 'settings.asrBackend.openai_compatible': 'OpenAI 互換文字起こし（リモート）', 'settings.asrBackend.mimo': 'MiMo ASR モデル（Xiaomi・リモート）',
 
-  'settings.note.no_user_settings': 'ユーザー管理の接続設定はありません。', 'settings.note.no_active_connection': '選択中のアクティブな接続はありません。', 'settings.other_voice_backends': 'その他の音声合成バックエンド', 'settings.advanced': '詳細設定（リアルタイム調整）', 'settings.group.network': 'ネットワーク',
+'settings.label.asr_mode': '認識バックエンド', 'settings.asrBackend.qwen3_asr': 'Qwen3-ASR（ローカル）', 'settings.asrBackend.sense_voice': 'SenseVoice（ローカル）', 'settings.asrBackend.openai_compatible': 'OpenAI 互換文字起こし（リモート）', 'settings.asrBackend.mimo': 'MiMo ASR モデル（Xiaomi・リモート）',
+
+  'settings.note.no_user_settings': 'ユーザー管理の接続設定はありません。', 'settings.note.no_active_connection': '選択中のアクティブな接続はありません。', 'settings.other_voice_backends': 'その他の音声合成バックエンド', 'settings.advanced': '詳細設定（リアルタイム調整）',
   'settings.saving_label': '保存中…', 'settings.placeholder.secret_replace': '設定済み — 入力して置換', 'settings.placeholder.secret_empty': '未設定', 'settings.action.save': '保存', 'settings.action.clear': 'クリア', 'settings.action.on': 'オン', 'settings.action.off': 'オフ',
   'settings.restart_error': 'バックエンドの再起動に失敗しました', 'settings.restart_unowned': 'このバックエンドは本アプリが起動したものではないため、ここから再起動できません。起動した場所で再起動してください。', 'settings.provider_needs_key': '{provider} の API キーが未設定です。下で入力すると反映されます。',
   'settings.label.interface_language': 'インターフェース言語', 'settings.label.chat_translation': 'チャット翻訳字幕', 'settings.label.current_model': '現在のモデルプロファイル',
