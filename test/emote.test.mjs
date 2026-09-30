@@ -4,7 +4,7 @@ import { cp, lstat, mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'nod
 import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { EmoteCharacter, EMOTE_EXPRESSIONS, partVariablesFromTable, snapWrites, updateEmoteControls } from '../src/scene/emote.ts'
+import { EmoteCharacter, EMOTE_EXPRESSIONS, partVariablesFromTable, snapWrites, updateEmoteControls, THINKING_SCAN, THINKING_HANDOFF_WAIT_MS, SPOKEN_THINKING_MS, thinkingScanAt } from '../src/scene/emote.ts'
 import { ensureBakedModel, importEmoteAssets, verifyEmoteRuntime } from '../src/main/emoteBake.ts'
 import { SceneHost } from '../src/main/sceneHost.ts'
 
@@ -94,7 +94,7 @@ test('查表数据在 scene 侧得到与适配器一致的部件显隐', () => {
 test('表情切换在过渡中点补写被摘掉的离散轨道', async () => {
   const snaps = { [EMOTE_EXPRESSIONS.shy]: [['face_mouth', 2], ['face_cheek', 1]] }
   const written = new Map()
-  const player = { mainTimelineLabel: EMOTE_EXPRESSIONS.neutral, mainTimelineLabels: Object.values(EMOTE_EXPRESSIONS), setVariable: (label, value) => written.set(label, value) }
+  const player = { mainTimelineLabel: EMOTE_EXPRESSIONS.neutral, mainTimelineLabels: Object.values(EMOTE_EXPRESSIONS), getVariable: label => written.get(label) ?? 0, setVariable: (label, value) => written.set(label, value), setVariableDiff() {} }
   const character = new EmoteCharacter(player, snaps, 0)
   assert.deepEqual(snapWrites(snaps, EMOTE_EXPRESSIONS.shy), [['face_mouth', 2], ['face_cheek', 1]])
   character.dispatch({ type: 'cue', emotion: 'shy' })
@@ -106,7 +106,7 @@ test('表情切换在过渡中点补写被摘掉的离散轨道', async () => {
 
 test('native expressions, real mouth energy, buffering, drain and reset need no frame graph', () => {
   const values = new Map()
-  const player = { mainTimelineLabel: '', mainTimelineLabels: Object.values(EMOTE_EXPRESSIONS), setVariable: (name, value) => values.set(name, value) }
+  const player = { mainTimelineLabel: '', mainTimelineLabels: Object.values(EMOTE_EXPRESSIONS), getVariable: name => values.get(name) ?? 0, setVariable: (name, value) => values.set(name, value), setVariableDiff() {} }
   const character = new EmoteCharacter(player)
   const send = event => character.dispatch(event)
   assert.equal(player.mainTimelineLabel, EMOTE_EXPRESSIONS.neutral)
@@ -139,6 +139,143 @@ test('native expressions, real mouth energy, buffering, drain and reset need no 
   player.mainTimelineLabels = [EMOTE_EXPRESSIONS.neutral]
   send({ type: 'cue', emotion: 'angry', random: 0 })
   assert.equal(player.mainTimelineLabel, EMOTE_EXPRESSIONS.neutral)
+})
+
+test('thinking expression stays through speech wait but yields to playback or a spoken cue', () => {
+  const player = { mainTimelineLabel: '', mainTimelineLabels: Object.values(EMOTE_EXPRESSIONS), getVariable() { return 0 }, setVariable() {}, setVariableDiff() {} }
+  const character = new EmoteCharacter(player)
+  const wait = () => {
+    character.dispatch({ type: 'reset' })
+    character.dispatch({ type: 'playback', status: 'waiting', now: 0 })
+    character.dispatch({ type: 'activity', activity: 'thinking', random: 0 })
+    character.dispatch({ type: 'activity', activity: 'idle', random: 0 })
+    assert.equal(player.mainTimelineLabel, EMOTE_EXPRESSIONS.thinking)
+  }
+  wait()
+  character.dispatch({ type: 'playback', status: 'playing', now: 1 })
+  assert.equal(player.mainTimelineLabel, EMOTE_EXPRESSIONS.neutral)
+  wait()
+  character.dispatch({ type: 'cue', emotion: 'smile', random: 0 })
+  character.dispatch({ type: 'playback', status: 'playing', now: 1 })
+  assert.equal(player.mainTimelineLabel, EMOTE_EXPRESSIONS.smile)
+  wait()
+  character.dispatch({ type: 'playback', status: 'ended', now: 1 })
+  assert.equal(player.mainTimelineLabel, EMOTE_EXPRESSIONS.neutral)
+})
+
+test('思考浏览的头部线性往返、眼球独立，阶段边界连续', () => {
+  const { head, eye, holdMs, transitionMs } = THINKING_SCAN
+  const span = holdMs + transitionMs
+  assert.deepEqual(thinkingScanAt(0), { head, eye: -eye })
+  for (const [ms, expected] of [[2000, head], [2500, head / 2], [3000, 0], [4000, -head], [6000, -head], [7000, 0], [8000, head]]) {
+    assert.ok(Math.abs(thinkingScanAt(ms).head - expected) < 1e-9, `head at ${ms}ms`)
+  }
+  for (const boundary of [holdMs, span, span + holdMs, span * 2]) {
+    const before = thinkingScanAt(boundary - 0.001), after = thinkingScanAt(boundary)
+    assert.ok(Math.abs(before.head - after.head) < 0.001 && Math.abs(before.eye - after.eye) < 0.001)
+  }
+})
+
+function scanHarness() {
+  const base = new Map([['head_UD', 66.6666641], ['face_eye_LR', -100]])
+  const diffs = new Map(), enterDiffs = new Map(), writes = []
+  const player = {
+    mainTimelineLabel: '', mainTimelineLabels: Object.values(EMOTE_EXPRESSIONS),
+    getVariable: name => base.get(name) ?? 0,
+    setVariable() {},
+    setVariableDiff(module, name, value, ms) {
+      if (module === 'thinking-scan') { diffs.set(name, value); writes.push({ module, name, value, ms }) } else enterDiffs.set(name, value)
+    },
+  }
+  const character = new EmoteCharacter(player, {}, 0)
+  const send = event => character.dispatch({ random: 0, now: 0, ...event })
+  const tick = now => send({ type: 'tick', now })
+  return { character, diffs, enterDiffs, writes, send, tick, base }
+}
+
+test('思考浏览只在困る00 且模型思考时运行，离开或 reset 后清除差分', () => {
+  const { character, diffs, writes, send, tick, base } = scanHarness()
+  send({ type: 'cue', emotion: 'thinking' }); tick(10_000); tick(20_000)
+  assert.equal(writes.length, 0, '活动为 idle 时不扫描')
+  send({ type: 'activity', activity: 'thinking' })
+  tick(0); tick(THINKING_SCAN.enterMs - 1)
+  assert.equal(writes.length, 0, '入场过渡期间不覆盖姿态')
+  tick(THINKING_SCAN.enterMs)
+  assert.ok(Math.abs(base.get('head_UD') + diffs.get('head_UD') - THINKING_SCAN.head) < 1e-6)
+  assert.deepEqual([...new Set(writes.map(w => w.name))].sort(), ['face_eye_LR', 'head_UD'])
+  send({ type: 'cue', emotion: 'smile' })
+  assert.equal(diffs.get('head_UD'), 0); assert.equal(diffs.get('face_eye_LR'), 0)
+  const stopped = writes.length
+  tick(30_000)
+  assert.equal(writes.length, stopped, '离开困る00 后不再写入')
+  send({ type: 'cue', emotion: 'thinking' }); tick(40_000); tick(50_000)
+  send({ type: 'reset' })
+  assert.equal(diffs.get('head_UD'), 0); assert.equal(diffs.get('face_eye_LR'), 0)
+  assert.equal(character.state.activity, 'idle')
+})
+
+test('进入困る00 时头眼眉从旧姿态线性过渡到思考底值', () => {
+  const { enterDiffs, send, tick, base } = scanHarness()
+  base.set('head_UD', 0); base.set('face_eye_LR', 0)
+  send({ type: 'cue', emotion: 'thinking' })
+  base.set('head_UD', 60); base.set('face_eye_LR', -100)
+  tick(0)
+  assert.equal(base.get('head_UD') + enterDiffs.get('head_UD'), 0, '起点仍是旧姿态')
+  tick(THINKING_SCAN.enterMs / 2)
+  assert.ok(Math.abs(base.get('head_UD') + enterDiffs.get('head_UD') - 30) < 1e-6, '中点是新旧姿态的一半')
+  tick(THINKING_SCAN.enterMs)
+  assert.equal(enterDiffs.get('head_UD'), 0); assert.equal(enterDiffs.get('face_eye_LR'), 0)
+})
+
+test('退出思考后等待语音时冻结姿态，正式表情到来或取消时再释放', () => {
+  const wait = () => {
+    const h = scanHarness()
+    h.send({ type: 'playback', status: 'waiting' })
+    h.send({ type: 'activity', activity: 'thinking' })
+    h.tick(0); h.tick(20_000)
+    h.send({ type: 'activity', activity: 'idle' })
+    const frozen = [...h.diffs], count = h.writes.length
+    h.tick(21_000); h.tick(22_000)
+    assert.deepEqual([...h.diffs], frozen, '等待时不继续扫视也不回落')
+    assert.equal(h.writes.length, count)
+    assert.equal(h.character.state.label, EMOTE_EXPRESSIONS.thinking)
+    return h
+  }
+  const released = h => { assert.equal(h.diffs.get('head_UD'), 0); assert.equal(h.diffs.get('face_eye_LR'), 0) }
+  for (const emotion of ['smile', 'thinking']) {
+    const h = wait()
+    h.send({ type: 'cue', emotion })
+    assert.equal(h.character.state.label, EMOTE_EXPRESSIONS[emotion])
+    if (emotion === 'smile') released(h)
+  }
+  for (const status of ['playing', 'buffering']) {
+    const h = wait()
+    h.send({ type: 'playback', status })
+    assert.equal(h.character.state.label, EMOTE_EXPRESSIONS.neutral)
+    released(h)
+  }
+  for (const event of [{ type: 'reset' }, { type: 'activity', activity: 'tool' }, { type: 'playback', status: 'ended' }]) {
+    const h = wait(); h.send(event); released(h)
+  }
+  const h = wait()
+  h.tick(22_000 + THINKING_HANDOFF_WAIT_MS)
+  assert.equal(h.character.state.label, EMOTE_EXPRESSIONS.neutral, '等待超时回到普通表情')
+  released(h)
+})
+
+test('说话时的 thinking 表情只保持一小段，之后回到普通表情', () => {
+  const { character, send, tick } = scanHarness()
+  send({ type: 'playback', status: 'playing' })
+  send({ type: 'cue', emotion: 'thinking' })
+  tick(0); tick(SPOKEN_THINKING_MS - 1)
+  assert.equal(character.state.label, EMOTE_EXPRESSIONS.thinking)
+  tick(SPOKEN_THINKING_MS)
+  assert.equal(character.state.label, EMOTE_EXPRESSIONS.neutral)
+  send({ type: 'cue', emotion: 'thinking' })
+  tick(SPOKEN_THINKING_MS + 1); tick(SPOKEN_THINKING_MS * 2)
+  assert.equal(character.state.label, EMOTE_EXPRESSIONS.thinking, '新的 cue 重新计时')
+  send({ type: 'cue', emotion: 'smile' }); tick(SPOKEN_THINKING_MS * 4)
+  assert.equal(character.state.label, EMOTE_EXPRESSIONS.smile, '其他表情不受影响')
 })
 
 test('scene serves local E-mote modules, preserves background assets, and rejects escaped assets', async () => {
