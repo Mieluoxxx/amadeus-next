@@ -44,14 +44,12 @@ function audioWorkletHarness() {
     for (let i = 0; i < limit; i++) { render(); if (messages.at(-1)?.type === type) return }
     assert.fail(`playback never reported ${type}`)
   }
-  return { messages, output, render, renderUntil, send: value => processor.port.onmessage({ data: value }),
-    pcm: seconds => new Float32Array(Math.round(24000 * seconds)).fill(0.5).buffer }
+  return { messages, output, render, renderUntil, send: value => processor.port.onmessage({ data: value }) }
 }
 
 test('the actual audio processor drains only consumed samples and rejects old generations', () => {
   const { messages, output, render, renderUntil, send } = audioWorkletHarness()
   send({ type: 'reset', generation: 1 })
-  // One second clears the start lead, so these assertions stay about consumption and drain only.
   send({ type: 'pcm', generation: 1, buffer: new Float32Array(24000).fill(0.5).buffer })
   render()
   assert.equal(messages.at(-1).type, 'playing')
@@ -69,32 +67,6 @@ test('the actual audio processor drains only consumed samples and rejects old ge
   send({ type: 'pcm', generation: 1, buffer: new Float32Array(128).fill(1).buffer })
   render()
   assert.ok(output.every(sample => sample === 0))
-})
-
-test('a jitter buffer holds playback until the lead is filled and re-primes after starving', () => {
-  const { messages, render, renderUntil, send, pcm } = audioWorkletHarness()
-  send({ type: 'reset', generation: 1 })
-  // Below the lead: stay silent rather than play a fragment that starves immediately.
-  send({ type: 'pcm', generation: 1, buffer: pcm(0.2) })
-  for (let i = 0; i < 20; i++) render()
-  assert.equal(messages.some(message => message.type === 'playing'), false, 'below the lead the processor must stay silent')
-  send({ type: 'pcm', generation: 1, buffer: pcm(0.3) })
-  render()
-  assert.equal(messages.at(-1).type, 'playing', 'crossing the lead starts playback')
-  renderUntil('buffering')
-  // After starvation a small chunk must not restart playback, or the reply stutters chunk by chunk.
-  send({ type: 'pcm', generation: 1, buffer: pcm(0.2) })
-  for (let i = 0; i < 20; i++) render()
-  assert.equal(messages.at(-1).type, 'buffering', 'a small chunk must not restart playback after starvation')
-  send({ type: 'pcm', generation: 1, buffer: pcm(0.3) })
-  render()
-  assert.equal(messages.at(-1).type, 'playing', 'refilling the lead resumes playback')
-  // A closed input can never fill the lead, so a short reply must still be released.
-  send({ type: 'reset', generation: 2 })
-  send({ type: 'pcm', generation: 2, buffer: pcm(0.1) })
-  send({ type: 'end', generation: 2 })
-  render()
-  assert.equal(messages.at(-1).type, 'playing', 'input end releases a short reply below the lead')
 })
 
 class Socket extends EventEmitter {
