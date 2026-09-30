@@ -20,7 +20,7 @@ C 档与合规项未动。
 |---|---|---|---|
 | `resources/render/web/crt_canvas_surface.js` | 5,197 | **0** | 整个文件删除 |
 | `resources/render/web/wallpaper_scene.js` | 2,445 | 663 | 删 scenarioRuntime / keyboardSfx / 运行时环境光生成器 / characterRuntime |
-| `resources/render/web/renderer.js` | 1,825 | 1,016 | 删 SpriteForgeRuntime fallback / Live2DRenderer / SubtitleOverlay / 旧 WS bridge |
+| `resources/render/web/renderer.js` | 1,825 | 1,016 | 删 SpriteForgeRuntime fallback / EmoteRenderer / SubtitleOverlay / 旧 WS bridge |
 | `src/renderer/components/SettingsPage.tsx` | 1,147 | 887 | 删 `!nextRuntime` 全部分支、providers/mcp/skills/legacy section、13 处死声明 |
 | `src/renderer/i18n/index.tsx` | 515 | 504 | EN 412→151 键，三语孤儿 0 |
 | `src/renderer/env.d.ts` | 114 | 46 | 对齐 preload 实际暴露的桥 |
@@ -276,7 +276,7 @@ useEffect(() => {
 |---|---|---|
 | CRT canvas 工作台 | 5,198 | 删文件 + 从 html 脚本表移除 + 删 `canvasSurface`/`_externalCanvasHost`/`canvasBoundsAboveNixie` |
 | 旧角色状态机 fallback（`SpriteForgeRuntime`） | 438 | 删除；`RenderApp` 现在要求 factory 存在，缺失即抛出明确错误 |
-| Live2D 前景路径 | 72 | 删除类 + `_mode` 分支 + html `?live2d` 注入 |
+| Emote 前景路径 | 72 | 删除类 + `_mode` 分支 + html `?emote` 注入 |
 | 场景活动引擎（`scenarioRuntime`） | **1,215** | 删除对象及全部调用点 |
 | 键盘音效引擎（`keyboardSfx`） | 296 | 删除对象 + wav + LICENSE + `keyboardSfxUrl` payload |
 | 旧 WS bridge | 130 | 删除；职责已由 `src/scene/index.ts` 的 MessagePort 承担 |
@@ -328,9 +328,9 @@ renderer.js 提供:       getPixiApp / setSpriteViewportBounds / setSpriteViewpo
 `resources/THIRD_PARTY_NOTICES.md` 曾引用 11 个证据文件，实际只有 3 个存在
 （`FIRST-PARTY-BRAND-ASSETS.md`、`FreeMote-NOTICE.md`、`pixi-basis-ktx2-MIT.txt`）。
 
-其中 5 项属于本项目并未包含的组件（GPT-SoVITS、Bert-VITS2、AP-BWE、Live2D Cubism
-Core、pixi-live2d-display）；`provenance.json` 是来源清单而非组件，
-`docs/render_vendor_compatibility.md` 已被删除。Live2D 的**前端代码**也已在第二批删除。
+其中 5 项属于本项目并未包含的组件（GPT-SoVITS、Bert-VITS2、AP-BWE、Emote 运行时
+核心、Emote 显示库）；`provenance.json` 是来源清单而非组件，
+`docs/render_vendor_compatibility.md` 已被删除。Emote 的**前端代码**也已在第二批删除。
 
 处置：notices 收敛为只记录仓库内真实存在的第三方材料——E-mote/FreeMote、PixiJS、
 pixi-basis-ktx2、Keyboard Soundpack #1、first-party 品牌资产、角色/模型/语音资产的

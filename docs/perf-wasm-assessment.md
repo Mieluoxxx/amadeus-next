@@ -73,7 +73,7 @@
 ## 3. 连热点都算不上的地方（已核实，避免误判）
 
 > **历史记录注记**：本节及 §2 写于清理之前，其中涉及的
-> `crt_canvas_surface.js`、`scenarioRuntime`、`keyboardSfx`、Live2D 前景路径与
+> `crt_canvas_surface.js`、`scenarioRuntime`、`keyboardSfx`、Emote 前景路径与
 > 旧 WS bridge **已在本轮清理中整体删除**（详见 `docs/architecture-redundancy.md`）。
 > 保留这些分析是因为它们的结论（这些都不需要 WASM）仍然成立，且其中的
 > “纹理流水线防卡顿切片”与“扫描线/辉光逐帧重建”两项仍在生产代码中。
