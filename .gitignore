@@ -14,6 +14,4 @@ temp/
 # Local media copies follow the legacy external-asset policy.
 /resources/assets/images/*
 !/resources/assets/images/amadeus_desktop_wallpaper.png
-/resources/assets/audio/sfx/*.wav
-!/resources/assets/audio/sfx/computer_use_keyboard_loop.wav
 /resources/emote/

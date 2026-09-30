@@ -56,8 +56,6 @@ Some media are **intentionally not tracked by Git** (see `.gitignore`):
 
 - `/resources/assets/images/*` — only `amadeus_desktop_wallpaper.png` is tracked;
   the ambient blend layers and subtitle frame are not.
-- `/resources/assets/audio/sfx/*.wav` — only `computer_use_keyboard_loop.wav` is
-  tracked; other sound effects are not.
 - `/resources/emote/` — imported runtime and private model resources.
 
 A fresh clone therefore cannot run a complete scene until those files are copied

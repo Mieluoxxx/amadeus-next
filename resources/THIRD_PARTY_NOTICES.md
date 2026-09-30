@@ -4,7 +4,7 @@ Amadeus first-party code, documentation, modifications, and recorded original
 brand assets are published under the Apache License 2.0 (see the repository root
 `LICENSE`). That license does not replace or narrow third-party rights.
 Publishing components in the same repository does not change their existing
-MIT, Apache-2.0, CC0, CC-BY-NC-SA, or proprietary terms.
+MIT, Apache-2.0, CC-BY-NC-SA, or proprietary terms.
 
 This file records source and license evidence for third-party material checked
 into the Amadeus repository. Package-manager dependencies are accounted for by
@@ -68,17 +68,6 @@ See `resources/README.md` for their current tracking and packaging status.
 
 The Basis/KTX2 decoder is retained alongside the PixiJS bundle. It is no longer
 reached by the current scene entry points, which load only `pixi.min.js`.
-
-## Keyboard Soundpack #1
-
-- Source: <https://opengameart.org/content/keyboard-soundpack-1-typing-and-single-keystrokes>
-- Author: Unicae
-- Source item: `Human Typing/human_vel-002.wav`
-- License: CC0-1.0
-- Local evidence: `assets/audio/sfx/computer_use_keyboard_loop.LICENSE.txt`
-
-The keyboard audio engine was removed; only the sample and its notice remain.
-CC0 places no condition on the audio itself.
 
 ## First-party brand assets
 
