@@ -58,12 +58,6 @@ interface DesktopSettingsSnapshot {
 
 type UiMessage = { key: MessageKey; fallback?: string; values?: Record<string, unknown> }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {}
-}
-
 function asConfigurationGroups(value: unknown): ConfigurationGroup[] {
   return Array.isArray(value) ? value as ConfigurationGroup[] : []
 }
@@ -428,7 +422,7 @@ function SettingsSection({ id, children }: { id: 'general' | 'models' | 'asr' | 
 }
 
 export default function SettingsPage({ send, subscribe }: Props) {
-  const { locale, setLocale, t, formatNumber } = useI18n()
+  const { locale, setLocale, t } = useI18n()
   const [config, setConfig] = useState<Record<string, unknown>>({})
   const [desktop, setDesktop] = useState<DesktopSettingsSnapshot | null>(null)
   const [saving, setSaving] = useState<string | null>(null)

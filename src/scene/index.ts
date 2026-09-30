@@ -190,7 +190,7 @@ function receive(event: VoiceEvent | ConversationIdleEvent): void {
   }
   if (!sameTurn(key, event)) return
   if (event.type === 'activity') {
-    dispatch({ type: 'activity', activity: event.activity, random: Math.random() })
+    dispatch({ type: 'activity', activity: event.activity })
   } else if (event.type === 'text') {
     const { subtitles = [] } = event.value
     display += event.value.display ?? event.value.text
@@ -198,7 +198,7 @@ function receive(event: VoiceEvent | ConversationIdleEvent): void {
     if (subtitles.length) hasSubtitles = true
     // Timed subtitles follow the audio; everything else (silent, plain, or after a speech failure) shows the reply.
     if (!hasSubtitles || !speech) host.wallpaperApp.setSubtitle(display)
-    if (!speech) for (const cue of event.value.cues) dispatch({ type: 'cue', emotion: cue.emotion, random: Math.random() })
+    if (!speech) for (const cue of event.value.cues) dispatch({ type: 'cue', emotion: cue.emotion })
   } else if (event.type === 'audio') {
     if (event.alignment) timeline.update(event.alignment)
     pcm(new Uint8Array(event.pcm))
@@ -235,9 +235,9 @@ function tick(): void {
       lastPosition = report.seconds
       if (report.type === 'playing' || report.type === 'buffering') {
         const emotion = timeline.take(lastPosition + calibration.syncOffsetMs / 1000)
-        if (emotion) dispatch({ type: 'cue', emotion, random: Math.random() })
+        if (emotion) dispatch({ type: 'cue', emotion })
         syncSubtitle()
-        dispatch({ type: 'playback', status: report.type, now: performance.now(), random: Math.random() })
+        dispatch({ type: 'playback', status: report.type, now: performance.now() })
         playback(report.type)
       } else if (report.type === 'ended') {
         dispatch({ type: 'playback', status: 'ended', now: performance.now() })
@@ -252,11 +252,11 @@ function tick(): void {
     }
     if (playbackStatus === 'playing' || playbackStatus === 'buffering') {
       const emotion = timeline.take(lastPosition + calibration.syncOffsetMs / 1000)
-      if (emotion) dispatch({ type: 'cue', emotion, random: Math.random() })
+      if (emotion) dispatch({ type: 'cue', emotion })
       syncSubtitle()
     }
   }
-  dispatch({ type: 'tick', now: performance.now(), random: Math.random() })
+  dispatch({ type: 'tick', now: performance.now() })
   requestAnimationFrame(tick)
 }
 

@@ -4,7 +4,7 @@ import { cp, lstat, mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'nod
 import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { EmoteCharacter, EMOTE_EXPRESSIONS, partVariablesFromTable, snapWrites, updateEmoteControls, THINKING_SCAN, THINKING_HANDOFF_WAIT_MS, SPOKEN_THINKING_MS, thinkingScanAt } from '../src/scene/emote.ts'
+import { EmoteCharacter, EMOTE_EXPRESSIONS, partVariablesFromTable, snapWrites, updateEmoteControls, THINKING_SCAN, THINKING_HANDOFF_WAIT_MS, SPOKEN_THINKING_MS } from '../src/scene/emote.ts'
 import { ensureBakedModel, importEmoteAssets, verifyEmoteRuntime } from '../src/main/emoteBake.ts'
 import { SceneHost } from '../src/main/sceneHost.ts'
 
@@ -110,15 +110,15 @@ test('native expressions, real mouth energy, buffering, drain and reset need no 
   const character = new EmoteCharacter(player)
   const send = event => character.dispatch(event)
   assert.equal(player.mainTimelineLabel, EMOTE_EXPRESSIONS.neutral)
-  send({ type: 'activity', activity: 'thinking', random: 0 })
+  send({ type: 'activity', activity: 'thinking' })
   assert.equal(player.mainTimelineLabel, EMOTE_EXPRESSIONS.thinking)
   for (const [emotion, label] of Object.entries(EMOTE_EXPRESSIONS)) {
-    send({ type: 'cue', emotion, random: 0 })
+    send({ type: 'cue', emotion })
     assert.equal(player.mainTimelineLabel, label)
   }
   send({ type: 'playback', status: 'playing', now: 0 })
-  send({ type: 'cue', emotion: 'smile', random: 0 })
-  send({ type: 'activity', activity: 'idle', random: 0 })
+  send({ type: 'cue', emotion: 'smile' })
+  send({ type: 'activity', activity: 'idle' })
   assert.equal(player.mainTimelineLabel, EMOTE_EXPRESSIONS.smile, 'Pi completion cannot interrupt audible speech')
   character.setMouth(0.6)
   assert.equal(values.get('face_talk'), 3)
@@ -129,15 +129,15 @@ test('native expressions, real mouth energy, buffering, drain and reset need no 
   assert.equal(values.get('face_talk'), 0)
   assert.equal(player.mainTimelineLabel, EMOTE_EXPRESSIONS.smile)
   send({ type: 'playback', status: 'ended', now: 100 })
-  send({ type: 'tick', now: 1099, random: 0 })
+  send({ type: 'tick', now: 1099 })
   assert.equal(player.mainTimelineLabel, EMOTE_EXPRESSIONS.smile)
-  send({ type: 'tick', now: 1100, random: 0 })
+  send({ type: 'tick', now: 1100 })
   assert.equal(player.mainTimelineLabel, EMOTE_EXPRESSIONS.neutral)
   send({ type: 'reset' })
   assert.equal(character.state.playback, 'quiet')
   assert.equal(values.get('face_talk'), 0)
   player.mainTimelineLabels = [EMOTE_EXPRESSIONS.neutral]
-  send({ type: 'cue', emotion: 'angry', random: 0 })
+  send({ type: 'cue', emotion: 'angry' })
   assert.equal(player.mainTimelineLabel, EMOTE_EXPRESSIONS.neutral)
 })
 
@@ -147,15 +147,15 @@ test('thinking expression stays through speech wait but yields to playback or a 
   const wait = () => {
     character.dispatch({ type: 'reset' })
     character.dispatch({ type: 'playback', status: 'waiting', now: 0 })
-    character.dispatch({ type: 'activity', activity: 'thinking', random: 0 })
-    character.dispatch({ type: 'activity', activity: 'idle', random: 0 })
+    character.dispatch({ type: 'activity', activity: 'thinking' })
+    character.dispatch({ type: 'activity', activity: 'idle' })
     assert.equal(player.mainTimelineLabel, EMOTE_EXPRESSIONS.thinking)
   }
   wait()
   character.dispatch({ type: 'playback', status: 'playing', now: 1 })
   assert.equal(player.mainTimelineLabel, EMOTE_EXPRESSIONS.neutral)
   wait()
-  character.dispatch({ type: 'cue', emotion: 'smile', random: 0 })
+  character.dispatch({ type: 'cue', emotion: 'smile' })
   character.dispatch({ type: 'playback', status: 'playing', now: 1 })
   assert.equal(player.mainTimelineLabel, EMOTE_EXPRESSIONS.smile)
   wait()
@@ -163,34 +163,21 @@ test('thinking expression stays through speech wait but yields to playback or a 
   assert.equal(player.mainTimelineLabel, EMOTE_EXPRESSIONS.neutral)
 })
 
-test('思考浏览的头部线性往返、眼球独立，阶段边界连续', () => {
-  const { head, eye, holdMs, transitionMs } = THINKING_SCAN
-  const span = holdMs + transitionMs
-  assert.deepEqual(thinkingScanAt(0), { head, eye: -eye })
-  for (const [ms, expected] of [[2000, head], [2500, head / 2], [3000, 0], [4000, -head], [6000, -head], [7000, 0], [8000, head]]) {
-    assert.ok(Math.abs(thinkingScanAt(ms).head - expected) < 1e-9, `head at ${ms}ms`)
-  }
-  for (const boundary of [holdMs, span, span + holdMs, span * 2]) {
-    const before = thinkingScanAt(boundary - 0.001), after = thinkingScanAt(boundary)
-    assert.ok(Math.abs(before.head - after.head) < 0.001 && Math.abs(before.eye - after.eye) < 0.001)
-  }
-})
-
 function scanHarness() {
   const base = new Map([['head_UD', 66.6666641], ['face_eye_LR', -100]])
-  const diffs = new Map(), enterDiffs = new Map(), writes = []
+  const diffs = new Map(), writes = []
   const player = {
     mainTimelineLabel: '', mainTimelineLabels: Object.values(EMOTE_EXPRESSIONS),
     getVariable: name => base.get(name) ?? 0,
     setVariable() {},
     setVariableDiff(module, name, value, ms) {
-      if (module === 'thinking-scan') { diffs.set(name, value); writes.push({ module, name, value, ms }) } else enterDiffs.set(name, value)
+      if (module === 'thinking-scan') { diffs.set(name, value); writes.push({ module, name, value, ms }) }
     },
   }
   const character = new EmoteCharacter(player, {}, 0)
-  const send = event => character.dispatch({ random: 0, now: 0, ...event })
+  const send = event => character.dispatch({ now: 0, ...event })
   const tick = now => send({ type: 'tick', now })
-  return { character, diffs, enterDiffs, writes, send, tick, base }
+  return { character, diffs, writes, send, tick, base }
 }
 
 test('思考浏览只在困る00 且模型思考时运行，离开或 reset 后清除差分', () => {
@@ -212,19 +199,6 @@ test('思考浏览只在困る00 且模型思考时运行，离开或 reset 后�
   send({ type: 'reset' })
   assert.equal(diffs.get('head_UD'), 0); assert.equal(diffs.get('face_eye_LR'), 0)
   assert.equal(character.state.activity, 'idle')
-})
-
-test('进入困る00 时头眼眉从旧姿态线性过渡到思考底值', () => {
-  const { enterDiffs, send, tick, base } = scanHarness()
-  base.set('head_UD', 0); base.set('face_eye_LR', 0)
-  send({ type: 'cue', emotion: 'thinking' })
-  base.set('head_UD', 60); base.set('face_eye_LR', -100)
-  tick(0)
-  assert.equal(base.get('head_UD') + enterDiffs.get('head_UD'), 0, '起点仍是旧姿态')
-  tick(THINKING_SCAN.enterMs / 2)
-  assert.ok(Math.abs(base.get('head_UD') + enterDiffs.get('head_UD') - 30) < 1e-6, '中点是新旧姿态的一半')
-  tick(THINKING_SCAN.enterMs)
-  assert.equal(enterDiffs.get('head_UD'), 0); assert.equal(enterDiffs.get('face_eye_LR'), 0)
 })
 
 test('退出思考后等待语音时冻结姿态，正式表情到来或取消时再释放', () => {

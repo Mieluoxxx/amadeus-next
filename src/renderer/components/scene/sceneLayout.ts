@@ -12,14 +12,7 @@
  */
 
 /** Authored size of `assets/images/amadeus_desktop_wallpaper.png`. */
-export const SCENE_DESIGN = { width: 1672, height: 941 } as const
-
-/**
- * CRT glass polygon bounds in design coordinates. This mirrors
- * `wallpaper/crt_config.json`, which is the authored source for the screen
- * mask (see `wallpaper/scene_assets.py`).
- */
-export const SCENE_GLASS = { x: 550, y: 195, width: 586, height: 453 } as const
+const SCENE_DESIGN = { width: 1672, height: 941 } as const
 
 /**
  * CRT cabinet envelope in design coordinates — the beige monitor body with its
@@ -27,41 +20,40 @@ export const SCENE_GLASS = { x: 550, y: 195, width: 586, height: 453 } as const
  * character and the machine she lives in must stay inside this box, so framing
  * and overlay placement both use the cabinet, not the glass alone.
  *
- * Re-derive this from the artwork if the scene image changes; the unit test
- * `the cabinet envelope contains the authored glass polygon` guards the
- * relationship, not the literal pixels.
+ * Re-derive this from the artwork if the scene image changes; it must still
+ * contain the CRT glass polygon in `wallpaper/crt_config.json`.
  */
-export const SCENE_CABINET = { x: 470, y: 100, width: 780, height: 645 } as const
+const SCENE_CABINET = { x: 470, y: 100, width: 780, height: 645 } as const
 
 /** Preferred sidebar sizes. */
-export const MIN_PANEL_WIDTH = 320
+const MIN_PANEL_WIDTH = 320
 /** Composer inset, leaving a small gap from the scene edges. */
-export const MIN_DOCK_HEIGHT = 128
-export const MAX_DOCK_HEIGHT = 184
+const MIN_DOCK_HEIGHT = 128
+const MAX_DOCK_HEIGHT = 184
 /**
  * Height of the top chrome band (toolbar plus a compact event tray). The band is
  * reserved as an overlay so the cabinet can never end up underneath window
  * controls or status notices.
  */
-export const CHROME_BAND_HEIGHT = 112
+const CHROME_BAND_HEIGHT = 112
 /** Floor for the chrome band on very short windows. */
-export const MIN_CHROME_BAND_HEIGHT = 112
+const MIN_CHROME_BAND_HEIGHT = 112
 /** Compact fallback for ultra-short windows where a multi-row tray cannot fit. */
-export const COMPACT_CHROME_BAND_HEIGHT = 52
+const COMPACT_CHROME_BAND_HEIGHT = 52
 /** The toolbar occupies the top-right part of the shared chrome band. */
-export const TOOLBAR_RESERVED_WIDTH = 236
+const TOOLBAR_RESERVED_WIDTH = 236
 /** Maximum width of the shared status tray. */
-export const STATUS_TRAY_MAX_WIDTH = 420
+const STATUS_TRAY_MAX_WIDTH = 420
 /**
  * Margin between the scene and the bottom composer.
  */
-export const PANEL_MARGIN = 12
+const PANEL_MARGIN = 12
 /** Keep at least this share of the window for the scene when the sidebar is open. */
 export type ScenePanelKind = 'transcript' | 'more'
 
 export type SceneRegion = { x: number; y: number; width: number; height: number }
 
-export type SceneFit = { scale: number; offsetX: number; offsetY: number }
+type SceneFit = { scale: number; offsetX: number; offsetY: number }
 
 export type SceneOverlay = {
   /** `chrome` is the reserved window-control band; it has no DOM element. */
@@ -124,18 +116,13 @@ function overlaps(left: SceneRegion, right: SceneRegion): boolean {
 }
 
 /** Cabinet rect for a given fit. */
-export function sceneCabinetRect(fit: SceneFit): SceneRegion {
+function sceneCabinetRect(fit: SceneFit): SceneRegion {
   return {
     x: SCENE_CABINET.x * fit.scale + fit.offsetX,
     y: SCENE_CABINET.y * fit.scale + fit.offsetY,
     width: SCENE_CABINET.width * fit.scale,
     height: SCENE_CABINET.height * fit.scale,
   }
-}
-
-/** @deprecated kept for callers that only need the glass rect. */
-export function sceneCrtRect(fit: SceneFit): SceneRegion {
-  return sceneCabinetRect(fit)
 }
 
 /**
@@ -147,7 +134,7 @@ export function sceneCrtRect(fit: SceneFit): SceneRegion {
  * caller must confirm the window is still covered by the frame plus overlays
  * (`coveredByFrameAndOverlays`).
  */
-export function sceneFit(scene: SceneRegion, free: SceneRegion = scene): SceneFit {
+function sceneFit(scene: SceneRegion, free: SceneRegion = scene): SceneFit {
   const windowWidth = Math.max(1, scene.width)
   const windowHeight = Math.max(1, scene.height)
   const freeWidth = Math.max(1, free.width)
@@ -185,7 +172,7 @@ function containsRect(outer: SceneRegion, inner: SceneRegion): boolean {
  * Overlays are edge-anchored strips, so checking the four exposed strips is
  * exact rather than a sampling approximation.
  */
-export function coveredByFrameAndOverlays(
+function coveredByFrameAndOverlays(
   scene: SceneRegion,
   fit: SceneFit,
   overlays: SceneOverlay[],

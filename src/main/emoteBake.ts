@@ -8,7 +8,7 @@ import { promisify } from 'node:util'
 const run = promisify(execFile)
 
 // 只执行应用自己的副本；打包后优先用 asar 外的 extraResources。
-export function emoteLoaderPath(moduleDir: string): string {
+function emoteLoaderPath(moduleDir: string): string {
   const name = process.platform === 'win32' ? 'AmadeusEmoteLoader.exe' : 'AmadeusEmoteLoader'
   const candidates = [
     process.resourcesPath && path.join(process.resourcesPath, name),
@@ -20,11 +20,11 @@ export function emoteLoaderPath(moduleDir: string): string {
   throw new Error('应用缺少 E-mote 加载器，请重新安装完整应用；开发环境请先运行 npm run emote:loader，再运行 npm run build')
 }
 
-export type BakedModel = { psb: string; meta: string }
+type BakedModel = { psb: string; meta: string }
 type BakeOptions = { moduleDir: string; modelRoot: string; cacheDir: string; timeoutMs?: number }
 const pending = new Map<string, Promise<BakedModel>>()
 
-export const EMOTE_RUNTIME = {
+const EMOTE_RUNTIME = {
   'FreeMoteDriver.js': '64a38cbc4722ee90d58a7d0d464fe121d1a6453acda21c3fca99712c220d0641',
   'emoteplayer.js': '807e5c6a4d58d99c1e876f4155dd73d096ef92a5650c1c2a314be665dfdb9eba',
 }

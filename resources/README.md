@@ -4,11 +4,11 @@ This directory contains independent local copies of the assets the Electron
 scene host serves:
 
 - `emote/`: locally provisioned FreeMote runtime and all four AB/C ordinary-clothes/white-coat model packs. Developer-local; excluded from packaging. The PSB parser is a pinned native artifact under `vendor/emote-loader/` (see `docs/emote-loader-integration.md`).
-- `assets/idle/`: the idle scene stills and `scenario_graph.json`.
+- `assets/idle/`: the idle scene stills.
 - `assets/images/`: room background, ambient layers, and subtitle frame.
 - `render/web/`: room drawing scripts, PixiJS and `wallpaper_engine.html`.
 - `wallpaper/crt_config.json`: authored room geometry.
-- `LICENSE`, `LICENSES/`, `THIRD_PARTY_NOTICES.md`: copied license/provenance notices.
+- `LICENSES/`, `THIRD_PARTY_NOTICES.md`: copied license/provenance notices. Packaging copies the repository root `LICENSE` next to them.
 
 `wallpaper_engine.html` loads `/next/scene.js` and `/next/start.js` directly, so
 its script list is the single source of truth for load order. The scene host no

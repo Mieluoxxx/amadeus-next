@@ -61,7 +61,7 @@ try {
   for (const [file, before, after, target] of [
     ['src/main/pi-worker.ts', 'Explain tool results in the user-facing reply', 'Explain tool results clearly in the user-facing reply', 'pi-worker'],
     ['src/main/index.ts', 'width: 1100', 'width: 1101', 'main'],
-    ['src/preload/index.ts', "wallpaperHost: 'macos-companion'", "wallpaperHost: 'fixture-companion'", 'preload'],
+    ['src/preload/index.ts', 'platform: process.platform', 'platform: String(process.platform)', 'preload'],
     ['src/scene/index.ts', 'mouthGain: 8', 'mouthGain: 9', 'scene'],
   ]) {
     const count = events.length

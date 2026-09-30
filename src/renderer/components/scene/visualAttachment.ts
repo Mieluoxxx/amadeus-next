@@ -7,11 +7,11 @@
  * scene does not grow a second, subtly different image pipeline.
  */
 
-export const VISUAL_ATTACHMENT_MAX_LONG_SIDE = 1280
-export const VISUAL_ATTACHMENT_JPEG_QUALITY = 0.82
+const VISUAL_ATTACHMENT_MAX_LONG_SIDE = 1280
+const VISUAL_ATTACHMENT_JPEG_QUALITY = 0.82
 
 /** Providers the backend accepts visual input from. */
-export const MULTIMODAL_CHAT_PROVIDERS = new Set([
+const MULTIMODAL_CHAT_PROVIDERS = new Set([
   'openai-responses',
   'openai-completions',
   'anthropic-messages',
@@ -33,12 +33,12 @@ export type VisualAttachment = {
 }
 
 /** Error codes, translated by the caller. */
-export const ATTACHMENT_ERROR_NOT_IMAGE = 'chat.error.choose_image'
-export const ATTACHMENT_ERROR_DECODE = 'chat.error.decode_image'
-export const ATTACHMENT_ERROR_READ = 'chat.error.read_image'
-export const ATTACHMENT_ERROR_CANVAS = 'chat.error.canvas'
+const ATTACHMENT_ERROR_NOT_IMAGE = 'chat.error.choose_image'
+const ATTACHMENT_ERROR_DECODE = 'chat.error.decode_image'
+const ATTACHMENT_ERROR_READ = 'chat.error.read_image'
+const ATTACHMENT_ERROR_CANVAS = 'chat.error.canvas'
 
-export function loadImageElement(src: string): Promise<HTMLImageElement> {
+function loadImageElement(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image()
     image.onload = () => resolve(image)
@@ -47,7 +47,7 @@ export function loadImageElement(src: string): Promise<HTMLImageElement> {
   })
 }
 
-export function readFileAsDataUrl(file: File): Promise<string> {
+function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(String(reader.result || ''))

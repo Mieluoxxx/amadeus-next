@@ -2,13 +2,13 @@
  * Pure stream-state helpers for the scene conversation.
  *
  * These encode behaviours the chat page already had and the scene must not
- * lose: an interrupted turn stops accepting the rest of its stream, an
- * observer note is appended once per decision, and a wake-origin recognition is
- * an already-submitted utterance rather than a draft the user still has to send.
+ * lose: an interrupted turn stops accepting the rest of its stream, and a
+ * wake-origin recognition is an already-submitted utterance rather than a draft
+ * the user still has to send.
  * Keeping them pure makes the rules testable without a live backend.
  */
 
-export type SceneDraftOutcome = {
+type SceneDraftOutcome = {
   /** Text to put in the draft box, or `null` to leave the draft untouched. */
   draft: string | null
   /** True when the utterance was already sent by the wake pipeline. */
@@ -60,38 +60,6 @@ export function interruptedTurns(
   const target = eventTurnId || activeTurnId
   if (target) next.add(target)
   return next
-}
-
-export type SceneObserverNote = {
-  turnId: string
-  text: string
-  identity: string
-}
-
-/**
- * Observer decisions only enter the main conversation when the backend says so,
- * and only for the session currently on screen. A repeated decision with the
- * same identity is the same note, not a second one.
- */
-export function observerNote(
-  params: Record<string, unknown>,
-  activeSessionId: string,
-  seen: ReadonlySet<string>,
-): SceneObserverNote | null {
-  if (params.append_to_main_chat !== true) return null
-  const sessionId = String(params.session_id ?? '')
-  if (!sessionId || sessionId !== activeSessionId) return null
-  const text = String(params.main_chat_entry ?? '').trim()
-  if (!text) return null
-  const identity = String(
-    params.message_id || params.attempt_id || params.run_id || params.work_item_id || '',
-  )
-  if (!identity) return null
-  const action = String(params.action || 'update')
-  const noteCount = String(params.note_count || '')
-  const noteIdentity = `${identity}:${action}:${noteCount}`
-  if (seen.has(noteIdentity)) return null
-  return { turnId: `work-observer:${noteIdentity}`, text, identity: noteIdentity }
 }
 
 /**

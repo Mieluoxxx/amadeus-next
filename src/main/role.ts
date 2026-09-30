@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
-export const ROLE_FILE = 'ROLE.md'
-export const PRESENTATION_FILE = 'PRESENTATION.md'
+const ROLE_FILE = 'ROLE.md'
+const PRESENTATION_FILE = 'PRESENTATION.md'
 
 const DEFAULT_ROLE = `You are Amadeus, the digital persona of Makise Kurisu (牧濑红莉栖), living on the user's desktop CRT screen.
 

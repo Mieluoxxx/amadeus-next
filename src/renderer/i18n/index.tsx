@@ -8,17 +8,17 @@ type Messages = Record<string, string>
 
 const MAIN_LOCALE_MESSAGES = {
   'en-US': {
-    'chat.provider': 'Chat provider', 'chat.send': 'Send message',
+    'chat.send': 'Send message',
 
 
   },
   'zh-CN': {
-    'chat.provider': '聊天提供方', 'chat.send': '发送消息',
+    'chat.send': '发送消息',
 
 
   },
   'ja-JP': {
-    'chat.provider': 'チャット Provider', 'chat.send': 'メッセージを送信',
+    'chat.send': 'メッセージを送信',
 
 
   },
@@ -32,8 +32,6 @@ const EN = {
   'settings.title': 'Settings',
   'settings.thinking_level': 'Thinking level',
   'settings.reload_error': 'Runtime reload failed',
-  'settings.restart': 'Restart backend to apply',
-  'settings.restarting': 'Restarting…',
   'settings.loading_error': 'Could not load settings',
   'settings.save_error': 'Could not save {key}',
   'settings.update_error': 'Could not update {key}',
@@ -55,8 +53,6 @@ const EN = {
 
   'settings.security.available': 'Secrets protected by the operating system',
   'settings.security.unavailable': 'System secret encryption unavailable',
-  'settings.restart_pending': 'Saved changes need a backend restart',
-  'settings.restart_pending_detail': 'Applied automatically. Use the button if this backend cannot be restarted from here.',
 
 
 
@@ -106,9 +102,6 @@ const EN = {
   'settings.action.clear': 'Clear',
   'settings.action.on': 'On',
   'settings.action.off': 'Off',
-  'settings.restart_error': 'Backend restart failed',
-  'settings.restart_unowned': 'This backend was not started by this app, so it cannot be restarted from here. Restart it where it was launched.',
-  'settings.provider_needs_key': 'No API key is configured for {provider}. Enter one below and it will be applied.',
 
 
 
@@ -122,8 +115,6 @@ const EN = {
 
 
   'settings.label.interface_language': 'Interface language',
-
-  'settings.label.chat_translation': 'Chat Translation Subtitles',
 
 
 
@@ -144,7 +135,6 @@ const EN = {
   'settings.option.japanese': '日本語',
 
 
-  'settings.option.auto': 'Automatic',
 
 
 
@@ -152,19 +142,12 @@ const EN = {
 
 
 
-  'settings.option.source': 'Source',
-  'settings.option.deepseek': 'DeepSeek',
-  'settings.status.registered': 'Registered', 'settings.status.active': 'ACTIVE',
+  'settings.status.active': 'ACTIVE',
 
   'settings.status.configured': 'Configured',
   'settings.status.needs_setup': 'Needs setup',
 
 
-  'settings.status.not_installed': 'Not installed',
-  'settings.status.remote': 'Remote',
-
-
-  'settings.status.none': 'None',
 
 
 
@@ -219,19 +202,17 @@ const EN = {
 
 
 
-  'chat.error.decode_image': 'Could not decode image', 'chat.error.read_image': 'Could not read image', 'chat.error.choose_image': 'Please choose an image file.', 'chat.error.canvas': 'Canvas is unavailable.', 'chat.error.send_failed': 'Send failed: backend unreachable', 'chat.error.attach_image': 'Could not attach image', 'chat.error.create_session': 'Could not create session', 'chat.error.create_project_chat': 'Could not create the Project chat', 'chat.error.select_project_directory': 'Could not select a Project directory', 'chat.error.create_project': 'Could not create the Project', 'chat.error.load_project_apps': 'Could not load Project apps', 'chat.error.load_draft_apps': 'Could not load recent Draft apps', 'chat.error.open_artifact_chat': 'Could not open the Artifact conversation', 'chat.error.prepare_auip': 'Could not prepare the AUIP application', 'chat.error.launch_descriptor': 'The Host did not return a complete AUIP launch descriptor.', 'chat.error.host_refused': 'The desktop Host refused the AUIP application.', 'chat.error.promote_draft_app': 'Could not promote the Draft app', 'chat.error.move_chat': 'Could not move the chat', 'chat.error.promote_draft': 'Could not promote the Draft', 'chat.error.delete_session': 'Could not delete session', 'chat.error.rename_session': 'Could not rename session',
-  'chat.remove_image': 'Remove image', 'chat.refresh': 'Refresh',
+
+
+  'chat.error.decode_image': 'Could not decode image', 'chat.error.read_image': 'Could not read image', 'chat.error.choose_image': 'Please choose an image file.', 'chat.error.canvas': 'Canvas is unavailable.',
+  'chat.remove_image': 'Remove image',
 
   'scene.attach_image': 'Attach a picture', 'scene.attach_needs_visual_provider': 'Select an OpenAI, Anthropic or Gemini protocol provider to attach a picture',
-  'scene.approval_unavailable': 'Approval details are incomplete; refresh before deciding',
-  'scene.export_needs_recovery': 'Export needs your decision',
-  'scene.approve_once': 'Allow once', 'scene.deny': 'Deny', 'scene.retry_export': 'Retry export', 'scene.abandon_export': 'Abandon export',
   'scene.transcript': 'Conversation',
   'scene.new_task': 'New task', 'scene.current_task': 'Current task',
   'scene.send': 'Send', 'scene.mic_start': 'Start voice input', 'scene.mic_stop': 'Stop voice input',
   'scene.placeholder': 'Say something to Amadeus...', 'scene.placeholder_offline': 'Connecting to the backend...',
   'scene.listening': 'Listening…', 'scene.streaming': 'Replying...',
-  'scene.notice_permission': 'Permission needed: {detail}', 'scene.notice_failed': 'Task failed: {detail}',
   'scene.dismiss': 'Dismiss', 'scene.empty_transcript': 'This task has no conversation yet.',
   'scene.starting': 'Waking up the scene...', 'scene.waiting_backend': 'Waiting for the backend...',
   'scene.failed_title': 'The scene could not start', 'scene.retry': 'Retry',
@@ -239,8 +220,6 @@ const EN = {
   'scene.role_user': 'You', 'scene.role_system': 'System', 'scene.role_assistant': 'Amadeus',
   'scene.settings': 'Settings',
 
-  'scene.notify_title': 'Amadeus task finished',
-  'scene.work_needs_permission': 'Needs your permission', 'chat.error.prefix': 'Error: {error}',
 }
 
 const ZH: Messages = {
@@ -249,11 +228,11 @@ const ZH: Messages = {
   'settings.reload_error': '运行时重载失败',
   ...MAIN_LOCALE_MESSAGES['zh-CN'],
   'locale.en-US': 'English', 'locale.zh-CN': '简体中文', 'locale.ja-JP': '日本語',
-  'settings.title': '设置', 'settings.restart': '重启后端以应用设置', 'settings.restarting': '正在重启…',
+  'settings.title': '设置',
   'settings.loading_error': '无法加载设置', 'settings.save_error': '无法保存 {key}', 'settings.update_error': '无法更新 {key}', 'settings.saving': '正在保存 {key}…',
   'settings.saving_label': '正在保存…',
 
-  'settings.security.available': '密钥受操作系统保护', 'settings.security.unavailable': '系统密钥加密不可用', 'settings.restart_pending': '已保存的更改需要重启后端才能生效', 'settings.restart_pending_detail': '本应用会自动重启；若该后端无法从这里自动重启，请点击右侧按钮。',
+  'settings.security.available': '密钥受操作系统保护', 'settings.security.unavailable': '系统密钥加密不可用',
 
 'settings.label.asr_mode': '识别后端', 'settings.asrBackend.qwen3_asr': 'Qwen3-ASR（本地）', 'settings.asrBackend.sense_voice': 'SenseVoice（本地）', 'settings.asrBackend.openai_compatible': 'OpenAI 兼容转写（远程）', 'settings.asrBackend.mimo': '小米 ASR 模型（远程）',
 
@@ -264,30 +243,25 @@ const ZH: Messages = {
   'settings.note.no_user_settings': '没有用户管理的连接设置。', 'settings.note.no_active_connection': '当前没有选中的活动连接。', 'settings.other_voice_backends': '其他语音合成后端', 'settings.advanced': '高级（实时校准）',
 
   'settings.placeholder.secret_replace': '已配置——输入以替换', 'settings.placeholder.secret_empty': '未配置', 'settings.action.save': '保存', 'settings.action.clear': '清除', 'settings.action.on': '开', 'settings.action.off': '关',
-  'settings.restart_error': '后端重启失败', 'settings.restart_unowned': '该后端不是由本应用启动的，无法从这里自动重启；请在启动它的地方重启。', 'settings.provider_needs_key': '{provider} 尚未配置 API Key，请在下方填写后即可生效。',
 
 
 
-  'settings.label.interface_language': '界面语言', 'settings.label.chat_translation': '聊天翻译字幕',
+  'settings.label.interface_language': '界面语言',
   'settings.label.current_model': '当前模型配置',
 
-  'settings.option.english': 'English', 'settings.option.chinese': '简体中文', 'settings.option.japanese': '日本語', 'settings.option.auto': '自动',
-  'settings.status.registered': '已注册', 'settings.status.configured': '已配置', 'settings.status.needs_setup': '需要设置', 'settings.status.not_installed': '未安装', 'settings.status.remote': '远程', 'settings.status.none': '无',
+  'settings.option.english': 'English', 'settings.option.chinese': '简体中文', 'settings.option.japanese': '日本語',
+  'settings.status.configured': '已配置', 'settings.status.needs_setup': '需要设置',
   'settings.status.active': '活动',
 
-  'chat.error.decode_image': '无法解码图片', 'chat.error.read_image': '无法读取图片', 'chat.error.choose_image': '请选择图片文件。', 'chat.error.canvas': '画布不可用。', 'chat.error.send_failed': '发送失败：后端不可达', 'chat.error.attach_image': '无法附加图片', 'chat.error.create_session': '无法创建会话', 'chat.error.create_project_chat': '无法创建项目聊天', 'chat.error.select_project_directory': '无法选择项目目录', 'chat.error.create_project': '无法创建项目', 'chat.error.load_project_apps': '无法加载项目应用', 'chat.error.load_draft_apps': '无法加载最近的 Draft 应用', 'chat.error.open_artifact_chat': '无法打开 Artifact 对话', 'chat.error.prepare_auip': '无法准备 AUIP 应用', 'chat.error.launch_descriptor': '主机未返回完整的 AUIP 启动描述。', 'chat.error.host_refused': '桌面主机拒绝了 AUIP 应用。', 'chat.error.promote_draft_app': '无法提升 Draft 应用', 'chat.error.move_chat': '无法移动聊天', 'chat.error.promote_draft': '无法提升 Draft', 'chat.error.delete_session': '无法删除会话', 'chat.error.rename_session': '无法重命名会话',
-  'chat.remove_image': '移除图片', 'chat.refresh': '刷新',
+  'chat.error.decode_image': '无法解码图片', 'chat.error.read_image': '无法读取图片', 'chat.error.choose_image': '请选择图片文件。', 'chat.error.canvas': '画布不可用。',
+  'chat.remove_image': '移除图片',
 
   'scene.attach_image': '附加图片', 'scene.attach_needs_visual_provider': '请选择 OpenAI / Anthropic / Gemini 系协议提供方以附加图片',
-  'scene.approval_unavailable': '授权信息不完整，请刷新后再决定',
-  'scene.export_needs_recovery': '导出需要你决定',
-  'scene.approve_once': '仅此次允许', 'scene.deny': '拒绝', 'scene.retry_export': '重试导出', 'scene.abandon_export': '放弃导出',
   'scene.transcript': '对话记录',
   'scene.new_task': '新建任务', 'scene.current_task': '当前任务',
   'scene.send': '发送', 'scene.mic_start': '开始语音输入', 'scene.mic_stop': '停止语音输入',
   'scene.placeholder': '对 Amadeus 说点什么…', 'scene.placeholder_offline': '正在连接后端…',
   'scene.listening': '正在聆听…', 'scene.streaming': '正在回应…',
-  'scene.notice_permission': '需要授权：{detail}', 'scene.notice_failed': '任务失败：{detail}',
   'scene.dismiss': '收起', 'scene.empty_transcript': '这个任务还没有对话。',
   'scene.starting': '正在唤起场景…', 'scene.waiting_backend': '正在等待后端…',
   'scene.failed_title': '场景未能启动', 'scene.retry': '重试',
@@ -295,8 +269,6 @@ const ZH: Messages = {
   'scene.role_user': '主人', 'scene.role_system': '系统', 'scene.role_assistant': 'Amadeus',
   'scene.settings': '设置',
 
-  'scene.notify_title': 'Amadeus 任务已结束',
-  'scene.work_needs_permission': '需要你的授权', 'chat.error.prefix': '错误：{error}',
 }
 
 const JA: Messages = {
@@ -305,35 +277,30 @@ const JA: Messages = {
   'settings.reload_error': '再読み込みに失敗しました',
   ...MAIN_LOCALE_MESSAGES['ja-JP'],
   'locale.en-US': 'English', 'locale.zh-CN': '简体中文', 'locale.ja-JP': '日本語',
-  'settings.title': '設定', 'settings.restart': '適用するにはバックエンドを再起動', 'settings.restarting': '再起動中…',
+  'settings.title': '設定',
   'settings.loading_error': '設定を読み込めません', 'settings.save_error': '{key} を保存できません', 'settings.update_error': '{key} を更新できません', 'settings.saving': '{key} を保存中…',
 
 
-  'settings.security.available': '秘密情報は OS により保護されています', 'settings.security.unavailable': 'OS の秘密情報暗号化を利用できません', 'settings.restart_pending': '保存済みの変更はバックエンドの再起動で反映されます', 'settings.restart_pending_detail': '自動で再起動します。ここから再起動できない場合は右のボタンを使用してください。',
+  'settings.security.available': '秘密情報は OS により保護されています', 'settings.security.unavailable': 'OS の秘密情報暗号化を利用できません',
 
 'settings.label.asr_mode': '認識バックエンド', 'settings.asrBackend.qwen3_asr': 'Qwen3-ASR（ローカル）', 'settings.asrBackend.sense_voice': 'SenseVoice（ローカル）', 'settings.asrBackend.openai_compatible': 'OpenAI 互換文字起こし（リモート）', 'settings.asrBackend.mimo': 'MiMo ASR モデル（Xiaomi・リモート）',
 
   'settings.note.no_user_settings': 'ユーザー管理の接続設定はありません。', 'settings.note.no_active_connection': '選択中のアクティブな接続はありません。', 'settings.other_voice_backends': 'その他の音声合成バックエンド', 'settings.advanced': '詳細設定（リアルタイム調整）',
   'settings.saving_label': '保存中…', 'settings.placeholder.secret_replace': '設定済み — 入力して置換', 'settings.placeholder.secret_empty': '未設定', 'settings.action.save': '保存', 'settings.action.clear': 'クリア', 'settings.action.on': 'オン', 'settings.action.off': 'オフ',
-  'settings.restart_error': 'バックエンドの再起動に失敗しました', 'settings.restart_unowned': 'このバックエンドは本アプリが起動したものではないため、ここから再起動できません。起動した場所で再起動してください。', 'settings.provider_needs_key': '{provider} の API キーが未設定です。下で入力すると反映されます。',
-  'settings.label.interface_language': 'インターフェース言語', 'settings.label.chat_translation': 'チャット翻訳字幕', 'settings.label.current_model': '現在のモデルプロファイル',
-  'settings.option.english': 'English', 'settings.option.chinese': '简体中文', 'settings.option.japanese': '日本語', 'settings.option.auto': '自動',
-  'settings.status.registered': '登録済み', 'settings.status.configured': '設定済み', 'settings.status.needs_setup': '設定が必要', 'settings.status.not_installed': '未インストール', 'settings.status.remote': 'リモート', 'settings.status.none': 'なし',
+  'settings.label.interface_language': 'インターフェース言語', 'settings.label.current_model': '現在のモデルプロファイル',
+  'settings.option.english': 'English', 'settings.option.chinese': '简体中文', 'settings.option.japanese': '日本語',
+  'settings.status.configured': '設定済み', 'settings.status.needs_setup': '設定が必要',
   'settings.status.active': '有効',
 
-  'chat.error.decode_image': '画像をデコードできません', 'chat.error.read_image': '画像を読み込めません', 'chat.error.choose_image': '画像ファイルを選択してください。', 'chat.error.canvas': 'キャンバスを利用できません。', 'chat.error.send_failed': '送信失敗：バックエンドに接続できません', 'chat.error.attach_image': '画像を添付できません', 'chat.error.create_session': 'セッションを作成できません', 'chat.error.create_project_chat': 'Project チャットを作成できません', 'chat.error.select_project_directory': 'Project ディレクトリを選択できません', 'chat.error.create_project': 'Project を作成できません', 'chat.error.load_project_apps': 'Project アプリを読み込めません', 'chat.error.load_draft_apps': '最近の Draft アプリを読み込めません', 'chat.error.open_artifact_chat': 'Artifact 会話を開けません', 'chat.error.prepare_auip': 'AUIP アプリを準備できません', 'chat.error.launch_descriptor': 'Host が完全な AUIP 起動記述子を返しませんでした。', 'chat.error.host_refused': 'デスクトップ Host が AUIP アプリを拒否しました。', 'chat.error.promote_draft_app': 'Draft アプリを Project に昇格できません', 'chat.error.move_chat': 'チャットを移動できません', 'chat.error.promote_draft': 'Draft を Project に昇格できません', 'chat.error.delete_session': 'セッションを削除できません', 'chat.error.rename_session': 'セッション名を変更できません',
-  'chat.remove_image': '画像を削除', 'chat.refresh': '更新',
+  'chat.error.decode_image': '画像をデコードできません', 'chat.error.read_image': '画像を読み込めません', 'chat.error.choose_image': '画像ファイルを選択してください。', 'chat.error.canvas': 'キャンバスを利用できません。',
+  'chat.remove_image': '画像を削除',
 
   'scene.attach_image': '画像を添付', 'scene.attach_needs_visual_provider': '画像を添付するには OpenAI / Anthropic / Gemini 系プロトコルを選択してください',
-  'scene.approval_unavailable': '権限情報が不完全です。更新してから決定してください',
-  'scene.export_needs_recovery': 'エクスポートの判断が必要です',
-  'scene.approve_once': '今回のみ許可', 'scene.deny': '拒否', 'scene.retry_export': 'エクスポートを再試行', 'scene.abandon_export': 'エクスポートを中止',
   'scene.transcript': '会話履歴',
   'scene.new_task': '新しいタスク', 'scene.current_task': '現在のタスク',
   'scene.send': '送信', 'scene.mic_start': '音声入力を開始', 'scene.mic_stop': '音声入力を停止',
   'scene.placeholder': 'Amadeus に話しかける…', 'scene.placeholder_offline': 'バックエンドに接続中…',
   'scene.listening': '聞き取り中…', 'scene.streaming': '応答中…',
-  'scene.notice_permission': '権限が必要です：{detail}', 'scene.notice_failed': 'タスク失敗：{detail}',
   'scene.dismiss': '閉じる', 'scene.empty_transcript': 'このタスクにはまだ会話がありません。',
   'scene.starting': 'シーンを起動しています…', 'scene.waiting_backend': 'バックエンドを待機中…',
   'scene.failed_title': 'シーンを起動できませんでした', 'scene.retry': '再試行',
@@ -341,11 +308,9 @@ const JA: Messages = {
   'scene.role_user': 'あなた', 'scene.role_system': 'システム', 'scene.role_assistant': 'Amadeus',
   'scene.settings': '設定',
 
-  'scene.notify_title': 'Amadeus のタスクが終了しました',
-  'scene.work_needs_permission': '権限が必要です', 'chat.error.prefix': 'エラー：{error}',
 }
 
-export const MESSAGES: Record<Locale, Messages> = { 'en-US': EN, 'zh-CN': ZH, 'ja-JP': JA }
+const MESSAGES: Record<Locale, Messages> = { 'en-US': EN, 'zh-CN': ZH, 'ja-JP': JA }
 export type MessageKey = keyof typeof EN
 
 type SettingCopy = Record<'group' | 'field' | 'description' | 'groupDescription' | 'status' | 'option', Record<string, string>>
@@ -373,7 +338,7 @@ const JA_SETTINGS: SettingCopy = {
 }
 const SETTING_COPY: Record<Locale, SettingCopy> = { 'en-US': { group: {}, field: {}, description: {}, groupDescription: {}, status: {}, option: {} }, 'zh-CN': ZH_SETTINGS, 'ja-JP': JA_SETTINGS }
 
-export function translate(locale: Locale, key: MessageKey, fallback?: string, values?: Record<string, unknown>): string {
+function translate(locale: Locale, key: MessageKey, fallback?: string, values?: Record<string, unknown>): string {
   const template = MESSAGES[locale][key] ?? MESSAGES['en-US'][key] ?? fallback ?? key
   return interpolate(template, values)
 }

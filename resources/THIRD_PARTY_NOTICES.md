@@ -44,7 +44,7 @@ from any shipped artifact.
 
 ### Idle scene stills
 
-The stills under `assets/idle/` and their `scenario_graph.json` have no recorded
+The stills under `assets/idle/` have no recorded
 source, license, or consent, and reproduce character art whose rights stay with
 the original publishers. They are not covered by the repository's code license.
 See `resources/README.md` for their current tracking and packaging status.

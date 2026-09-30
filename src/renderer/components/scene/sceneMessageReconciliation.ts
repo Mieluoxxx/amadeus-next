@@ -25,7 +25,7 @@ function sameMessage(left: SceneMessage, right: SceneMessage): boolean {
       && (!left.sessionId || !right.sessionId || left.sessionId === right.sessionId))
 }
 
-export type MessageReconciliation = {
+type MessageReconciliation = {
   messages: SceneMessage[]
   acknowledged: ReadonlySet<string>
 }

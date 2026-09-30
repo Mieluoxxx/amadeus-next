@@ -2,11 +2,10 @@ export type Activity = 'idle' | 'listening' | 'thinking' | 'tool'
 export type Emotion = 'neutral' | 'thinking' | 'serious' | 'smile' | 'sad' | 'shy' | 'surprise' | 'angry'
 
 export type CharacterEvent =
-  | { type: 'activity'; activity: Activity; random: number }
-  | { type: 'cue'; emotion: Emotion; random: number }
-  | { type: 'playback'; status: 'waiting' | 'playing' | 'buffering' | 'ended'; now: number; random?: number }
-  | { type: 'cycle'; node: string; random: number }
-  | { type: 'tick'; now: number; random: number }
+  | { type: 'activity'; activity: Activity }
+  | { type: 'cue'; emotion: Emotion }
+  | { type: 'playback'; status: 'waiting' | 'playing' | 'buffering' | 'ended'; now: number }
+  | { type: 'tick'; now: number }
   | { type: 'reset' }
 
 const aliases: Record<string, Emotion> = {

@@ -1,8 +1,8 @@
 import { normalizeEmotion, type Emotion } from './character.ts'
 
-export type PresentationCue = { offset: number; emotion: Emotion }
+type PresentationCue = { offset: number; emotion: Emotion }
 /** `offset` is a position in the spoken text: the subtitle belongs to the speech that starts there. */
-export type PresentationSubtitle = { offset: number; text: string }
+type PresentationSubtitle = { offset: number; text: string }
 /**
  * `text` is what is spoken. `display` is what the chat shows (subtitle lines, or the spoken text when
  * a reply is not bilingual). `subtitles` are per-utterance lines timed against the spoken text.

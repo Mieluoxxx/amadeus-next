@@ -9,7 +9,6 @@ import type { VisualAttachment } from './visualAttachment'
 export default function SceneDock({
   connected, draft, onDraftChange, onSubmit, onToggleMic, asrListening, streaming,
   sessionTitle, model, models, onSelectModel,
-  translationEnabled,
   attachment, onClearAttachment, onPickAttachment, canAttach,
 }: {
   connected: boolean
@@ -24,7 +23,6 @@ export default function SceneDock({
   model: string
   models: { value: string; label: string }[]
   onSelectModel: (value: string) => void
-  translationEnabled: boolean
   attachment: VisualAttachment | null
   onClearAttachment: () => void
   onPickAttachment: (file: File) => void
@@ -148,7 +146,6 @@ export default function SceneDock({
               )}
             </div>
           )}
-          {translationEnabled && <span className="scene-translation-indicator" title={t('settings.label.chat_translation')} aria-label={t('settings.label.chat_translation')}>译</span>}
           {sessionTitle && <span className="scene-session-title" title={sessionTitle}>{sessionTitle}</span>}
           <span className="scene-composer-spacer" />
           <span className="scene-listening-label" role="status">{asrListening ? t('scene.listening') : ''}</span>

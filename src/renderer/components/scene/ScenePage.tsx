@@ -11,7 +11,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type
 import {
   AlertTriangle,
   ArrowRight,
-  CheckCircle2,
   Loader2,
   MessageSquare,
   Plus,
@@ -28,8 +27,6 @@ import {
   type ScenePanelKind,
   type SceneRegion,
 } from './sceneLayout'
-import { useSceneApproval } from './useSceneApproval'
-import { useSceneWorkCompletions } from './useSceneWorkCompletions'
 import {
   prepareImageAttachment,
   supportsDirectImage,
@@ -39,9 +36,6 @@ import { useSceneBridge } from './useSceneBridge'
 import { useSceneTransition } from './useSceneTransition'
 import { useSceneSession } from './useSceneSession'
 import SceneDock from './SceneDock'
-import {
-  sceneNotices,
-} from './sceneWork'
 
 type SendFn = (method: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
 type SubscribeFn = (method: string, fn: (params: Record<string, unknown>) => void) => () => void
@@ -62,25 +56,9 @@ export default function ScenePage({
   const { t } = useI18n()
   const session = useSceneSession({ send, subscribe, connected })
   const bridge = useSceneBridge({ send, subscribe, connected })
-  const approval = useSceneApproval({
-    send,
-    subscribe,
-    connected,
-    sessionChange: session.sessionChange,
-  })
-  const completions = useSceneWorkCompletions({ send, subscribe, connected })
-  const { pending: pendingCompletions, markAnnounced } = completions
   const [panel, setPanel] = useState<ScenePanelKind | null>(null)
   const [acknowledgedNotices, setAcknowledgedNotices] = useState<string[]>([])
   const [pendingAttachment, setPendingAttachment] = useState<VisualAttachment | null>(null)
-  /**
-   * Completions recorded in the window itself, newest first. They survive the
-   * system notification being suppressed or unavailable, and clear only when
-   * the user has seen them.
-   */
-  const [inAppCompletions, setInAppCompletions] = useState<
-    Array<{ key: string; workItemId: string; title: string }>
-  >([])
   const [viewport, setViewport] = useState(() => ({
     width: window.innerWidth,
     height: window.innerHeight,
@@ -97,76 +75,23 @@ export default function ScenePage({
   const transition = useSceneTransition(viewport.width, viewport.height, panel, bridge.frameRef, bridge.loadId)
   const layout = transition.layout
   const frameStyle = useMemo(() => sceneFrameStyle(layout.fit), [layout.fit])
-  const permissions = useMemo(
-    () => approval.authorizations.map(authorization => ({
-      key: authorization.key,
-      requestId: authorization.requestId,
-      workItemId: authorization.workItemId,
-      title: authorization.reason || authorization.capability || authorization.requestId,
-      detail: authorization.scope.join(' '),
-    })),
-    [approval.authorizations],
-  )
   const notices = useMemo(
-    () => {
-      const derived: Array<{ key: string; tone: 'attention' | 'error'; text: string }> = approval.authorizations.map(authorization => ({
-        key: `ledger:${authorization.key}`,
-        tone: 'attention' as const,
-        text: t('scene.notice_permission', undefined, {
-          detail: authorization.reason || authorization.capability || authorization.requestId,
-        }),
-      }))
-      derived.push(...sceneNotices(session.activities).filter(notice => notice.kind !== 'permission')
-        .map(notice => ({
-          key: notice.key,
-          tone: notice.tone,
-          text: t('scene.notice_failed', undefined, { detail: notice.detail }),
-        })))
-      if (session.error) {
-        derived.unshift({
-          key: `session-error:${session.error}`,
-          tone: 'error' as const,
-          text: session.error,
-        })
-      }
-      return derived
-    },
-    [approval.authorizations, session.activities, session.error, t],
+    () => session.error
+      ? [{ key: `session-error:${session.error}`, tone: 'error' as const, text: session.error }]
+      : [],
+    [session.error],
   )
   const visibleNotices = useMemo(
     () => notices.filter(notice => !acknowledgedNotices.includes(notice.key)),
     [notices, acknowledgedNotices],
   )
 
-  // Dismissal is per-appearance: a permission that is still unresolved stays
-  // discoverable through the summary chip, and a new resolution re-surfaces.
+  // Dismissal is per-task: an error the user hid in one task must not stay hidden in the next.
   useEffect(() => setAcknowledgedNotices([]), [session.sessionId])
 
-  // A notice means "this task's completion assessment became verified complete"
-  // — the ledger's own transition, not a Provider attempt ending.
-  //
-  // The in-app record is written first and unconditionally: a banner can be
-  // suppressed by Do Not Disturb, notification permission can be denied, and a
-  // platform may not support notifications at all. The completion must still be
-  // discoverable in the window, which is what AC7 requires.
-  useEffect(() => {
-    for (const completion of pendingCompletions) {
-      markAnnounced(completion.key)
-      setInAppCompletions(previous => (
-        previous.some(item => item.key === completion.key) ? previous : [completion, ...previous]
-      ))
-      void window.amadeus?.notifyTaskComplete({
-        key: completion.key,
-        title: t('scene.notify_title'),
-        body: completion.title,
-        workItemId: completion.workItemId,
-      }).catch(() => {})
-    }
-  }, [pendingCompletions, markAnnounced, t])
-
   // React only to the accepted session-change record from useSceneSession. Raw
-  // broadcasts are intentionally not consumed here: stale context events must
-  // not clear the selected WorkItem or Artifact context.
+  // broadcasts are intentionally not consumed here: a stale event must not
+  // reopen the transcript.
   useEffect(() => {
     const change = session.sessionChange
     if (!change) return
@@ -217,7 +142,6 @@ export default function ScenePage({
       model={session.model}
       models={session.models}
       onSelectModel={value => void session.selectModel(value)}
-      translationEnabled={session.translationEnabled}
       attachment={pendingAttachment}
       onClearAttachment={() => setPendingAttachment(null)}
       onPickAttachment={file => {
@@ -334,40 +258,6 @@ export default function ScenePage({
           onDismiss={key => setAcknowledgedNotices(previous => [...previous, key])}
           onOpenSettings={() => setPanel('more')}
         />
-
-      {/* In-window completion record. A system notification can be suppressed by
-          Do Not Disturb or refused by the user; the completion remains visible
-          here until dismissed. */}
-        {inAppCompletions.length > 0 && (
-          <div
-            className="flex max-h-[40%] shrink-0 flex-col items-stretch gap-1 overflow-hidden"
-            data-testid="scene-completions"
-          >
-            {inAppCompletions.slice(0, 1).map(completion => (
-              <div
-                key={completion.key}
-                data-testid="scene-completion-item"
-                data-work-item={completion.workItemId}
-                className="flex max-w-full items-center gap-2 rounded-xl border border-emerald-500/30 bg-[#0f1a14]/95 px-3 py-1.5 text-[11px] text-emerald-200 backdrop-blur-xl"
-              >
-                <CheckCircle2 className="w-3 h-3 shrink-0" />
-                <span className="min-w-0 flex-1 truncate" title={completion.title}>
-                  {completion.title}
-                </span>
-                <button
-                  onClick={() => setInAppCompletions(previous => previous.filter(item => item.key !== completion.key))}
-                  data-testid="scene-completion-dismiss"
-                  className="shrink-0 text-[10px] text-[var(--muted)] hover:text-[var(--text)]"
-                >
-                  {t('scene.dismiss')}
-                </button>
-              </div>
-            ))}
-            {inAppCompletions.length > 1 && (
-              <span className="text-[10px] text-[var(--muted)]">+{inAppCompletions.length - 1}</span>
-            )}
-          </div>
-        )}
       </div>
 
       {transition.dock && (
@@ -389,9 +279,6 @@ export default function ScenePage({
           panelRef={transition.panelRef}
           exiting={!layout.panel}
           session={session}
-          permissions={permissions}
-          approval={approval}
-          connected={connected}
           send={send}
           subscribe={subscribe}
         />
@@ -475,9 +362,6 @@ function ScenePanelFrame({
   panelRef,
   exiting,
   session,
-  permissions,
-  approval,
-  connected,
   send,
   subscribe,
 }: {
@@ -485,9 +369,6 @@ function ScenePanelFrame({
   panelRef: RefObject<HTMLDivElement | null>
   exiting: boolean
   session: ReturnType<typeof useSceneSession>
-  permissions: Array<{ key: string; requestId: string; workItemId: string; title: string; detail: string }>
-  approval: ReturnType<typeof useSceneApproval>
-  connected: boolean
   send: SendFn
   subscribe: SubscribeFn
 }) {
@@ -553,13 +434,10 @@ function ScenePanelFrame({
             <SceneTranscript
               messages={session.messages}
               streaming={session.streaming}
-              translations={session.translations}
-              translationKey={session.translationKey}
             />
         )}
         {kind === 'more' && (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="scene-aux">
-            <SceneApprovalActions permissions={permissions} approval={approval} connected={connected} />
             <SettingsPage send={send} subscribe={subscribe} />
           </div>
         )}
@@ -651,13 +529,9 @@ function ScenePlaceholder({
 function SceneTranscript({
   messages,
   streaming,
-  translations,
-  translationKey,
 }: {
   messages: Array<{ role: 'user' | 'assistant' | 'system'; text: string; turnId?: string; streaming?: boolean; delivery?: string; id?: string }>
   streaming: boolean
-  translations: Record<string, string>
-  translationKey: (message: { role: 'user' | 'assistant' | 'system'; text: string; turnId?: string; streaming?: boolean }, index: number) => string
 }) {
   const { t } = useI18n()
   const endRef = useRef<HTMLDivElement>(null)
@@ -692,125 +566,9 @@ function SceneTranscript({
             {message.streaming ? ` · ${t('scene.streaming')}` : ''}
           </div>
           <div className="scene-transcript-text">{message.text}</div>
-          {message.role === 'assistant' && !message.streaming && translationKey(message, index) && translations[translationKey(message, index)] ? (
-            <div className="scene-transcript-translation" data-testid="scene-translation">
-              {translations[translationKey(message, index)]}
-            </div>
-          ) : null}
         </div>
       ))}
       <div ref={endRef} />
     </div>
   )
 }
-
-function SceneApprovalActions({
-  permissions,
-  approval,
-  connected,
-}: {
-  permissions: Array<{ key: string; requestId: string; workItemId: string; title: string; detail: string }>
-  approval: ReturnType<typeof useSceneApproval>
-  connected: boolean
-}) {
-  const { t } = useI18n()
-  if (!approval.error && !approval.authorization && !permissions.length) return null
-  return (
-    <div className="flex shrink-0 flex-col gap-2 p-3" data-testid="scene-approval-actions">
-      {approval.error && !approval.authorization && (
-        <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300" data-testid="scene-approval-error-orphaned">
-          <div>{approval.error}</div>
-          <button type="button" onClick={approval.refresh} className="mt-1 underline" data-testid="scene-approval-refresh-orphaned">
-            {t('chat.refresh')}
-          </button>
-        </div>
-      )}
-      {approval.authorization && (
-        <div
-          className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200"
-            data-testid="scene-approval-card"
-          data-kind={approval.authorization.kind}
-          data-request-id={approval.authorization.requestId}
-        >
-          <div className="font-medium">
-            {approval.authorization.kind === 'permission'
-              ? t('scene.work_needs_permission')
-              : t('scene.export_needs_recovery')}
-          </div>
-          {approval.authorization.reason ? (
-            <div className="mt-1 break-words" data-testid="scene-approval-reason">
-              {approval.authorization.reason}
-            </div>
-          ) : null}
-          {approval.authorization.capability || approval.authorization.scope.length > 0 ? (
-            <div className="mt-0.5 break-words text-[10px] text-[var(--muted)]" data-testid="scene-approval-scope">
-              {[approval.authorization.capability, approval.authorization.action].filter(Boolean).join(' ')}
-              {approval.authorization.scope.length > 0 ? ` · ${approval.authorization.scope.join(' ')}` : ''}
-            </div>
-          ) : null}
-          <div className="mt-0.5 break-all font-mono text-[10px] text-[var(--muted)]">
-            {approval.authorization.requestId}
-          </div>
-          {!approval.authorization.resolvable ? (
-            <div className="mt-1 flex items-center gap-2 text-[var(--muted)]" data-testid="scene-approval-unavailable">
-              <span>{t('scene.approval_unavailable')}</span>
-              <button type="button" onClick={approval.refresh} className="underline" data-testid="scene-approval-refresh">
-                {t('chat.refresh')}
-              </button>
-            </div>
-          ) : null}
-          {approval.error ? (
-            <div className="mt-1 flex items-center gap-2 text-rose-300" data-testid="scene-approval-error">
-              <span>{approval.error}</span>
-              <button type="button" onClick={approval.refresh} className="underline" data-testid="scene-approval-refresh-error">
-                {t('chat.refresh')}
-              </button>
-            </div>
-          ) : null}
-          <div className="mt-1.5 flex items-center gap-1.5">
-            {approval.authorization.canAllow ? (
-            <button
-              onClick={() => { void approval.allow() }}
-              disabled={Boolean(approval.resolving) || !connected}
-              data-testid="scene-approval-allow"
-              className="rounded-md border border-emerald-500/40 bg-emerald-500/15 px-2 py-1 text-[11px] text-emerald-200 disabled:opacity-40"
-            >
-              {approval.authorization.kind === 'permission' ? t('scene.approve_once') : t('scene.retry_export')}
-            </button>
-            ) : null}
-            {approval.authorization.canDeny ? (
-            <button
-              onClick={() => { void approval.deny() }}
-              disabled={Boolean(approval.resolving) || !connected}
-              data-testid="scene-approval-deny"
-              className="rounded-md border border-rose-500/40 bg-rose-500/15 px-2 py-1 text-[11px] text-rose-200 disabled:opacity-40"
-            >
-              {approval.authorization.kind === 'permission' ? t('scene.deny') : t('scene.abandon_export')}
-            </button>
-            ) : null}
-            {approval.resolving ? (
-              <Loader2 className="w-3 h-3 animate-spin text-[var(--muted)]" />
-            ) : null}
-          </div>
-        </div>
-      )}
-      {permissions
-        .filter(permission => permission.requestId !== approval.authorization?.requestId)
-        .map(permission => (
-          <div
-            key={permission.key}
-            className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200"
-            data-testid="scene-ledger-permission"
-            data-request-id={permission.requestId}
-          >
-            <div className="font-medium">{t('scene.work_needs_permission')}</div>
-            <div className="mt-1 break-words">{permission.title}</div>
-            {permission.detail ? <div className="mt-0.5 break-words text-[10px] text-[var(--muted)]">{permission.detail}</div> : null}
-          </div>
-        ))}
-
-
-    </div>
-  )
-}
-

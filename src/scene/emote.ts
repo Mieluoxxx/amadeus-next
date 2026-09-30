@@ -15,11 +15,11 @@ type Player = {
 }
 
 /** bake 出来的部件查表数据。 */
-export type PartTable = { label: string; defaultValue: number; options: { lower: number; upper: number; writes: Record<string, number> }[] }[]
+type PartTable = { label: string; defaultValue: number; options: { lower: number; upper: number; writes: Record<string, number> }[] }[]
 /** 被摘掉的离散选择器轨道：时间线标签 → [[变量, 取值]…]。 */
-export type Snaps = Record<string, [string, number][]>
+type Snaps = Record<string, [string, number][]>
 /** 切换表情时离散部件的补写延迟，约为头身线性过渡（350ms）的一半。 */
-export const SNAP_DELAY_MS = 175
+const SNAP_DELAY_MS = 175
 
 /** 只用查表数据算部件显隐，语义与实验室的 partVariables 一致（已在实验室逐样例验过）。 */
 export function partVariablesFromTable(table: PartTable, values: Record<string, number>): Record<string, number> {
@@ -54,7 +54,7 @@ const THINKING_ENTER_TRACKS = ['head_UD', 'head_LR', 'head_slant', 'body_LR', 'f
 export const SPOKEN_THINKING_MS = 2000
 
 /** 头部停留后线性转动，眼球独立往返；阶段边界的姿态连续。 */
-export function thinkingScanAt(elapsedMs: number): { head: number; eye: number } {
+function thinkingScanAt(elapsedMs: number): { head: number; eye: number } {
   const span = THINKING_SCAN.holdMs + THINKING_SCAN.transitionMs
   const time = Math.max(0, elapsedMs) % (span * 2)
   const phase = time % span

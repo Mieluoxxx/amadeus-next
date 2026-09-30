@@ -11,8 +11,7 @@
  *     from the embedded page itself, and a frame that never reports readiness
  *     times out into an error state rather than pretending to be a scene;
  *   - readiness messages are only trusted from this hook's own iframe, at the
- *     validated asset origin, for the current load generation;
- *   - a deliberate stop is not a crash: it must not auto-restart.
+ *     validated asset origin, for the current load generation.
  */
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
@@ -20,7 +19,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 type SendFn = (method: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
 type SubscribeFn = (method: string, fn: (params: Record<string, unknown>) => void) => () => void
 
-export type SceneBridgeStatus = 'idle' | 'starting' | 'ready' | 'error'
+type SceneBridgeStatus = 'idle' | 'starting' | 'ready' | 'error'
 
 /**
  * Whether the character sprite is actually drawn.
@@ -30,9 +29,9 @@ export type SceneBridgeStatus = 'idle' | 'starting' | 'ready' | 'error'
  * asked for the character to be always visible, so this is tracked rather than
  * assumed.
  */
-export type CharacterPresence = boolean | null
+type CharacterPresence = boolean | null
 
-export type SceneBridgeState = {
+type SceneBridgeState = {
   url: string
   /**
    * Opaque per-load token. It travels to the embedded page as a query parameter
@@ -61,7 +60,7 @@ const RETRY_BASE_MS = 2000
 const READY_TIMEOUT_MS = 20000
 
 /** Random per-load token; never a secret, only proof of "which load". */
-export function sceneLoadToken(): string {
+function sceneLoadToken(): string {
   const bytes = new Uint8Array(12)
   crypto.getRandomValues(bytes)
   return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
@@ -80,7 +79,7 @@ export function isCurrentLoadMessage(
 }
 
 /** The embedded scene may only come from this exact loopback page. */
-export function validateSceneUrl(rawUrl: string): { url: string; assetOrigin: string } | null {
+function validateSceneUrl(rawUrl: string): { url: string; assetOrigin: string } | null {
   try {
     const parsed = new URL(String(rawUrl || ''))
     if (parsed.protocol !== 'http:') return null
@@ -136,13 +135,10 @@ export function useSceneBridge({
   const generationRef = useRef(0)
   /** Generation whose load may still report readiness. Not the same as `generationRef`. */
   const activeGenerationRef = useRef(-1)
-  const urlRef = useRef('')
   const originRef = useRef('')
   const attemptsRef = useRef(0)
   const retryTimerRef = useRef<number | null>(null)
   const readyTimerRef = useRef<number | null>(null)
-  /** Set while a deliberate stop is in flight, so the exit event is not a crash. */
-  const deliberateStopRef = useRef(false)
   const startRef = useRef<() => Promise<void>>(async () => {})
 
   const clearTimers = useCallback(() => {
@@ -168,7 +164,6 @@ export function useSceneBridge({
     const token = sceneLoadToken()
     const sceneUrl = new URL(validated.url)
     sceneUrl.searchParams.set(SCENE_LOAD_TOKEN_PARAM, token)
-    urlRef.current = sceneUrl.toString()
     tokenRef.current = token
     originRef.current = validated.assetOrigin
     activeGenerationRef.current = generation
@@ -195,11 +190,9 @@ export function useSceneBridge({
   const start = useCallback(async () => {
     const generation = ++generationRef.current
     activeGenerationRef.current = -1
-    urlRef.current = ''
     tokenRef.current = ''
     originRef.current = ''
     clearTimers()
-    deliberateStopRef.current = false
     setState(previous => previous.status === 'starting'
       ? previous
       : { ...previous, url: '', loadToken: '', assetOrigin: '', status: 'starting', error: '' })
@@ -250,28 +243,6 @@ export function useSceneBridge({
     } finally { setImportingAssets(false) }
   }, [clearTimers, retry, send])
 
-  /**
-   * Stops the asset/bridge host behind the scene. Only the debug backend console
-   * exposes this. A deliberate stop must not be mistaken for a crash, so it
-   * invalidates the generation and suppresses the restart that the exit event
-   * would otherwise trigger.
-   */
-  const stop = useCallback(async () => {
-    generationRef.current += 1
-    activeGenerationRef.current = -1
-    deliberateStopRef.current = true
-    clearTimers()
-    urlRef.current = ''
-    tokenRef.current = ''
-    originRef.current = ''
-    setState(previous => ({ url: '', loadToken: '', assetOrigin: '', status: 'idle', error: '', character: null, loadId: previous.loadId }))
-    try {
-      await send('wallpaper.stop', {})
-    } catch {
-      // The host may already be gone.
-    }
-  }, [send, clearTimers])
-
   const reportSceneMessage = useCallback((event: MessageEvent) => {
     if (!isTrustedSceneMessage(event, frameRef.current, originRef.current)) return
     const payload = event.data as Record<string, unknown>
@@ -320,27 +291,7 @@ export function useSceneBridge({
       return
     }
     void start()
-    const unsubscribeReload = subscribe('scene.reload', () => { void startRef.current() })
-    const unsubscribeReady = subscribe('wallpaper.ready', () => {
-      // The host announced readiness; if this hook has no validated URL yet,
-      // ask again. Read the URL from a ref so the handler never acts on a stale
-      // render closure.
-      if (!urlRef.current) void startRef.current()
-    })
-    const unsubscribeExited = subscribe('wallpaper.exited', () => {
-      if (deliberateStopRef.current) return
-      attemptsRef.current = 0
-      urlRef.current = ''
-      tokenRef.current = ''
-      originRef.current = ''
-      setState(previous => ({ ...previous, url: '', loadToken: '', assetOrigin: '', status: 'starting', error: '' }))
-      void startRef.current()
-    })
-    return () => {
-      unsubscribeReload()
-      unsubscribeReady()
-      unsubscribeExited()
-    }
+    return subscribe('scene.reload', () => { void startRef.current() })
   }, [connected, start, subscribe, clearTimers])
 
   useEffect(() => () => {
@@ -349,5 +300,5 @@ export function useSceneBridge({
     clearTimers()
   }, [clearTimers])
 
-  return { ...state, frameRef: frameRef as RefObject<HTMLIFrameElement | null>, retry, importAssets, importingAssets, stop, reportFrameError }
+  return { ...state, frameRef: frameRef as RefObject<HTMLIFrameElement | null>, retry, importAssets, importingAssets, reportFrameError }
 }

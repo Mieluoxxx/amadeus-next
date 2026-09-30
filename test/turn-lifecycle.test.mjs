@@ -1,23 +1,17 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
-import vm from 'node:vm'
 import path from 'node:path'
-import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import ts from 'typescript'
-import { PresentationText } from '../src/shared/presentation.ts'
-import { sameTurn, isTurnKey } from '../src/shared/voice.ts'
+import { AppRuntime } from '../src/main/appRuntime.ts'
+import { SessionStore } from '../src/main/sessionStore.ts'
+import { SpeechBridge } from '../src/main/speechBridge.ts'
 
 function runtime(env = {}, clock = { value: Date.now() }, emote = {}) {
-  const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
-  const block = source.slice(source.indexOf('class AppRuntime {'), source.indexOf('\nlet runtime: AppRuntime'))
-  const js = ts.transpileModule(block, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
   const calls = [], prompts = [], timers = new Map()
   let timerId = 0
   // Fake clock so the conversation-idle timer can be stepped without waiting.
-  class FakeDate extends Date { static now() { return clock.value } }
   const advance = ms => {
     const end = clock.value + ms
     while (true) {
@@ -31,16 +25,9 @@ function runtime(env = {}, clock = { value: Date.now() }, emote = {}) {
     clock.value = end
   }
   let emitFish
-  const Runtime = vm.runInNewContext(js + '\nAppRuntime', {
-    path, randomUUID, process: { env }, MODULE_DIR: '/fixture', projectRoot: () => '/fixture', Date: FakeDate, performance: { now: () => clock.value },
-    setTimeout(fn, ms) { const id = ++timerId; timers.set(id, { fn, at: clock.value + ms }); return id },
-    clearTimeout: id => timers.delete(id),
-    setInterval() { assert.fail('conversation idle must use a one-shot timer, not polling') },
-    app: { getPath: () => '/fixture', exit: code => calls.push(['exit', code]) }, jsonFile: () => ({}), settingsPath: () => '/fixture/settings.yaml', readYaml: () => ({}), writeYaml() {}, safeStorage: { isEncryptionAvailable: () => false },
-    mkdirSync() {}, writeFileSync() {}, existsSync: () => false,
+  const fakes = {
     dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
     timestampedSessionTitle: () => '新对话-2026-01-01-00-00',
-    PresentationText, sameTurn, isTurnKey, URL,
     SessionStore: class { sessions = [{ id: 'one', title: 'One', messages: [] }, { id: 'two', title: 'Two', messages: [] }]; save() {} },
     SceneHost: class { url = 'http://127.0.0.1:1234/render/web/wallpaper_engine.html'; async start() {}; setEmoteAssets(...args) { calls.push(['emote-assets', ...args]) }; reload() { calls.push(['reload-scene']) }; close() {} },
     // 模型烘焙是原生工具调用：被测类只依赖它的返回值。
@@ -57,8 +44,26 @@ function runtime(env = {}, clock = { value: Date.now() }, emote = {}) {
     },
     SpeechBridge: class { start(locale) { calls.push(['listen', locale]); return { ok: true } }; stop() { calls.push(['stop-listening']) }; finish(manual) { calls.push(['finish-listening', manual]); return { ok: true } }; dispose() { calls.push(['dispose-speech']) } },
     FishTts: class { configured = true; constructor(_config, emit) { emitFish = emit }; start() {}; push() {}; finish() {}; abort() {} },
+  }
+  const app = new AppRuntime({
+    env, root: '/fixture', moduleDir: '/fixture', userData: '/fixture',
+    clock: {
+      now: () => clock.value,
+      setTimeout(fn, ms) { const id = ++timerId; timers.set(id, { fn, at: clock.value + ms }); return id },
+      clearTimeout: id => timers.delete(id),
+    },
+    store: new fakes.SessionStore(),
+    settings: { read: () => ({}), write() {} },
+    safeStorage: { isEncryptionAvailable: () => false },
+    dialog: fakes.dialog,
+    exit: code => calls.push(['exit', code]),
+    timestampedSessionTitle: fakes.timestampedSessionTitle,
+    verifyEmoteRuntime: fakes.verifyEmoteRuntime, ensureBakedModel: fakes.ensureBakedModel, importEmoteAssets: fakes.importEmoteAssets,
+    createScene: () => new fakes.SceneHost(),
+    createPi: () => new fakes.PiHost(),
+    createSpeech: () => new fakes.SpeechBridge(),
+    createTts: (config, emit) => new fakes.FishTts(config, emit),
   })
-  const app = new Runtime()
   app.emit = (method, params) => calls.push([method, params])
   return { app, calls, prompts, timers, advance, emitFish: event => emitFish(event) }
 }
@@ -353,12 +358,10 @@ test('unexpected scene loss stops speech but does not cancel or replay the runni
 })
 
 test('speech helper replacement resets listening and ignores the retired helper exit', () => {
-  const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
-  const block = source.slice(source.indexOf('class SpeechBridge {'), source.indexOf('class AppRuntime {'))
   const children = [], writes = [], events = []
-  const Bridge = vm.runInNewContext(ts.transpileModule(block, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText + '\nSpeechBridge', {
-    path, setTimeout, clearTimeout, MODULE_DIR: '/fixture', existsSync: () => true, process: { platform: 'darwin', env: {} },
-    spawn() {
+  const bridge = new SpeechBridge((...event) => events.push(event), {
+    platform: 'darwin', locateHelper: () => '/fixture/AmadeusSpeechRecognizer', pauseMs: 1500, clock: { setTimeout, clearTimeout },
+    spawnHelper() {
       const child = new EventEmitter()
       child.stdout = new EventEmitter()
       child.stdin = { writable: true, write: text => writes.push(JSON.parse(text)) }
@@ -367,7 +370,6 @@ test('speech helper replacement resets listening and ignores the retired helper 
       return child
     },
   })
-  const bridge = new Bridge((...event) => events.push(event))
   assert.equal(bridge.start('zh-CN').ok, true)
   bridge.dispose()
   assert.equal(bridge.start('en-US').ok, true)
@@ -384,15 +386,12 @@ test('speech helper replacement resets listening and ignores the retired helper 
 test('the selected desktop session survives restart and legacy history remains readable', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'amadeus-history-'))
   try {
-    const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
-    const block = source.slice(source.indexOf('class SessionStore {'), source.indexOf('class SpeechBridge {'))
-    const Store = vm.runInNewContext(ts.transpileModule(block, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText + '\nSessionStore', { path, readFileSync, writeFileSync, mkdirSync })
     const file = path.join(root, 'history.json')
     writeFileSync(file, JSON.stringify([{ id: 'one', title: 'Legacy', messages: [{ role: 'user', text: 'keep me' }] }, { id: 'two', title: 'Two', messages: [] }]))
-    const store = new Store(file)
+    const store = new SessionStore(file)
     store.currentId = 'two'
     store.save()
-    const restored = new Store(file)
+    const restored = new SessionStore(file)
     assert.equal(restored.currentId, 'two')
     assert.equal(restored.sessions[0].messages[0].text, 'keep me')
   } finally { rmSync(root, { recursive: true, force: true }) }
