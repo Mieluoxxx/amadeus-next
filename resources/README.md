@@ -6,8 +6,7 @@ scene host serves:
 - `emote/`: locally provisioned FreeMote runtime and all four AB/C ordinary-clothes/white-coat model packs. Developer-local; excluded from packaging. The PSB parser is a pinned native artifact under `vendor/emote-loader/` (see `docs/emote-loader-integration.md`).
 - `assets/idle/`: the idle scene stills and `scenario_graph.json`.
 - `assets/images/`: room background, ambient layers, and subtitle frame.
-- `render/web/`: room drawing scripts, PixiJS, retained Basis/KTX2 decoding,
-  and `wallpaper_engine.html`. The legacy `renderer.js` is no longer loaded.
+- `render/web/`: room drawing scripts, PixiJS and `wallpaper_engine.html`.
 - `wallpaper/crt_config.json`: authored room geometry.
 - `LICENSE`, `LICENSES/`, `THIRD_PARTY_NOTICES.md`: copied license/provenance notices.
 

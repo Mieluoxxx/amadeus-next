@@ -9,24 +9,6 @@ import WebSocket from 'ws'
 import { encode, decode } from '@msgpack/msgpack'
 import { FishTts } from '../src/main/fishTts.ts'
 
-test('the Pixi frame driver reports cycles even when a render tick skips over frame zero', () => {
-  const source = readFileSync(new URL('../resources/render/web/renderer.js', import.meta.url), 'utf8')
-  const start = source.indexOf('    _startIdleTicker() {')
-  const end = source.indexOf('\n    _notifyCycleComplete(', start)
-  let tick, cycles = 0
-  const Driver = vm.runInNewContext('(class {' + source.slice(start, end) + '})', {
-    app: { ticker: { deltaMS: 68, add: callback => { tick = callback } } }, console: { log() {} },
-  })
-  const driver = new Driver()
-  Object.assign(driver, { _idleAnimationEnabled: true, _held: false, _transitionQueue: [], _currentEmotion: 'loop', _frameIdx: 119,
-    _frameIntervals: { loop: 17 }, _clipConfigs: {}, _mouthConfigs: {}, _getEmotionFrames: () => Array(120).fill(true),
-    _showFrame() {}, _notifyCycleComplete: () => { cycles++ },
-  })
-  driver._startIdleTicker(); tick()
-  assert.equal(driver._frameIdx, 3)
-  assert.equal(cycles, 1)
-})
-
 function audioWorkletHarness() {
   const messages = []
   let Processor

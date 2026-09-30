@@ -2,7 +2,7 @@
  * Desktop wallpaper adapter.
  *
  * Ownership boundary:
- * - character runtime delegates to render/web/renderer.js
+ * - character runtime is injected by src/scene/emote.ts as window.renderApp
  * - desktop scene owns wallpaper background, CRT mask, and occasional scanline noise
  * - wallpaperApp keeps the Python-facing flat API for compatibility
  */

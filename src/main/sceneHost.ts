@@ -30,7 +30,7 @@ export class SceneHost {
       if (!route || !file || !existsSync(file) || !statSync(file).isFile()) { response.writeHead(404); response.end('not found'); return }
       const real = path.relative(realpathSync(route[1]), realpathSync(file))
       if (real.startsWith('..') || path.isAbsolute(real)) { response.writeHead(403); response.end(); return }
-      const mime: Record<string, string> = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.json': 'application/json', '.wasm': 'application/wasm', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ktx2': 'image/ktx2', '.wav': 'audio/wav', '.mp3': 'audio/mpeg' }
+      const mime: Record<string, string> = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.json': 'application/json', '.wasm': 'application/wasm', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.wav': 'audio/wav', '.mp3': 'audio/mpeg' }
       response.setHeader('Content-Type', mime[path.extname(file)] || 'application/octet-stream')
       const stream = createReadStream(file)
       stream.on('error', () => response.destroy())

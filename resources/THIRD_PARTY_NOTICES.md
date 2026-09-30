@@ -58,17 +58,6 @@ See `resources/README.md` for their current tracking and packaging status.
 - License: MIT
 - Local evidence: notice retained in `render/web/vendor/pixi.min.js`.
 
-## pixi-basis-ktx2
-
-- Source: <https://github.com/Sparcks/pixi-basis-ktx2>
-- Source revision: npm `pixi-basis-ktx2@0.0.22`, gitHead
-  `8363b5281448fdf8f7b4745dfbb6c466faa800a7`
-- License: MIT, copyright Kristof Van Der Haeghen (2022-2025)
-- Local evidence: `LICENSES/pixi-basis-ktx2-MIT.txt`
-
-The Basis/KTX2 decoder is retained alongside the PixiJS bundle. It is no longer
-reached by the current scene entry points, which load only `pixi.min.js`.
-
 ## First-party brand assets
 
 See `LICENSES/FIRST-PARTY-BRAND-ASSETS.md` for the checked-in first-party

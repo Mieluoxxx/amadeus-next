@@ -326,7 +326,7 @@ renderer.js 提供:       getPixiApp / setSpriteViewportBounds / setSpriteViewpo
 ## 第三方 notices 与证据漂移（已执行）
 
 `resources/THIRD_PARTY_NOTICES.md` 曾引用 11 个证据文件，实际只有 3 个存在
-（`FIRST-PARTY-BRAND-ASSETS.md`、`FreeMote-NOTICE.md`、`pixi-basis-ktx2-MIT.txt`）。
+（`FIRST-PARTY-BRAND-ASSETS.md`、`FreeMote-NOTICE.md`、`pixi-basis-ktx2-MIT.txt`；后者随 pixi-basis-ktx2 一并删除）。
 
 其中 5 项属于本项目并未包含的组件（GPT-SoVITS、Bert-VITS2、AP-BWE、Emote 运行时
 核心、Emote 显示库）；`provenance.json` 是来源清单而非组件，
@@ -336,6 +336,5 @@ renderer.js 提供:       getPixiApp / setSpriteViewportBounds / setSpriteViewpo
 pixi-basis-ktx2、Keyboard Soundpack #1、first-party 品牌资产、角色/模型/语音资产的
 排除声明。所有引用路径经 `LICENSES/` 存在性校验通过，无悬空引用。
 
-注：pixi-basis-ktx2 的解码器文件仍在仓库内，但当前场景入口只加载 `pixi.min.js`，
-这批资产（`vendor/basis_transcoder.*`、`vendor/pixi-basis-ktx2.global.js`）已不可达，
-是否一并删除与 notices 无关，属于独立的资产清理决策。
+注：pixi-basis-ktx2 解码器（`vendor/basis_transcoder.*`、`vendor/pixi-basis-ktx2.global.js`）与
+未被加载的 `renderer.js` 已随后续清理整体删除，`renderApp` 由 `src/scene/emote.ts` 提供。

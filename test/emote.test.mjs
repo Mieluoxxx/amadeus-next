@@ -289,7 +289,7 @@ test('scene serves local E-mote modules, preserves background assets, and reject
     await mkdir(path.join(root, 'assets/spriteforge'), { recursive: true })
     await writeFile(path.join(root, 'emote/psb.mjs'), 'export const fixture = true')
     await writeFile(path.join(root, 'secret.txt'), 'not a scene asset')
-    await writeFile(path.join(root, 'assets/spriteforge/frame.ktx2'), 'legacy')
+    await writeFile(path.join(root, 'assets/spriteforge/frame.png'), 'legacy')
     await symlink(path.join(root, 'secret.txt'), path.join(root, 'emote/escaped.txt'))
     await host.start()
     const init = await (await fetch(host.origin + '/next/init')).json()
@@ -298,10 +298,10 @@ test('scene serves local E-mote modules, preserves background assets, and reject
     const module = await fetch(host.origin + '/emote/psb.mjs')
     assert.equal(module.headers.get('content-type'), 'text/javascript')
     assert.equal(await module.text(), 'export const fixture = true')
-    const background = await fetch(host.origin + '/assets/spriteforge/frame.ktx2')
+    const background = await fetch(host.origin + '/assets/spriteforge/frame.png')
     assert.equal(background.status, 200)
-    assert.equal(background.headers.get('content-type'), 'image/ktx2')
-    for (const url of ['/character/frame.ktx2', '/emote/%2e%2e%2fsecret.txt', '/emote/missing.png']) {
+    assert.equal(background.headers.get('content-type'), 'image/png')
+    for (const url of ['/character/frame.png', '/emote/%2e%2e%2fsecret.txt', '/emote/missing.png']) {
       assert.equal((await fetch(host.origin + url)).status, 404, url)
     }
     assert.equal((await fetch(host.origin + '/emote/escaped.txt')).status, 403)
