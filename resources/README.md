@@ -6,10 +6,10 @@ scene host serves:
 - `scene/`: room scene and stage container.
   - `scene/stage/`: stage drawing scripts, PixiJS and `index.html`.
   - `scene/room/`: authored room geometry (`crt_config.json`), background (`background.png`), and ambient layers (`ambient_high.png`, `ambient_low.png`).
+  - `scene/ui/`: in-scene UI framing assets (`subtitle_frame.png`).
 - `character/`:
   - `character/emote/`: locally provisioned FreeMote runtime and model packs. Developer-local; excluded from packaging.
   - `character/idle/`: the idle scene stills.
-- `ui/`: in-scene UI framing assets (`subtitle_frame.png`).
 - `LICENSES/`, `THIRD_PARTY_NOTICES.md`: copied license/provenance notices. Packaging copies the repository root `LICENSE` next to them.
 
 `scene/stage/index.html` loads `/next/scene.js` and `/next/start.js` directly, so
@@ -55,7 +55,7 @@ Layers and source art are not deleted or reordered to hide rendering errors.
 
 Some media are **intentionally not tracked by Git** (see `.gitignore`):
 
-- `/resources/scene/room/ambient_*.png` and `/resources/ui/subtitle_frame.png` — only `background.png` is tracked;
+- `/resources/scene/room/ambient_*.png` and `/resources/scene/ui/subtitle_frame.png` — only `background.png` is tracked;
   the ambient blend layers and subtitle frame are not.
 - `/resources/character/emote/` — imported runtime and private model resources.
 

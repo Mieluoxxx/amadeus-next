@@ -11,7 +11,7 @@ test('scene resources reload on the same host and invalid geometry leaves the la
   const config = { img_size: [100, 200], crt_corners: [[0, 0], [0, 10], [10, 10], [10, 0]] }
   const file = path.join(root, 'scene/room/crt_config.json')
   try {
-    await mkdir(path.dirname(file))
+    await mkdir(path.dirname(file), { recursive: true })
     await writeFile(file, JSON.stringify(config))
     await host.start()
     const url = `${host.origin}/next/init`

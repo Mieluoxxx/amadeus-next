@@ -28,11 +28,13 @@ export class SceneHost {
         ['/emote/', this.emoteRoot],
         ['/scene/stage/', path.join(this.root, 'scene/stage')],
         ['/scene/room/', path.join(this.root, 'scene/room')],
+        ['/scene/ui/', path.join(this.root, 'scene/ui')],
         ['/character/idle/', path.join(this.root, 'character/idle')],
-        ['/ui/', path.join(this.root, 'ui')],
+        ['/ui/', existsSync(path.join(this.root, 'scene/ui')) ? path.join(this.root, 'scene/ui') : path.join(this.root, 'ui')],
         ['/render/web/', existsSync(path.join(this.root, 'scene/stage')) ? path.join(this.root, 'scene/stage') : path.join(this.root, 'render/web')],
         ['/assets/idle/', existsSync(path.join(this.root, 'character/idle')) ? path.join(this.root, 'character/idle') : path.join(this.root, 'assets/idle')],
         ['/assets/images/', existsSync(path.join(this.root, 'scene/room')) ? path.join(this.root, 'scene/room') : path.join(this.root, 'assets/images')],
+        ['/assets/', path.join(this.root, 'assets')],
         ...(this.emoteCache ? [['/emote-cache/', this.emoteCache] as [string, string]] : [])
       ]
       const route = roots.find(([prefix]) => url.pathname.startsWith(prefix))
@@ -48,8 +50,11 @@ export class SceneHost {
           file = path.join(route[1], 'ambient_high.png')
         } else if (url.pathname === '/assets/images/amadeus_ambient_low_blend.png' && existsSync(path.join(route[1], 'ambient_low.png'))) {
           file = path.join(route[1], 'ambient_low.png')
-        } else if (url.pathname === '/assets/images/subtitle_frame_big.png' && existsSync(path.join(this.root, 'ui/subtitle_frame.png'))) {
-          file = path.join(this.root, 'ui/subtitle_frame.png')
+        } else if (url.pathname === '/assets/images/subtitle_frame_big.png') {
+          const framePath = existsSync(path.join(this.root, 'scene/ui/subtitle_frame.png'))
+            ? path.join(this.root, 'scene/ui/subtitle_frame.png')
+            : path.join(this.root, 'ui/subtitle_frame.png')
+          if (existsSync(framePath)) file = framePath
         }
       }
       if (!route || !file || !existsSync(file) || !statSync(file).isFile()) { response.writeHead(404); response.end('not found'); return }
@@ -132,7 +137,9 @@ export class SceneHost {
     const ambientLowUrl = existsSync(path.join(this.root, 'scene/room/ambient_low.png'))
       ? `${this.origin}/scene/room/ambient_low.png`
       : `${this.origin}/assets/images/amadeus_ambient_low_blend.png`
-    const subtitleFrameUrl = existsSync(path.join(this.root, 'ui/subtitle_frame.png'))
+    const subtitleFrameUrl = existsSync(path.join(this.root, 'scene/ui/subtitle_frame.png'))
+      ? `${this.origin}/scene/ui/subtitle_frame.png`
+      : existsSync(path.join(this.root, 'ui/subtitle_frame.png'))
       ? `${this.origin}/ui/subtitle_frame.png`
       : `${this.origin}/assets/images/subtitle_frame_big.png`
 
