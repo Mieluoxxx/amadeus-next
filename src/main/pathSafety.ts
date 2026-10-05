@@ -1,6 +1,6 @@
 import path from 'node:path'
 
-/** Resolve a request path only when it stays below the selected asset root. */
+/** 严格限制解析路径在指定的资源根目录内，防御跨目录穿越访问。 */
 export function safeFilePath(root: string, pathname: string): string | null {
   let relative: string
   try {

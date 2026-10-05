@@ -1,52 +1,30 @@
 /**
- * Geometry for the Amadeus scene shell.
+ * 场景外壳几何计算纯函数模块。
  *
- * The scene always fills the whole main window — background, desk and CRT stay
- * one continuous picture. The transcript, settings and reply/input dock occupy
- * reserved side/bottom regions; the scene framing is then shifted so the CRT
- * cabinet sits in whatever space is left. Nothing may cover
- * the cabinet, and the character inside it is never cropped or shrunk into a
- * corner preview.
- *
- * These functions are pure so the contract is testable without Electron.
+ * 保证 CRT 监视器主体与角色立绘在任意窗口尺寸及侧边栏展开时始终完整呈现、绝不被遮挡或裁切，
+ * 同时脱离 Electron 依赖便于纯环境单元测试。
  */
 
-/** Authored size of `scene/room/background.png`. */
+// 背景图原始设计基准分辨率。
 const SCENE_DESIGN = { width: 1672, height: 941 } as const
 
 /**
- * CRT cabinet envelope in design coordinates — the beige monitor body with its
- * bezel, "AMADEUS" label and power LED, measured from the artwork. The
- * character and the machine she lives in must stay inside this box, so framing
- * and overlay placement both use the cabinet, not the glass alone.
- *
- * Re-derive this from the artwork if the scene image changes; it must still
- * contain the CRT glass polygon in `scene/room/crt_config.json`.
+ * CRT 监视器外壳包围盒基准坐标。
+ * 避让与排版计算必须基于外壳整体而非仅 CRT 玻璃，确保立体边框与机身不被浮层截断。
  */
 const SCENE_CABINET = { x: 470, y: 100, width: 780, height: 645 } as const
 
-/** Preferred sidebar sizes. */
+// 侧边栏与底部输入框尺寸边界，保证在极小窗口下依然具备可用交互空间。
 const MIN_PANEL_WIDTH = 320
-/** Composer inset, leaving a small gap from the scene edges. */
 const MIN_DOCK_HEIGHT = 128
 const MAX_DOCK_HEIGHT = 184
-/**
- * Height of the top chrome band (toolbar plus a compact event tray). The band is
- * reserved as an overlay so the cabinet can never end up underneath window
- * controls or status notices.
- */
+// 顶部保留区高度，避免窗口控制按钮和状态通知侵入 CRT 监视器构图。
 const CHROME_BAND_HEIGHT = 112
-/** Floor for the chrome band on very short windows. */
 const MIN_CHROME_BAND_HEIGHT = 112
-/** Compact fallback for ultra-short windows where a multi-row tray cannot fit. */
+// 超矮窗口下的极端保底高度，确保多行控件收折后不遮挡角色头顶。
 const COMPACT_CHROME_BAND_HEIGHT = 52
-/** The toolbar occupies the top-right part of the shared chrome band. */
 const TOOLBAR_RESERVED_WIDTH = 236
-/** Maximum width of the shared status tray. */
 const STATUS_TRAY_MAX_WIDTH = 420
-/**
- * Margin between the scene and the bottom composer.
- */
 const PANEL_MARGIN = 12
 /** Keep at least this share of the window for the scene when the sidebar is open. */
 export type ScenePanelKind = 'transcript' | 'more'
@@ -76,17 +54,7 @@ export type SceneLayout = {
   fit: SceneFit
   /** CRT cabinet rect in window coordinates, derived from `fit`. */
   cabinet: SceneRegion
-  /**
-   * True when the scene frame alone does not paint the whole window, so the
-   * window background (the same artwork) fills the remainder. With floating
-   * panels this is normal: a panel is inset from the edges by design, so the
-   * slivers behind its margins are not covered by it.
-   *
-   * This is reported as data, not as a user-facing warning: the meaningful
-   * guarantee is that the cabinet stays whole, uncovered and recognisable,
-   * which is asserted directly (see `the cabinet stays recognisable` and the
-   * minimum-window check).
-   */
+  // 标记场景视口是否需底层静态壁纸补齐，记录几何状态供调试，保障优先保全 CRT 构图而非强制拉伸变形。
   seam: boolean
 }
 
@@ -95,7 +63,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
-/** Shrinks a region on every side, clamping to a still-usable rectangle. */
 function insetRegion(region: SceneRegion, margin: number): SceneRegion {
   const horizontal = Math.min(margin, Math.max(0, Math.floor((region.width - 1) / 2)))
   const vertical = Math.min(margin, Math.max(0, Math.floor((region.height - 1) / 2)))
@@ -115,7 +82,6 @@ function overlaps(left: SceneRegion, right: SceneRegion): boolean {
     && left.y + left.height > right.y + epsilon
 }
 
-/** Cabinet rect for a given fit. */
 function sceneCabinetRect(fit: SceneFit): SceneRegion {
   return {
     x: SCENE_CABINET.x * fit.scale + fit.offsetX,
@@ -125,15 +91,7 @@ function sceneCabinetRect(fit: SceneFit): SceneRegion {
   }
 }
 
-/**
- * Fit that keeps the cabinet inside `free`, and covers `scene` when it can.
- *
- * The scale prefers a full cover of the window so the artwork has no seam; when
- * the cabinet could not then stay clear of the overlays, the scale drops just
- * enough to fit. Because the frame may then be smaller than the window, the
- * caller must confirm the window is still covered by the frame plus overlays
- * (`coveredByFrameAndOverlays`).
- */
+// 优先全屏铺满背景消除接缝；当浮层挤压空间时等比缩小以优先保全监视器主体，由外层同图壁纸兜底边缘。
 function sceneFit(scene: SceneRegion, free: SceneRegion = scene): SceneFit {
   const windowWidth = Math.max(1, scene.width)
   const windowHeight = Math.max(1, scene.height)
@@ -206,10 +164,7 @@ function coveredByFrameAndOverlays(
   return strips.every(strip => overlays.some(overlay => containsRect(overlay.region, strip)))
 }
 
-/**
- * Transcript and settings are mutually exclusive: opening
- * one closes the current one, and toggling the open one closes it.
- */
+// 对话历史与设置面板互斥展示，避免有限横向空间被多层面板挤压。
 export function toggleScenePanel(
   current: ScenePanelKind | null,
   next: ScenePanelKind,
@@ -222,8 +177,7 @@ function remaining(scene: SceneRegion, overlays: SceneOverlay[]): SceneRegion {
   for (const overlay of overlays) {
     const box = overlay.region
     if (overlay.placement === 'right') {
-      // A side panel may start below the top band, so the free area is the
-      // remaining width to its left (never the strip it already occupies).
+      // 侧边栏独占垂直带时，剩余可用视口为面板左侧宽度，防止监视器落入侧边栏覆盖区。
       region = { ...region, width: Math.max(1, box.x - region.x) }
     } else if (overlay.placement === 'left') {
       const right = region.x + region.width
@@ -249,17 +203,7 @@ function remaining(scene: SceneRegion, overlays: SceneOverlay[]): SceneRegion {
   return region
 }
 
-/**
- * A candidate is usable when the cabinet is whole, clear of every overlay, and
- * — unless `requireCoverage` is false — the frame plus overlays paint the whole
- * window.
- *
- * Coverage is a preference, not a hard rule. At extreme aspect ratios (an
- * ultra-wide or very short window) no arrangement can both keep the cabinet
- * whole and cover every pixel; there we accept the uncovered strip, which the
- * wrapper fills with the same artwork. Dropping coverage is the honest failure
- * mode: covering the character is never an option.
- */
+// 布局判定准则：监视器完整与无遮挡为第一优先级，全屏铺满为次优先级；极端长宽比下宁可露底也不裁切角色。
 function evaluateCandidate(
   scene: SceneRegion,
   overlays: SceneOverlay[],
@@ -274,7 +218,7 @@ function evaluateCandidate(
   return { fit, cabinet }
 }
 
-/** Places the cabinet in the space an overlay leaves, with no coverage demand. */
+// 当无法严格全屏铺满时回退至宽松排列，交由底图补全外露区域。
 function fallbackArrangement(
   scene: SceneRegion,
   overlays: SceneOverlay[],
@@ -287,21 +231,13 @@ function fallbackArrangement(
   if (relaxed) {
     return { ...relaxed, covered: false }
   }
-  // Nothing fits beside the overlay: keep the cabinet whole by shrinking it.
+  // 极端挤压无安全空间时保底缩小监视器，防止立绘被截断。
   const free = remaining(scene, overlays)
   const fit = sceneFit(scene, free)
   return { fit, cabinet: sceneCabinetRect(fit), covered: false }
 }
 
-/**
- * Places the sidebar and the reply/input dock so the CRT cabinet stays whole
- * and uncovered while the scene yields real layout space to the sidebar.
- *
- * The sidebar is right anchored and uses a bounded width. Preference is given
- * to arrangements that both keep the
- * cabinet whole and leave no seam, then to the largest cabinet; when no
- * arrangement can do both, the largest cabinet still wins and `seam` is set.
- */
+// 动态计算侧边栏、输入框与场景画幅，保证侧边栏展开时场景主动避让，使角色居于剩余视口中央。
 export function resolveSceneLayout(
   width: number,
   height: number,
@@ -328,8 +264,7 @@ export function resolveSceneLayout(
     ),
   } : null
 
-  // Both bands scale with the window so a short window keeps room for the
-  // character; the floors are the smallest still-usable controls.
+  // 顶部保留区随窗口高度弹性缩放，并由保底尺寸确保控件可用且不侵占角色空间。
   const chromeFloor = scene.height < 360 ? COMPACT_CHROME_BAND_HEIGHT : MIN_CHROME_BAND_HEIGHT
   const chromeHeight = Math.max(
     1,
@@ -375,12 +310,7 @@ export function resolveSceneLayout(
     panelCandidates.push(dock)
   }
 
-  /**
-   * Ranking: keep the preferred side among safe candidates, then prefer a
-   * fully covered window and the largest cabinet. Size matters because covering the
-   * character with chrome is never acceptable — shrinking it into a thumbnail
-   * is the failure mode this ordering exists to prevent.
-   */
+  // 优选保全无缝铺满且监视器画幅最大的候选布局，避免角色被过度缩放或遮挡。
   type Ranked = { overlays: SceneOverlay[]; arranged: { fit: SceneFit; cabinet: SceneRegion }; covered: boolean }
   const ranked: Ranked[] = []
   for (const candidate of panelCandidates) {
@@ -409,7 +339,7 @@ export function resolveSceneLayout(
   const panelOverlay = overlays.find(overlay => overlay.kind === panel) || null
   const dockOverlay = overlays.find(overlay => overlay.kind === 'dock') || null
   if (panelOverlay && dockOverlay) {
-    // Keep the chosen scene framing and centre the composer in the same free column.
+    // 侧边栏开启时将输入框居中于剩余可用列，保持视觉轴线对齐。
     const column = remaining(scene, [panelOverlay])
     const width = Math.min(dockOverlay.region.width, Math.max(1, column.width - PANEL_MARGIN * 2))
     dockOverlay.region = { ...dockOverlay.region, x: column.x + (column.width - width) / 2, width }
@@ -427,10 +357,7 @@ export function resolveSceneLayout(
   }
 }
 
-/**
- * Inline transform for the scene frame: the iframe keeps the authored size and
- * is scaled/positioned by the fit.
- */
+// 保持 iframe 设计基准尺寸，通过 CSS 变换实现亚像素级缩放与平移，防止重排与采样模糊。
 export function sceneFrameStyle(fit: SceneFit): {
   width: number
   height: number

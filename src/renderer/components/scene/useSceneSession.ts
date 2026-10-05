@@ -132,26 +132,21 @@ export function useSceneSession({
   const activeSessionRef = useRef('')
   const streamingTextRef = useRef('')
   const draftRef = useRef('')
-  /**
-   * Monotonic count of composer edits. Comparing it instead of the text means
-   * deleting the draft and retyping the same characters still counts as a new
-   * edit, so an in-flight acknowledgement cannot wipe it.
-   */
+  /** 单调递增的草稿编辑版本号：防止相同字符的编辑被在途的异步发送回执误清空。 */
   const draftEditRef = useRef(0)
   const updateDraft = useCallback((value: string) => {
     draftEditRef.current += 1
     setDraft(value)
   }, [])
-  /** Guards against a second submit while one is in flight. */
+  /** 防抖锁：防止用户重复连续触发消息发送。 */
   const sendingRef = useRef(false)
-  // Turns the user stopped: the rest of their stream must be ignored, otherwise
-  // an interrupted answer keeps growing after the user cancelled it.
+  // 记录用户主动中止的回合，忽略后续到达的残余流式 Token，防止已取消的回复继续增量上屏。
   const interruptedTurnsRef = useRef<Set<string>>(new Set())
   const activeTurnRef = useRef('')
-  /** Session the user most recently asked to load, and that request's order. */
+  /** 记录最新请求加载的目标会话与代数，用于异步响应时序判定。 */
   const requestedSessionRef = useRef('')
   const loadGenerationRef = useRef(0)
-  /** User intents supersede older loads/creates even if the server reuses an id. */
+  /** 操作意图版本：用户最新操作覆盖旧的加载或创建请求，避免网络乱序导致画面错乱。 */
   const sessionIntentRef = useRef(0)
   const operationIntentsRef = useRef(new Map<string, number>())
   const pendingOperationRef = useRef<{ requestId: string; intent: number } | null>(null)
@@ -192,9 +187,7 @@ export function useSceneSession({
       activeSessionRef.current = nextId
       setSessionId(nextId)
       if (switched) {
-        // Stream bookkeeping is per turn, not per session: switching sessions
-        // must not let the previous session's interrupted stream silence the
-        // new one.
+        // 流式状态作用域属于单次回合而非会话：切换会话时重置流式标记，避免上个会话的中断状态污染新会话。
         interruptedTurnsRef.current = new Set()
         activeTurnRef.current = ''
         streamingTextRef.current = ''
@@ -235,9 +228,7 @@ export function useSceneSession({
         setStreaming(false)
       }
     } else if (switched) {
-      // A session switch without a message payload is still a switch. Do not
-      // leak the old conversation into the newly selected session while its
-      // authoritative history is being loaded.
+      // 切换会话时立即排空消息列表，防止加载过程中旧会话历史数据残留泄露到新界面。
       setMessages([])
       streamingTextRef.current = ''
       setStreaming(false)
@@ -246,11 +237,7 @@ export function useSceneSession({
   }, [])
 
   const loadSession = useCallback(async (id: string): Promise<SceneSessionOperationResult> => {
-    // The user asked for `id`: mark that request as the newest one. A response
-    // is accepted only when it still is the newest, so an out-of-order reply for
-    // a session the user already left cannot overwrite the screen. Comparing
-    // against the *previous* active session would reject the legitimate switch
-    // the user just made.
+    // 仅采纳代数匹配且意图最新的加载回执，丢弃用户已离开会话的迟到响应。
     const { requestId, intent } = beginOperation()
     const generation = ++loadGenerationRef.current
     requestedSessionRef.current = id
@@ -296,10 +283,7 @@ export function useSceneSession({
             : '')
           || '',
       )
-      // A session.changed event may be the server's broadcast for this create and
-      // can legitimately arrive before the RPC acknowledgement. Accept it when
-      // the acknowledgement names the session that is already on screen; reject
-      // only a response superseded by a different session operation.
+      // 服务端广播 session.changed 可能先于 RPC 回执到达；只要回执会话与当前会话一致则视为有效，仅丢弃被后续操作覆盖的响应。
       if (intent !== sessionIntentRef.current) return { status: 'superseded' }
       if (generation !== loadGenerationRef.current && activeSessionRef.current !== responseId) return { status: 'superseded' }
       const activeId = applySessionPayload(response)
@@ -341,8 +325,7 @@ export function useSceneSession({
     })
   }, [])
 
-  // Initial session discovery: the current task's messages come from
-  // `session.load`, exactly like the chat page does.
+  // 首次初始化拉取会话列表并加载活跃会话历史。
   useEffect(() => {
     if (!connected) return
     let cancelled = false
@@ -354,7 +337,7 @@ export function useSceneSession({
         const activeId = applySessionPayload(listed)
         if (activeId) await loadSession(activeId)
       } catch {
-        // The backend may still be starting; events below keep the scene live.
+        // 后端启动中偶发失败不中断渲染，后续就绪广播会自动触发同步。
       } finally {
         finishOperation(requestId)
       }
@@ -377,7 +360,7 @@ export function useSceneSession({
     pendingOperationRef.current = null
   }, [connected])
 
-  // Provider selection mirrors the chat page so both surfaces send the same model.
+  // 监听全局配置同步 LLM Provider，保持场景界面与设置页状态一致。
   useEffect(() => {
     if (!connected) return
     const applyConfig = (payload: Record<string, unknown>) => {
@@ -393,9 +376,7 @@ export function useSceneSession({
     return () => unsubscribe()
   }, [connected, send, subscribe])
 
-  // The model in use, for the composer. It belongs to the session (a new one starts on the default),
-  // so it is re-read whenever the session changes. `pi.models` is refused while a reply is running,
-  // so a read that could not happen is retried when the turn ends, not on every turn.
+  // 会话切换时拉取当前可用模型；若遇流式响应中拒绝读取，延迟重试直到当前回合结束。
   const modelSessionRef = useRef<string | null>(null)
   useEffect(() => {
     if (!connected) return
@@ -414,7 +395,7 @@ export function useSceneSession({
     send('pi.models', {}).then(result => {
       if (cancelled) return
       if (!result.ok) {
-        // Refused while a reload or reply is in flight; nothing else re-triggers this read.
+        // 生成或热重载期间后端互斥锁定，指数退避重试拉取模型列表。
         if (modelRetry < 10) timer = setTimeout(() => setModelRetry(count => count + 1), 1000)
         return
       }
@@ -431,8 +412,7 @@ export function useSceneSession({
     const unsubscribers: Array<() => void> = []
     unsubscribers.push(subscribe('chat.token', params => {
       const turnId = String(params.turn_id ?? '')
-      // An interrupted turn is finished: it must not claim the active-turn slot,
-      // otherwise its stale stream would suppress the next live turn.
+      // 丢弃已被中断回合的残余流式数据，防止旧 Token 覆盖新回合流。
       if (isStaleTurn(turnId, interruptedTurnsRef.current)) return
       const session = eventSessionId(params)
       if (session && session !== activeSessionRef.current) return
@@ -504,10 +484,7 @@ export function useSceneSession({
       if (activeTurnRef.current === turnId) activeTurnRef.current = ''
     }))
     unsubscribers.push(subscribe('session.changed', params => {
-      // This is the only accepted session-change path for the scene. Other
-      // consumers react to the resulting sessionChange record instead of
-      // interpreting this raw broadcast, so ignored stale events cannot clear
-      // unrelated UI state.
+      // 统一收敛会话变更入口，防止过期广播破坏当前正在进行的会话状态。
       const eventRequestId = String(params.client_request_id || '')
       const pendingOperation = pendingOperationRef.current
       const correlated = Boolean(eventRequestId && pendingOperation?.requestId === eventRequestId)
@@ -533,7 +510,7 @@ export function useSceneSession({
       if (eventRequestId) acceptedEventIdsRef.current.add(eventRequestId)
       applySessionPayload(params, { notify: true })
     }))
-    // 首次发送后主进程才会给默认标题落时间戳；这里只更新列表标题，不触碰其它会话状态。
+    // 首条消息发送后主进程分配正式标题，此处仅静默更新标题以保持列表同步。
     unsubscribers.push(subscribe('session.titled', params => {
       const id = String(params.session_id || '')
       const title = String(params.title || '')
@@ -544,8 +521,7 @@ export function useSceneSession({
       if (!text || params.is_final !== true) return
       const outcome = asrDraftOutcome(String(params.source ?? ''), text, draftRef.current)
       if (outcome.alreadySubmitted) {
-        // The wake pipeline already sent this utterance; showing it as a user
-        // message (not a draft) is what keeps it from being sent twice.
+        // 语音识别上屏已被流式管线直接提交，直接以已发送消息渲染，防止用户二次重复提交。
         setMessages(previous => [...previous, {
           id: crypto.randomUUID(),
           role: 'user',
@@ -576,10 +552,10 @@ export function useSceneSession({
 
   const sendText = useCallback(async (rawText: string, attachment: VisualAttachment | null = null) => {
     const typed = rawText.trim()
-    // A picture with no typed text is still a message, exactly like the chat page.
+    // 允许仅发送图片附件，自动填充占位文本以触发视觉理解流程。
     const text = typed || (attachment ? ATTACHMENT_ONLY_TEXT : '')
     if (!text) return false
-    // A picture the backend cannot read must not be sent as if it were handled.
+    // 当前模型若不支持视觉解析，前置拦截报错，避免空耗后端资源。
     if (attachment && !visualPayload(attachment, provider)) {
       setMessages(previous => [
         ...previous,
@@ -602,8 +578,7 @@ export function useSceneSession({
     try {
       let targetSession: string | null = activeSessionRef.current
       if (!targetSession) {
-        // A conversation needs a session: sending without one would post into a
-        // session the loader never acknowledged.
+        // 发送前确保会话已初始化就绪，防止消息发送到未确认的无效目标。
         const creation = await createSession()
         if (creation.status !== 'applied') {
           if (activeSessionRef.current === sessionBeforeCreate) {
@@ -639,10 +614,7 @@ export function useSceneSession({
 
       const turnId = crypto.randomUUID()
 
-      // The user's message and its turn identity exist BEFORE the request is
-      // sent. A token that arrives before the confirmation then lands on a
-      // conversation that already has this turn, instead of appearing above a
-      // user message that has not been added yet.
+      // 乐观插入用户消息并锁定回合 ID，防止快速到达的首字 Token 渲染在用户提问之前。
       activeTurnRef.current = turnId
       interruptedTurnsRef.current.delete(turnId)
       const userMessageId = `user:${targetSession}:${turnId}`
@@ -669,9 +641,7 @@ export function useSceneSession({
           throw new Error(String(response.error || response.reason || 'chat.send rejected'))
         }
       } catch (failure) {
-        // A timeout/disconnect does not prove the server rejected the request;
-        // keep the turn as unknown rather than deleting a possibly accepted
-        // message and encouraging a duplicate submission.
+        // 请求超时或断连不代表服务端未受理，保留消息为未知状态，避免用户误判并重复重发。
         explicitRejection = explicitRejection
           || Boolean(failure && typeof failure === 'object' && (failure as { kind?: unknown }).kind === 'rejected')
         if (activeSessionRef.current === targetSession) {
@@ -699,15 +669,13 @@ export function useSceneSession({
           ? { ...message, delivery: 'accepted' as const }
           : message))
       }
-      // Clear only when the composer still holds the text that was sent: an
-      // edit (including deleting and retyping the same characters) counts as a
-      // new draft and must not be wiped.
+      // 仅在输入框内容未被二次编辑时才清空，防止抹掉用户正在输入的新草稿。
       if (activeSessionRef.current === targetSession && draftEditRef.current === edit) {
         updateDraft('')
       }
       return activeSessionRef.current === targetSession
     } catch {
-      // Session creation or an unexpected failure: keep the composer intact.
+      // 会话创建或网络异常时完整保留草稿，方便用户重试。
       if (activeSessionRef.current === sessionBeforeCreate) {
         setMessages(previous => [...previous, {
           id: crypto.randomUUID(),
@@ -723,7 +691,7 @@ export function useSceneSession({
     }
   }, [send, provider, createSession, updateDraft])
 
-  /** Surfaces an attachment/vision failure in the conversation, not silently. */
+  /** 在对话流中显式提示附件处理异常，避免静默失败。 */
   const reportProblem = useCallback((text: string) => {
     setMessages(previous => [...previous, { id: crypto.randomUUID(), role: 'system', text }])
   }, [])

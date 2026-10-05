@@ -1,28 +1,14 @@
 /**
- * Pure stream-state helpers for the scene conversation.
- *
- * These encode behaviours the chat page already had and the scene must not
- * lose: an interrupted turn stops accepting the rest of its stream, and a
- * wake-origin recognition is an already-submitted utterance rather than a draft
- * the user still has to send.
- * Keeping them pure makes the rules testable without a live backend.
+ * 会话流状态纯函数辅助模块。
+ * 沉淀中断流过滤、唤醒词即时上屏与会话版本校验等核心规则，解耦纯逻辑以保证单测确定性。
  */
 
 type SceneDraftOutcome = {
-  /** Text to put in the draft box, or `null` to leave the draft untouched. */
   draft: string | null
-  /** True when the utterance was already sent by the wake pipeline. */
   alreadySubmitted: boolean
 }
 
-/**
- * How a final ASR transcript joins the conversation.
- *
- * - `wake`: the wake pipeline already submitted the utterance, so it becomes a
- *   user message and must NOT also sit in the draft waiting to be re-sent.
- * - `vn_player`: not part of the chat conversation at all.
- * - anything else: the user's own speech, appended to the draft for review.
- */
+// 区分语音识别来源：唤醒词识别已由后台自动提交为消息，避免草稿残留重复内容；手动录音则填入草稿供用户复核。
 export function asrDraftOutcome(
   source: string,
   text: string,
@@ -38,35 +24,25 @@ export function asrDraftOutcome(
   }
 }
 
-/** True when a streaming/completion event belongs to a turn the user stopped. */
+// 判定事件是否属于已被用户打断的旧回合，防止迟到的流式 Token 污染新内容。
 export function isStaleTurn(turnId: string, interrupted: ReadonlySet<string>): boolean {
   return Boolean(turnId) && interrupted.has(turnId)
 }
 
-/**
- * Records the turn ids that must be ignored from now on. The active turn is
- * included because an interrupt without a turn id still has to silence the
- * stream that was running.
- */
+// 记录需丢弃的中断回合集合。
 export function interruptedTurns(
   eventTurnId: string,
   activeTurnId: string,
   previous: ReadonlySet<string>,
 ): Set<string> {
   const next = new Set(previous)
-  // An explicit id is authoritative. Only an interrupt without an id falls
-  // back to the currently active turn; adding both would let an old interrupt
-  // silence a newer turn.
+  // 指定回合 ID 具有权威性；缺省时才回退至活跃回合，防止旧中断信号连带误杀新回合。
   const target = eventTurnId || activeTurnId
   if (target) next.add(target)
   return next
 }
 
-/**
- * Identity of a session payload that may be applied. A stale `session.load`
- * response must not overwrite the messages of a session the user has already
- * switched away from.
- */
+// 校验会话载入响应的归属，防止迟到的历史会话加载覆盖当前最新选中的会话上下文。
 export function mayApplySession(
   requestedId: string,
   activeId: string,

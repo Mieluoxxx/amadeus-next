@@ -14,7 +14,7 @@ const port = (process as NodeJS.Process & { parentPort?: ParentPortLike }).paren
 
 if (!port) throw new Error('Pi worker must run as an Electron utility process')
 
-// 身份在 ~/.amadeus/pi/ROLE.md，输出格式在 PRESENTATION.md；这里只保留与文件无关的协议。
+// 角色设定与输出格式外置于 Markdown，此处仅注入工具结果封装协议以保证运行时纯净。
 const protocol = 'Explain tool results in the user-facing reply; never expose internal protocol details.'
 
 let modelRuntime: ModelRuntime | null = null
@@ -29,7 +29,7 @@ async function initialize(): Promise<void> {
   modelRuntime = await ModelRuntime.create({
     authPath: process.env.AMADEUS_NEXT_PI_AUTH,
     modelsPath: process.env.AMADEUS_NEXT_PI_MODELS,
-    // 模型缓存留在应用目录，不写回共享的 models.json 所在目录。
+    // 模型缓存限制在应用私有目录，避免回写影响外部共享的 models.json。
     modelsStorePath: path.join(agentDir, 'models-store.json'),
   })
   if (modelRuntime.getError()) throw new Error('Pi model configuration is invalid')
@@ -37,17 +37,16 @@ async function initialize(): Promise<void> {
     cwd,
     agentDir,
     systemPrompt: protocol,
-    // 每次 reload 重新读取提示词文件，编辑后不需要重启。
+    // 动态包裹读取提示词文件，支持免重启实时热更新角色设定。
     systemPromptOverride: base => composePrompt(agentDir, base ?? protocol),
-    // 系统提示词只有 ROLE.md、PRESENTATION.md 和协议：不加载开发环境的 AGENTS.md、扩展、技能和提示词模板。
+    // 禁用外部开发环境扩展、技能与模板，确保角色交互行为的可预期性与纯净度。
     noContextFiles: true, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true,
   })
   await resourceLoader.reload()
   if (resourceLoader.getExtensions().errors.length) throw new Error('Pi extensions could not be loaded')
 }
 
-// 用户在界面里选的模型是全局的：新会话从它开始，打开旧会话时也切到它，而不是沿用会话里上次的模型。
-// 每个会话的 SettingsManager 各自缓存，别的会话写下的选择只能从文件里读到。
+// 全局模型配置优先级高于会话历史缓存，确保跨会话切换时模型选择保持一致。
 function readSelection(): { provider?: string; model?: string; thinkingLevel?: string } {
   try {
     const stored = JSON.parse(readFileSync(path.join(getAgentDir(), 'settings.json'), 'utf8')) as Json
@@ -64,7 +63,7 @@ async function followSelection(session: AgentSession): Promise<void> {
     if (model && (session.model?.provider !== model.provider || session.model?.id !== model.id)) await session.setModel(model)
     const level = selection.thinkingLevel as Parameters<AgentSession['setThinkingLevel']>[0] | undefined
     if (level && session.getAvailableThinkingLevels().includes(level) && session.thinkingLevel !== level) session.setThinkingLevel(level)
-  } catch { /* 选中的模型暂不可用（如缺凭据）时保持会话原有模型 */ }
+  } catch { /* 选中的模型暂不可用时静默保留当前会话模型，避免对话中断。 */ }
 }
 
 async function getSession(id: string): Promise<AgentSession> {
@@ -181,7 +180,7 @@ async function handle(message: Json, epoch = 0): Promise<void> {
 }
 
 const initialized = initialize()
-// The desktop owns one active turn. Serialize maintenance with turns; abort must bypass the queue.
+// 保证单轮对话与维护任务串行排队；中断信号（abort）旁路优先执行以实现即时打断。
 let queue = initialized.catch(() => {})
 port.on('message', raw => {
   const value = raw && typeof raw === 'object' && 'data' in raw ? (raw as { data: unknown }).data : raw

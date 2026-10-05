@@ -17,7 +17,7 @@ function surfaceKeyframe(box: Surface): Keyframe {
   return { left: `${box.x}px`, top: `${box.y}px`, width: `${box.width}px`, height: `${box.height}px`, opacity: box.opacity }
 }
 
-/** Keep the live surfaces mounted until their shared transition finishes. */
+/** 动效完成前保持浮层 DOM 挂载，防止动画未播放完毕即被提前卸载。 */
 export function useSceneTransition(
   width: number,
   height: number,
@@ -54,7 +54,7 @@ export function useSceneTransition(
 
   useLayoutEffect(() => {
     const old = previousViewport.current
-    // ponytail: resize/load changes settle immediately; coordinated resize motion can be added if needed.
+    // 窗口缩放或重载时跳过补间动效，立即对齐布局以避免画面拉伸变形。
     const animate = !reducedMotion && old.width === width && old.height === height && old.frameLoadId === frameLoadId
       && ((view.layout.panel?.kind || null) !== requestedPanel || view.animating)
     const layout = resolveSceneLayout(width, height, requestedPanel)
@@ -100,7 +100,7 @@ export function useSceneTransition(
       if (!layout.panel) {
         Object.assign(end, from, { x: view.panel.placement === 'right' ? width : -from.width, opacity: 0 })
       }
-      // Animate only the panel box's dimensions, so its text is never scaled.
+      // 仅对面板外框补间位移与尺寸，避免文本在缩放过渡中发生字体模糊。
       animate(panelRef.current, [surfaceKeyframe(from), surfaceKeyframe(end)])
       if (step.kind && layout.panel && step.kind !== layout.panel.kind) {
         const body = panelRef.current.querySelector('.scene-transcript-scroll, .scene-settings-body')

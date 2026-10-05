@@ -1,20 +1,14 @@
 import { normalizeEmotion, type Emotion } from './character.ts'
 
 type PresentationCue = { offset: number; emotion: Emotion }
-/** `offset` is a position in the spoken text: the subtitle belongs to the speech that starts there. */
+/** 字幕在口播文本中的字符偏移，用于音频时间戳同步对齐。 */
 type PresentationSubtitle = { offset: number; text: string }
-/**
- * `text` is what is spoken. `display` is what the chat shows (subtitle lines, or the spoken text when
- * a reply is not bilingual). `subtitles` are per-utterance lines timed against the spoken text.
- */
+/** 拆分口播文本（TTS 朗读）、界面显示文本与逐句对齐字幕，支持双语显示。 */
 export type PresentedText = { text: string; cues: PresentationCue[]; subtitles: PresentationSubtitle[]; display: string }
 
 const BLOCK_TAGS = ['<zh>', '</zh>', '<jp>', '</jp>']
 
-/**
- * Incremental control-tag lexer. Backtick/tilde code delimiters survive chunk boundaries.
- * `<zh>…</zh><jp>…</jp>` pairs separate the subtitle from the spoken line; text outside any block is both.
- */
+/** 流式双语分词器：隔离中文字幕与日文口播内容，并维持跨分片代码块状态。 */
 export class PresentationText {
   private pending = ''
   private code = ''
@@ -51,7 +45,7 @@ export class PresentationText {
       const subtitled = this.zhSeen
       this.mode = 'plain'
       this.zhSeen = false
-      // A spoken line without its own subtitle is its own subtitle.
+      // 单语回复未提供独立中文字幕时，直接以口播文本充当显示字幕。
       if (line && !subtitled) { display += line; subtitles.push({ offset: this.jpStart, text: line }) }
     }
     while (this.pending) {
@@ -129,7 +123,7 @@ export type AlignmentChunk = {
   alignment: { segments: { text: string; start: number; end: number }[] } | null
 }
 
-/** Fish snapshots describe text, not ownership of the accompanying PCM bytes. */
+/** 基于 TTS 服务端的时间戳快照，建立音频播放时间与字幕/表情指令的时间轴映射。 */
 export class AlignmentTimeline {
   private text = ''
   private cues: PresentationCue[] = []
@@ -147,15 +141,14 @@ export class AlignmentTimeline {
     if (chunk.alignment && Array.isArray(chunk.alignment.segments)) this.chunks.set(chunk.chunk_seq, chunk)
   }
 
-  /** Furthest offset of the spoken text whose audio has started by `seconds`; -1 before any. */
+  /** 获取给定音频播放时间点所到达的口播文本最大字符偏移。 */
   private reached(seconds: number): number {
-    // ponytail: scans one reply's alignment; index cue times if long narrations become a measured hotspot.
     this.position = Math.max(this.position, seconds)
     let cursor = 0
     let reached = -1
     for (const chunk of [...this.chunks.values()].sort((a, b) => a.chunk_seq - b.chunk_seq)) {
       const start = this.text.indexOf(chunk.content, cursor)
-      if (start < 0) continue // Do not guess offsets when the service normalizes text differently.
+      if (start < 0) continue // 服务端文本规整化差异导致无法匹配时跳过，避免推导错误偏移。
       cursor = start + chunk.content.length
       let segmentCursor = 0
       for (const segment of chunk.alignment?.segments || []) {
@@ -180,7 +173,7 @@ export class AlignmentTimeline {
     return latest.emotion
   }
 
-  /** The subtitle of the utterance being spoken at `seconds`, or null before the first one starts. */
+  /** 获取给定播放时间点所对应的当前字幕，未开始前返回 null。 */
   subtitleAt(seconds: number): string | null {
     const reached = this.reached(seconds)
     let latest: PresentationSubtitle | undefined

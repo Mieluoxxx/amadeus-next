@@ -280,7 +280,7 @@ html, body, #root {
   }
 }
 
-/* The scene dock owns its dark palette, independent of the utility UI theme. */
+/* Dock 控制台采用独立的荧光暗调色板，与主界面的浅色实用主题解耦，匹配 CRT 沉浸感。 */
 .scene-dock-frame {
   container: scene-dock / size;
   color-scheme: dark;
@@ -381,13 +381,13 @@ html, body, #root {
 }
 .scene-provider-control > button:hover:not(:disabled) { color: var(--text); border-color: rgba(159, 203, 189, 0.55); }
 .scene-model-menu {
-  /* Portalled to the body, outside the dock frame's clipping and its scoped palette. */
+  /* 挂载至 body 根节点，突破 dock 边框裁剪并保留独立暗色主题。 */
   --text: #d8e9e4;
   --muted: #93aaa3;
   --accent: #9bc7b8;
   position: fixed;
   z-index: 1000;
-  /* Five options tall (28px each, 4px padding, 1px border), or the room above the button when that is less. */
+  /* 默认展示最多 5 项选项高度，其余根据按钮上方可用空间自适应收缩。 */
   max-height: min(calc(28px * 5 + 8px + 2px), var(--menu-room, 100vh));
   min-width: 220px;
   max-width: min(360px, calc(100vw - 16px));
@@ -482,7 +482,7 @@ html, body, #root {
   .scene-composer { transition: none; }
 }
 
-/* Scene panels share the phosphor palette and use a real right sidebar. */
+/* 场景面板统一使用复古荧光绿暗调配色，维持终端视觉质感。 */
 .scene-crt-panel {
   --text: #c6eee4;
   --muted: #91b9af;
@@ -568,7 +568,7 @@ html, body, #root {
   text-overflow: ellipsis;
   cursor: pointer;
 }
-/* Style the picker as well as its trigger, so Electron never opens an OS-styled menu. */
+/* 自定义 select 原生浮层样式，防止 Electron 唤起 OS 级原生菜单导致风格割裂。 */
 :is(.scene-crt-panel, .scene-dock-frame) select,
 :is(.scene-crt-panel, .scene-dock-frame) select::picker(select) {
   appearance: base-select;
@@ -723,10 +723,7 @@ html, body, #root {
 .scene-settings-panel [role='switch'] > span { background: #c6eee4; }
 .scene-settings-panel .settings-field-row { flex-direction: column; gap: 8px; border-color: var(--border) !important; }
 .scene-settings-panel .settings-field-control { width: 100% !important; max-width: none !important; }
-/* Settings is also embedded in the scene's narrow floating panel. Viewport
-   breakpoints cannot see that container, so give the existing page a real
-   container-sized layout instead of letting its desktop nav squeeze the main
-   content to zero width. */
+/* 设置页嵌入窄版浮动侧边栏时覆写响应式布局，防止视口媒体查询失效导致导航挤压表单内容。 */
 [data-testid='scene-aux'] .settings-scroll-area {
   min-height: 0;
   height: 100%;

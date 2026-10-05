@@ -24,10 +24,7 @@ export class FishTts {
   }
   get configured(): boolean { const key = this.config().FISH_API_KEY; return typeof key === 'string' && !!key.trim() }
 
-  // `ws` builds its request with the `http`/`https` modules, which ignore the
-  // proxy environment variables, so the configured address has to reach the
-  // socket as a CONNECT-tunnelling agent. The agent is reused per address so
-  // repeated turns do not accumulate idle sockets.
+  // 经由代理 Agent 建立 CONNECT 隧道，保证 WebSocket 正确走用户代理，并复用 Agent 避免闲置套接字泄漏。
   private proxyAgent(proxy: string): HttpsProxyAgent<string> | undefined {
     if (!proxy) return undefined
     if (this.proxy?.url !== proxy) {
@@ -105,10 +102,10 @@ export class FishTts {
         this.abort()
         this.emit({ ...key, type: 'input-ended' })
       }
-      // Unknown event names are ignored for forward compatibility with Fish.
+      // 忽略未识别事件，保持与上游服务端协议演进的向前兼容。
     })
     socket.on('unexpected-response', (_request, response) => {
-      // Never forward response bodies or headers: they may contain credentials.
+      // 错误日志中排空响应体与请求头，防止包含的认证凭据泄露。
       response.resume()
       fail(fishHttpFailure(response.statusCode, response.headers['retry-after']))
     })
@@ -119,7 +116,7 @@ export class FishTts {
   }
   push(text: string): void {
     if (!text || !this.socket || this.ended) return
-    // Long tool pauses are allowed before the input stream closes.
+    // 保持长连接开启以容忍模型推理或工具调用的间歇停顿。
     if (this.socket.readyState === WebSocket.OPEN) this.send({ event: 'text', text })
     else if (this.socket.readyState === WebSocket.CONNECTING) this.queue.push(text)
   }

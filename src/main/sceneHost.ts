@@ -22,8 +22,7 @@ export class SceneHost {
         response.end('window.dispatchEvent(new Event("amadeus:scene-ready"));')
         return
       }
-      // Replace only the foreground character; background scene assets keep their existing route.
-      // 烘焙产物（成品 PSB 与随附数据）由主进程写到用户目录，这里只把它挂成一个只读路由。
+      // 用户目录烘焙出的模型和资源通过受限静态路由暴露，防止渲染端直接访问任意本地文件系统。
       const roots: [string, string][] = [
         ['/next/', this.bundle],
         ['/emote/', this.emoteRoot],
@@ -108,7 +107,7 @@ export class SceneHost {
       ? path.join(this.root, 'scene/room/crt_config.json')
       : path.join(this.root, 'wallpaper/crt_config.json')
     try { crtConfig = JSON.parse(readFileSync(crtConfigPath, 'utf8')) } catch (error) {
-      if (this.initialization) throw error // Retain the last usable scene on an incomplete file save.
+      if (this.initialization) throw error // 配置文件热重载失败时保留上一份有效几何参数，防止破损配置导致画面崩溃。
     }
     const cfg = crtConfig as { img_size?: unknown; crt_corners?: unknown } | null
     const point = (value: unknown): value is number[] => Array.isArray(value) && value.length === 2 && value.every(Number.isFinite)

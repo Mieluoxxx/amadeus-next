@@ -17,9 +17,7 @@ contextBridge.exposeInMainWorld('amadeusNext', {
   },
 })
 
-// Existing scene/settings components use the old optional desktop bridge. Keep
-// the small subset they need while the rest of the old shell remains out of the
-// new application.
+// 暴露最小兼容桥接接口，供既有场景及设置组件过渡使用，避免破坏前端既有调用。
 contextBridge.exposeInMainWorld('amadeus', {
   platform: process.platform,
   getDesktopSettings: () => request('desktop.settings.get'),

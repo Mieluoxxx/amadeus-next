@@ -14,7 +14,7 @@ import { sameTurn, isTurnKey, type TurnKey, type VoiceEvent, type PlaybackEvent,
 
 type Json = Record<string, unknown>
 
-/** 运行时触碰外部世界的全部入口：Electron、文件位置、子组件和时钟都由主进程入口装配，测试可以整体替换。 */
+/** 集中注入所有外部环境依赖（Electron、路径、硬件、时钟），实现核心逻辑与运行环境解耦以支持无头测试。 */
 export type RuntimeDeps = {
   env: NodeJS.ProcessEnv
   root: string
@@ -85,7 +85,7 @@ export class AppRuntime {
       network_proxy: '',
     }
     this.pi = deps.createPi(() => this.piEnv())
-    // 解析器随应用交付；用户导入的资源和派生缓存都由本应用独立持有。
+    // 角色资源与烘焙缓存与分发包解耦，置于用户数据目录以支持热更新与自定义导入。
     this.emoteCache = deps.env.AMADEUS_EMOTE_CACHE || path.join(deps.userData, 'emote-cache')
     const imported = path.join(deps.userData, 'emote')
     this.emoteRoot = existsSync(imported) ? imported : path.join(this.root, 'emote')
@@ -107,7 +107,7 @@ export class AppRuntime {
   }
 
   async init(): Promise<void> {
-    // 角色资源不阻断窗口启动；首次 wallpaper.start 才校验和烘焙，失败由错误页接管。
+    // 资源就绪校验推迟至首屏渲染时按需触发，避免阻塞主窗口创建。
     await this.scene.start()
     this.markActivity()
     await this.pi.init()
@@ -156,7 +156,7 @@ export class AppRuntime {
         if (method === 'pi.model.set' && typeof params.model !== 'string') return { ok: false, error: 'Invalid model' }
         try {
           const result = await this.pi.request(method === 'pi.models' ? 'models' : 'set-model', { sessionId: this.currentSessionId, model: params.model, thinkingLevel: params.thinkingLevel })
-          // 场景输入框显示当前模型；设置页换模型时通知它。
+          // 同步当前模型切换事件至前端，保持界面状态实时一致。
           if (method === 'pi.model.set') this.emit('pi.model', { current: result.current })
           return { ok: true, ...result }
         } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) } }
@@ -174,7 +174,7 @@ export class AppRuntime {
         if (this.sceneReload && (!params.token || params.token === this.sceneToken)) return { ok: false, error: 'Stale scene handshake' }
         this.sceneToken = String(params.token || '')
         this.sceneReady = true
-        // 新场景从零开始，不会再有状态翻转；当前的 idle 演出必须重发一次。
+        // 场景重建后内部状态归零，需主动重发当前的闲置演出状态以恢复视觉表现。
         this.emit('voice.event', { type: 'conversation-idle', active: this.idleActive })
         if (this.sceneReload) this.sceneReload.resolve()
         this.resumeListening()
@@ -184,7 +184,7 @@ export class AppRuntime {
         this.sceneReady = false
         if (!this.sceneReload) {
           this.listeningEnabled = false
-          // Rendering can recover independently. Never replay or cancel model/tool work for a lost display.
+          // 渲染层崩溃支持独立重载恢复，不可中断或重放底层的模型推理与工具调用任务。
           this.tts.abort()
           if (this.activeTurn) {
             this.activeTurn.speech = false
@@ -290,11 +290,11 @@ export class AppRuntime {
     this.speech.stop()
     this.reportReload('applying', targets)
     void (async () => {
-      // Also wait for an explicitly cancelled Pi turn to finish its tool cleanup.
+      // 等待已中断的回合彻底排空工具清理逻辑，防止热重载期间残留死锁。
       if (!this.pi.error) await this.pi.request('checkpoint')
       if (targets.includes('main')) {
         this.dispose()
-        this.deps.exit(75) // The development launcher starts the freshly built main process.
+        this.deps.exit(75) // 约定退出码 75 触发开发脚手架热重启主进程。
         return
       }
       if (targets.includes('pi-worker') || (targets.includes('pi') && this.pi.error)) await this.pi.restart()
@@ -332,7 +332,7 @@ export class AppRuntime {
     }
   }
 
-  /** 活动时取消旧闹钟；回复和语音都结束后才安排一次三分钟后的空闲演出。 */
+  /** 对话回复与语音播放均完全结束后延时触发闲置，避免打断交互。 */
   private markActivity(): void {
     if (this.idleTimer !== null) this.deps.clock.clearTimeout(this.idleTimer)
     this.idleTimer = null
@@ -346,7 +346,7 @@ export class AppRuntime {
     }, 180_000)
   }
 
-  /** 空闲演出的单一状态源：只在翻转时广播。 */
+  /** 仅在闲置状态翻转时广播，防止冗余重绘。 */
   private publishIdle(idle: boolean): void {
     if (idle === this.idleActive) return
     this.idleActive = idle
@@ -402,10 +402,7 @@ export class AppRuntime {
     return { ...this.sessionPayload(session), ok: true, source: 'next' }
   }
 
-  // Pi reads its proxy settings from the environment while its worker process
-  // starts, which is also why the worker is replaced when the address changes
-  // (see setConfig). `NODE_USE_ENV_PROXY` is what makes Node's fetch use the
-  // variables at all; an empty address keeps the worker on direct connections.
+  // Pi 子进程在启动时从环境变量加载代理配置，故代理变更需重建 worker。
   private piEnv(): Record<string, string> {
     const proxy = String(this.config.network_proxy || '').trim()
     return proxy ? { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: proxy, HTTPS_PROXY: proxy } : {}
@@ -424,8 +421,7 @@ export class AppRuntime {
       const proxy = String(values.network_proxy ?? '').trim()
       let parsed: URL | null = null
       try { parsed = new URL(proxy) } catch { parsed = null }
-      // Only HTTP CONNECT proxies are usable: Pi's transport rejects SOCKS and
-      // PAC URLs, and an empty value means "connect directly".
+      // 仅支持 HTTP CONNECT 代理，拒绝 SOCKS/PAC 协议以匹配底层的网络栈限制。
       if (proxy && (!parsed || !['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname)) {
         return { ok: false, error: 'Invalid network_proxy: expected an http:// or https:// proxy URL' }
       }
@@ -435,9 +431,7 @@ export class AppRuntime {
     const previousProxy = this.config.network_proxy
     Object.assign(this.config, values)
     this.persistSettings()
-    // The worker keeps the address it started with, so a changed address
-    // replaces that one component at the next safe boundary. Speech, the scene
-    // and the active reply are untouched.
+    // 代理变更仅在子进程边界热重启，避免破坏正在进行的语音合成与场景渲染。
     if (this.config.network_proxy !== previousProxy) this.queueReload({ targets: ['pi-worker'] }, false)
     if (this.listeningEnabled && this.config.asr_language !== previousLanguage) {
       this.speech.stop()
@@ -547,7 +541,7 @@ export class AppRuntime {
     this.speech.stop()
     this.currentSessionId = sessionId
     this.store.currentId = sessionId
-    // 默认标题在真正发出第一条消息时才落本地时间戳，未发送的空会话保持“新对话”。
+    // 延迟命名：首次发送消息才落时间戳，避免产生大量无内容的幽灵会话。
     if (session.title === '新对话') {
       session.title = this.deps.timestampedSessionTitle()
       this.emit('session.titled', { session_id: session.id, title: session.title })
@@ -645,7 +639,7 @@ export class AppRuntime {
     const turn = this.activeTurn
     if (!turn) return
     if (event.type === 'ended' || event.type === 'error') {
-      // 从实际播放排空起留一秒余韵；重复回执不能延长等待，Pi 完成也不能提前开麦。
+      // 播放排空后保留 1 秒自然停顿缓冲，并防止过早开启监听引入麦克风回音。
       if (event.type === 'ended' && !turn.drained) this.listeningResumeAt = this.deps.clock.now() + 1000
       turn.drained = true
       if (event.type === 'error') {

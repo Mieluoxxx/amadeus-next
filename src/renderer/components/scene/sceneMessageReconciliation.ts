@@ -30,15 +30,8 @@ type MessageReconciliation = {
   acknowledged: ReadonlySet<string>
 }
 
-/**
- * Merge a history snapshot without treating it as a freshness signal.
- *
- * A local turn remains visible while no snapshot has acknowledged its identity.
- * Once a snapshot contains that identity, the snapshot is authoritative: it may
- * correct the text, and a later snapshot may delete the turn. Turn ids are the
- * only correlation key for locally-created entries, so identical text in two
- * turns is never collapsed.
- */
+// 将本地乐观更新消息与服务端权威历史快照合并。
+// 服务端确认前保留本地未提交完成的回合，流式传输中优先保留本地最新状态，并通过回合 ID 精确关联防止重复折叠。
 export function reconcileLoadedMessages(
   previous: SceneMessage[],
   loaded: SceneMessage[],

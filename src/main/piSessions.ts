@@ -7,7 +7,7 @@ export function openPiSession(directory: string, cwd: string, id: string): Sessi
   mkdirSync(directory, { recursive: true, mode: 0o700 })
   const file = path.join(directory, `${id}.jsonl`)
   if (!existsSync(file)) {
-    // Seed a header so the SDK persists even user/model entries before the first assistant reply.
+    // 提前预置 Session 头记录，确保首条回复生成前用户输入与模型元数据即可被 SDK 正确持久化。
     const header = SessionManager.inMemory(cwd).getHeader()
     writeFileSync(file, `${JSON.stringify(header)}\n`, { flag: 'wx', mode: 0o600 })
   }

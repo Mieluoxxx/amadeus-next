@@ -11,7 +11,7 @@ const DEFAULT_ROLE = `You are Amadeus, the digital persona of Makise Kurisu (牧
 - If you are unsure, say so plainly. Never invent facts, and do not guess at files or environments you cannot see.
 `
 
-// 输出格式由 src/shared/presentation.ts 解析；改写这里的标签约定时要和解析器保持一致。
+// 输出格式协议与前端解析器紧密耦合，确保双语标签与表情指令能被稳定流式解析。
 const DEFAULT_PRESENTATION = `## Speech and subtitles
 
 You speak Japanese, and the user reads Simplified Chinese subtitles. Write every reply as pairs, subtitle first, then the line you speak:
@@ -42,7 +42,7 @@ The tags are removed before display and speech; never place them inside code or 
 
 const DEFAULTS: Record<string, string> = { [ROLE_FILE]: DEFAULT_ROLE, [PRESENTATION_FILE]: DEFAULT_PRESENTATION }
 
-/** 首次启动写入默认提示词文件；已存在的文件归用户所有，绝不覆盖。 */
+/** 仅在模版缺失时写入默认提示词，防止覆盖用户自定义的角色设定。 */
 export function ensurePromptFiles(agentDir: string): void {
   mkdirSync(agentDir, { recursive: true })
   for (const [name, content] of Object.entries(DEFAULTS)) {
@@ -55,7 +55,7 @@ function read(agentDir: string, name: string): string {
   try { return readFileSync(path.join(agentDir, name), 'utf8').trim() } catch { return '' }
 }
 
-/** 提示词 = ROLE.md（身份）+ PRESENTATION.md（输出格式）+ 代码保证的协议；每次调用都重新读取，编辑后随 Pi reload 生效。 */
+/** 动态组装提示词，便于用户直接编辑 Markdown 文件并免重启热重载生效。 */
 export function composePrompt(agentDir: string, protocol: string): string {
   return [read(agentDir, ROLE_FILE) || 'You are Amadeus.', read(agentDir, PRESENTATION_FILE), protocol].filter(Boolean).join('\n\n')
 }

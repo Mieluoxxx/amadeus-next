@@ -28,10 +28,10 @@ let lastPosition = 0
 let idleUrls: string[] = []
 let conversationIdle = false
 
-/** 空闲演出只由主进程的 conversation-idle 驱动；回合是否进行中由主进程统一判定。 */
+/** 闲置演出由主进程统一判定调度，场景端不自作推断以避免状态分叉。 */
 function applyIdle(): void {
   host.wallpaperApp?.scene?.setIdleLoop(conversationIdle ? idleUrls : null)
-  // 有静帧时前景与静帧交叉淡入淡出；没有静帧就直接隐藏，和以前一样。
+  // 有静帧时采用交叉淡出掩盖图层切换突兀感；无静帧时直接隐匿前景。
   host.renderApp?.setForegroundVisible(!conversationIdle, idleUrls.length > 0)
 }
 
@@ -57,7 +57,7 @@ function dispatch(event: CharacterEvent): void {
   if (!sprite) return
   sprite.dispatch(event)
   host.wallpaperApp?.scene?.setSpeaking(['playing', 'buffering'].includes(sprite.state.playback))
-  // Small, non-sensitive live state for integration checks and diagnosis.
+  // 挂载运行时只读快照供调试与集成测试检查。
   host.__amadeusCharacter = { ...sprite.state }
 }
 
@@ -120,7 +120,7 @@ async function prepareAudio(): Promise<void> {
   context = audio
   const preparation = (async () => {
     if (audio.sampleRate !== 24000) throw new Error('The audio device did not accept 24 kHz playback')
-    // Activate before loading the worklet: a suspended context can defer its render thread.
+    // 加载 Worklet 前预先激活音频上下文，防止底层挂起阻塞音频渲染线程。
     await resume(audio)
     if (epoch !== audioEpoch) return
     await audio.audioWorklet.addModule('/next/audio-worklet.js')
@@ -196,7 +196,7 @@ function receive(event: VoiceEvent | ConversationIdleEvent): void {
     display += event.value.display ?? event.value.text
     timeline.append(event.value.text, event.value.cues, subtitles)
     if (subtitles.length) hasSubtitles = true
-    // Timed subtitles follow the audio; everything else (silent, plain, or after a speech failure) shows the reply.
+    // 有语音时依音频对齐时间戳逐步显示字幕；纯文本或降级模式直接显示全量文本。
     if (!hasSubtitles || !speech) host.wallpaperApp.setSubtitle(display)
     if (!speech) for (const cue of event.value.cues) dispatch({ type: 'cue', emotion: cue.emotion })
   } else if (event.type === 'audio') {
@@ -208,8 +208,7 @@ function receive(event: VoiceEvent | ConversationIdleEvent): void {
     worklet?.port.postMessage({ type: 'end', generation: key?.generation })
   } else if (event.type === 'error') {
     if (event.diagnostic?.provider !== 'fish') { failAudio(event.error); return }
-    // A producer failure is already reported by the main process. Stop speech without
-    // destroying a healthy audio processor or echoing it back as a playback failure.
+    // 服务端 TTS 异常已由主进程报告，此处降级为纯文本展示，避免销毁正常音频管线或产生重复报错。
     speech = false; inputEnded = true; pending = []; reports = []; trailingByte = null
     host.wallpaperApp.setSubtitle(display)
     worklet?.port.postMessage({ type: 'reset', generation: key?.generation ?? -1 })

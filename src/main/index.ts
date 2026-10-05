@@ -19,7 +19,7 @@ type Json = Record<string, unknown>
 const DEV_SERVER_URL = process.env.AMADEUS_NEXT_DEV_URL || 'http://127.0.0.1:5199'
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
 
-/** 新建会话的标题带本地时间戳，便于按时间审计。 */
+/** 会话标题附带时间戳，避免默认同名冲突并便于按时间回溯。 */
 function timestampedSessionTitle(): string {
   const now = new Date()
   const pad = (value: number) => String(value).padStart(2, '0')
@@ -41,7 +41,7 @@ function jsonFile(file: string, fallback: Json): Json {
   }
 }
 
-// 与 Electron userData 分开：设置文件放在用户可见、可手改的 ~/.amadeus；API key 仍走 safeStorage 加密。
+// 设置文件独立于应用目录（~/.amadeus），便于用户直接维护与版本迁移；敏感凭据仍由系统安全存储加密。
 function amadeusHome(): string {
   return process.env.AMADEUS_HOME || path.join(os.homedir(), '.amadeus')
 }
@@ -50,7 +50,7 @@ function settingsPath(): string {
   return path.join(amadeusHome(), 'settings.yaml')
 }
 
-// 角色不能继承开发环境：扩展、技能、AGENTS.md、提示词模板、Pi 包都留在应用自己的目录里，只共享凭据和模型定义。
+// 运行环境与宿主开发机隔离，防止外部扩展与技能污染角色设定，仅共享凭据与模型定义。
 function piHome(): { agentDir: string; cwd: string; authPath: string; modelsPath: string } {
   const agentDir = path.join(amadeusHome(), 'pi')
   const shared = process.env.AMADEUS_PI_CREDENTIALS_DIR || path.join(os.homedir(), '.pi', 'agent')
@@ -59,7 +59,7 @@ function piHome(): { agentDir: string; cwd: string; authPath: string; modelsPath
   ensurePromptFiles(agentDir)
   const settings = path.join(agentDir, 'settings.json')
   if (!existsSync(settings)) {
-    // 首次启动只带过来默认模型，免得隔离后落到任意一个可用模型上。
+    // 初次初始化仅继承默认模型，防止环境隔离后回退到不可用的随机模型。
     const source = jsonFile(path.join(shared, 'settings.json'), {})
     const seed = Object.fromEntries(['defaultProvider', 'defaultModel', 'defaultThinkingLevel'].filter(key => key in source).map(key => [key, source[key]]))
     writeFileSync(settings, JSON.stringify(seed, null, 2), 'utf8')
@@ -81,13 +81,13 @@ function writeYaml(file: string, data: Json): void {
   writeFileSync(file, stringifyYaml(data), { encoding: 'utf8', mode: 0o600 })
 }
 
-/** Adopt the pre-rename `salieri-next-*` file when the renamed one is absent (never overwrites). */
+/** 兼容平滑迁移旧版文件命名，无冲突时接管历史数据。 */
 function adoptLegacyFile(file: string): string {
   const legacy = path.join(path.dirname(file), path.basename(file).replace(/^amadeus-next-/, 'salieri-next-'))
   try {
     if (!existsSync(file) && existsSync(legacy)) renameSync(legacy, file)
   } catch {
-    // 迁移失败时退回全新存储，不阻断启动
+    // 迁移失败时回退为空存储，避免阻断应用启动。
   }
   return file
 }

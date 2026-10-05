@@ -3,15 +3,14 @@ import { existsSync } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
 
-// Local, non-commercial import only. See resources/LICENSES/FreeMote-NOTICE.md.
+// 仅用于本地非商业导入，详见 resources/LICENSES/FreeMote-NOTICE.md。
 const project = path.resolve(import.meta.dirname, '..')
 if (!process.argv[2]) throw new Error('用法：npm run assets:emote -- <素材来源目录>；不再隐式依赖相邻仓库')
 const source = path.resolve(process.argv[2])
 const destination = path.join(project, 'resources/character/emote')
 const output = await mkdtemp(path.join(project, 'resources/.emote-import-'))
 const backup = `${destination}.previous-${randomUUID()}`
-// The upstream packs keep their Japanese directory names; the imported tree is ASCII so the
-// loopback scene URLs carry no non-ASCII segment.
+// 上游模型包使用日文目录名；此处映射为纯 ASCII 目录以避免环回场景 URL 在解析非 ASCII 字符时异常。
 const models = {
   '牧瀬紅莉栖ab': 'kurisu_ab',
   '牧瀬紅莉栖ab_白衣': 'kurisu_ab_white',

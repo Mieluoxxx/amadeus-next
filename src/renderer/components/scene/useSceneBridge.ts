@@ -59,18 +59,13 @@ const SCENE_LOAD_TOKEN_PARAM = 'sceneLoadToken'
 const RETRY_BASE_MS = 2000
 const READY_TIMEOUT_MS = 20000
 
-/** Random per-load token; never a secret, only proof of "which load". */
+/** 每次加载生成独立的生命周期令牌，用于区分不同批次的页面握手。 */
 function sceneLoadToken(): string {
   const bytes = new Uint8Array(12)
   crypto.getRandomValues(bytes)
   return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
-/**
- * True when a readiness message belongs to the load identified by `token`.
- * A message without the token, or with an outdated one, is ignored: it cannot
- * describe the scene that is mounted now.
- */
 export function isCurrentLoadMessage(
   messageToken: unknown,
   token: string,
@@ -78,7 +73,7 @@ export function isCurrentLoadMessage(
   return Boolean(token) && String(messageToken || '') === token
 }
 
-/** The embedded scene may only come from this exact loopback page. */
+/** 仅允许加载本地环回地址资源，隔离外部网络潜在的安全风险。 */
 function validateSceneUrl(rawUrl: string): { url: string; assetOrigin: string } | null {
   try {
     const parsed = new URL(String(rawUrl || ''))
@@ -133,7 +128,7 @@ export function useSceneBridge({
   const [importingAssets, setImportingAssets] = useState(false)
   const tokenRef = useRef('')
   const generationRef = useRef(0)
-  /** Generation whose load may still report readiness. Not the same as `generationRef`. */
+  /** 标记当前有权报告就绪状态的加载代数，防止历史异步回调引发状态倒退。 */
   const activeGenerationRef = useRef(-1)
   const originRef = useRef('')
   const attemptsRef = useRef(0)
@@ -159,8 +154,7 @@ export function useSceneBridge({
       return false
     }
     attemptsRef.current = 0
-    // The token is generated here and appended to the URL, so the page echoes a
-    // value this hook chose rather than one the page could pick itself.
+    // 令牌由宿主生成并附带于 URL，使子页面只能回传宿主指定的认证值。
     const token = sceneLoadToken()
     const sceneUrl = new URL(validated.url)
     sceneUrl.searchParams.set(SCENE_LOAD_TOKEN_PARAM, token)
@@ -246,8 +240,7 @@ export function useSceneBridge({
   const reportSceneMessage = useCallback((event: MessageEvent) => {
     if (!isTrustedSceneMessage(event, frameRef.current, originRef.current)) return
     const payload = event.data as Record<string, unknown>
-    // Delayed messages from a previous load share origin and frame identity, so
-    // the per-load token is what actually separates them.
+    // 异步握手消息可能跨生命周期到达，需依赖每轮加载唯一的令牌过滤陈旧消息。
     if (!isCurrentLoadMessage(payload.sceneLoadToken, tokenRef.current)) return
     if (payload.status === 'ready') {
       if (readyTimerRef.current !== null) {
@@ -261,7 +254,7 @@ export function useSceneBridge({
         character: typeof payload.character === 'boolean' ? payload.character : previous.character,
       }))
     } else if (payload.status === 'character') {
-      // Frames arrive after the scene is ready; this is the later signal.
+      // 收到第一帧画面作为渲染真正就绪的终态信号。
       setState(previous => (
         typeof payload.character === 'boolean' ? { ...previous, character: payload.character } : previous
       ))
@@ -282,8 +275,7 @@ export function useSceneBridge({
 
   useEffect(() => {
     if (!connected) {
-      // The backend connection that owns this scene went away: cancel every
-      // in-flight start so a stale response cannot revive the scene.
+      // 后端连接断开时取消所有挂起流程，防止残留回调意外激活失效场景。
       generationRef.current += 1
       activeGenerationRef.current = -1
       clearTimers()

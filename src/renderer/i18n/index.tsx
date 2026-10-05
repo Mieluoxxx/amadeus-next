@@ -62,9 +62,7 @@ const EN = {
 
 
   'settings.label.asr_mode': 'Recognition backend',
-  // Backend labels live under their own prefix: `settings.option.*` is shared with
-  // the TTS backend select, and both registries use the ids openai_compatible and
-  // mimo, so a shared key would retitle one page's dropdown with the other's words.
+  // 独立后端选项国际化前缀，防止不同注册表使用同名 ID（如 openai_compatible）时文案相互覆盖。
   'settings.asrBackend.qwen3_asr': 'Qwen3-ASR (local)',
   'settings.asrBackend.sense_voice': 'SenseVoice (local)',
   'settings.asrBackend.openai_compatible': 'OpenAI-compatible transcription (remote)',

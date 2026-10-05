@@ -128,13 +128,13 @@ export function fishNetworkFailure(error: unknown, phase: Phase): FishFailure {
   return fishFailure(code, code === 'invalid_header' ? 'configuration' : phase, networkCode ? { networkCode } : {})
 }
 
-/** Only explicit server message/close-reason strings may be shown, never whole payloads or headers. */
+/** 仅提取显式错误信息并脱敏关键凭证，防止接口私密载荷或请求头泄露给前端。 */
 export function fishServerDetail(value: unknown, secret: string): string | undefined {
   if (typeof value !== 'string' || !value.trim()) return undefined
   let text = value
   if (secret) {
     text = text.replaceAll(secret, '[REDACTED]')
-    try { text = text.replaceAll(encodeURIComponent(secret), '[REDACTED]') } catch { /* Invalid Unicode cannot form an encoded credential. */ }
+    try { text = text.replaceAll(encodeURIComponent(secret), '[REDACTED]') } catch { /* 避免异常字符编码解析抛错中断脱敏流程 */ }
   }
   return text
     .replace(/(Bearer|Basic)\s+[^\s,;]+/gi, '$1 [REDACTED]')

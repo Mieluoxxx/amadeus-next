@@ -86,19 +86,17 @@ export default function ScenePage({
     [notices, acknowledgedNotices],
   )
 
-  // Dismissal is per-task: an error the user hid in one task must not stay hidden in the next.
+  // 错误已读状态按会话隔离，切换会话时重置，避免旧任务的隐藏状态阻断新任务暴露异常。
   useEffect(() => setAcknowledgedNotices([]), [session.sessionId])
 
-  // React only to the accepted session-change record from useSceneSession. Raw
-  // broadcasts are intentionally not consumed here: a stale event must not
-  // reopen the transcript.
+  // 仅响应经由状态钩子收敛后的会话变更，防止底层广播乱序导致已关闭的面板被误开。
   useEffect(() => {
     const change = session.sessionChange
     if (!change) return
     if (change.source === 'slice') setPanel('transcript')
   }, [session.sessionChange])
 
-  // ⌘N stays inside the scene: it starts a new task and shows it.
+  // 快捷键聚焦场景上下文，新建会话并同步展开记录面板，保持交互连贯。
   useEffect(() => {
     const onNewSession = () => {
       setPanel('transcript')
@@ -113,18 +111,12 @@ export default function ScenePage({
   }, [])
 
   const toolbarRight = Math.max(12, viewport.width - (layout.scene.x + layout.scene.width) + 12)
-  /**
-   * One submit path for the button and for Enter. The attachment travels with
-   * the same call in both cases, the send is awaited, and the composer is
-   * cleared only after the backend accepted it — a failed send keeps the text
-   * and the picture so nothing the user typed is lost.
-   */
+  // 统一发送通道并等待后端确认后再清空输入，防止发送失败丢失草稿与附件。
   const submit = useCallback(async () => {
     const attachment = pendingAttachment
     const sent = await session.sendText(session.draft, attachment)
     if (sent) {
-      // Clear only the attachment that was actually sent: if a new one was
-      // picked while the send was in flight, it must survive.
+      // 仅清空已成功提交的附件实例，避免误删发送并发期间新选取的图片。
       setPendingAttachment(current => (current === attachment ? null : current))
     }
   }, [session, pendingAttachment])
@@ -173,8 +165,7 @@ export default function ScenePage({
           top: layout.scene.y,
           width: layout.scene.width,
           height: layout.scene.height,
-          // Behind the frame sits the same artwork, so a frame that had to drop
-          // below cover scale still reads as one continuous picture.
+          // 容器垫底相同壁纸，在窗口形变或帧缩放未填满时保持视觉连续性。
           background: bridge.assetOrigin
             ? `#05070b url(${bridge.assetOrigin}/scene/room/background.png) center/cover no-repeat`
             : '#05070b',
@@ -182,8 +173,7 @@ export default function ScenePage({
       >
         {bridge.url ? (
           <iframe
-            // Keyed by load generation: a restarted scene must get a fresh
-            // document even when the asset URL is unchanged.
+            // 使用加载代数作为 key 强制重建 iframe DOM，防止热重启时残留已损坏的 WebGL 状态。
             key={bridge.loadId}
             ref={bridge.frameRef}
             title="Amadeus scene"
@@ -191,7 +181,7 @@ export default function ScenePage({
             src={bridge.url}
             onError={bridge.reportFrameError}
             style={{ ...frameStyle, position: 'absolute', border: 'none', opacity: bridge.status === 'ready' ? 1 : 0 }}
-            // No microphone permission: the scene only renders the character.
+            // 限制子页面仅专注视效渲染，防止内嵌帧越权访问系统音频设备。
             allow="autoplay"
           />
         ) : (
@@ -218,7 +208,7 @@ export default function ScenePage({
         ) : null}
       </div>
 
-      {/* Keep native window dragging above the iframe and below interactive chrome. */}
+      {/* 拖拽区域置于 iframe 之上、可交互控件之下，保证窗口可拖动且不阻断按钮点击。 */}
       <div
         aria-hidden="true"
         className="absolute z-10 select-none [-webkit-app-region:drag]"
@@ -301,7 +291,7 @@ function SceneNotices({
   const { t } = useI18n()
   if (unresolvedCount === 0) return null
   if (notices.length === 0) {
-    // Acknowledged but still unresolved: the entry stays discoverable.
+    // 已忽略但未解决的异常收折为汇总按钮，保持界面清爽同时保留可发现性。
     return (
       <button
         onClick={onOpenSettings}
@@ -316,8 +306,7 @@ function SceneNotices({
   }
   const [first] = notices
   return (
-    // Bounded to the reserved chrome band so the notice stack can never reach
-    // into the area the layout keeps clear for the character.
+    // 限制通知浮层最大高度在工具栏保留区内，避免横幅向下遮挡立绘主体。
     <div
       className="flex max-w-full shrink-0 items-center gap-1.5 overflow-hidden"
       style={{ maxHeight: 44 }}

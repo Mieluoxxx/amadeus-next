@@ -3,7 +3,7 @@ declare const currentTime: number
 declare class AudioWorkletProcessor { port: MessagePort }
 declare function registerProcessor(name: string, processor: typeof AudioWorkletProcessor): void
 
-/** One queue and one consumption clock, including silence caused by starvation. */
+/** 集中维护音频缓冲区与播放时钟，防止音频欠载导致音画不同步。 */
 class AmadeusPcmProcessor extends AudioWorkletProcessor {
   private queue: Float32Array[] = []
   private head = 0
@@ -27,7 +27,7 @@ class AmadeusPcmProcessor extends AudioWorkletProcessor {
       } else if (message.generation === this.generation) {
         if (message.type === 'pcm' && message.buffer instanceof ArrayBuffer && !this.inputEnded && this.state !== 'ended' && this.state !== 'error') {
           const samples = new Float32Array(message.buffer)
-          // ponytail: bounded in-memory PCM queue; flow control if >120s look-ahead is ever needed.
+          // 限制最大缓冲长度为 2 分钟，防止异常推流耗尽渲染进程内存。
           if (this.buffered + samples.length > sampleRate * 120) {
             this.queue = []; this.head = 0; this.buffered = 0; this.state = 'error'
             this.port.postMessage({ type: 'error', generation: this.generation, error: 'Audio queue exceeded two minutes' })

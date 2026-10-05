@@ -147,7 +147,7 @@ export class SpeechBridge {
             } else if (!this.finishing && text && text !== this.transcript) {
               this.transcript = text
               this.options.clock.clearTimeout(this.timer)
-              // ponytail: stable text approximates an utterance boundary; use audio VAD if recognition latency causes early cuts.
+              // 识别文本在停顿阈值内无增量时判定为断句边界，触发自动收尾。
               this.timer = this.options.clock.setTimeout(() => this.finish(), this.options.pauseMs)
             }
             if (text) this.emit('asr.recognized', message)
@@ -159,7 +159,7 @@ export class SpeechBridge {
             this.emit('asr.status', noSpeech ? { status: 'idle', reason: 'no-speech' } : { status: 'error', error: message.error })
           }
         } catch {
-          // A malformed helper line is ignored; the next valid event remains usable.
+          // 忽略损坏的单行输出，防止个别异常格式数据中断整个识别事件流。
         }
       }
       newline = this.buffer.indexOf('\n')

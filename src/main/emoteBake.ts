@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 
 const run = promisify(execFile)
 
-// 只执行应用自己的副本；打包后优先用 asar 外的 extraResources。
+// 优先从 asar 外的 unpacked 目录执行原生可执行文件，规避打包后无法直接 spawn 的限制。
 function emoteLoaderPath(moduleDir: string): string {
   const name = process.platform === 'win32' ? 'AmadeusEmoteLoader.exe' : 'AmadeusEmoteLoader'
   const candidates = [
@@ -30,7 +30,7 @@ const EMOTE_RUNTIME = {
 }
 const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
 
-/** 导入的 JS 会在场景中执行，因此只允许已经核验的运行时版本。 */
+/** 严格核验运行时版本与哈希，防止未受信任的脚本注入场景渲染环境。 */
 export async function verifyEmoteRuntime(root: string): Promise<void> {
   for (const [name, hash] of Object.entries(EMOTE_RUNTIME)) {
     const file = path.join(root, name)
@@ -39,7 +39,7 @@ export async function verifyEmoteRuntime(root: string): Promise<void> {
   }
 }
 
-/** 只接受普通目录和文件，不把软链接或设备文件带入应用。 */
+/** 仅允许常规文件与目录，防御软链接越界与特殊设备文件遍历。 */
 async function filesUnder(root: string, relative = ''): Promise<string[]> {
   const file = path.join(root, relative)
   const info = await lstat(file)
@@ -110,19 +110,19 @@ async function bake(model: string, options: BakeOptions): Promise<BakedModel> {
     if (!await complete(paths(temporary), false)) throw new Error('E-mote 烘焙产物不完整或格式无效')
     if (await fingerprint(model, folder, loader) !== key) throw new Error('烘焙期间模型或加载器发生变化，请重试')
     await writeFile(path.join(temporary, 'complete.json'), JSON.stringify({ psb: (await lstat(paths(temporary).psb)).size, meta: (await lstat(paths(temporary).meta)).size }))
-    // 另一个进程可能已发布相同输入的完整产物；绝不覆盖仍在服务的有效世代。
+    // 优先复用已存在的同哈希产物，避免并发生成破坏正在服务的世代。
     if (!await complete(baked)) {
       await rm(destination, { recursive: true, force: true })
       try { await rename(temporary, destination) } catch (error) {
         if (!await complete(baked)) throw error
       }
     }
-    // ponytail: 保留旧世代以保护仍在加载的场景；模型频繁更新时再增加显式缓存清理。
+    // 保留旧世代缓存，防止正在引用的场景实例因热替换导致资源丢失。
     return baked
   } finally { await rm(temporary, { recursive: true, force: true }) }
 }
 
-/** 合并同一模型的并发请求，失败后允许重新尝试。 */
+/** 合并同一模型的并发烘焙请求，消除冗余计算并规避文件写入竞争。 */
 export async function ensureBakedModel(model: string, options: BakeOptions): Promise<BakedModel> {
   if (!/^[a-z][a-z0-9_]*$/.test(model)) throw new Error('无效的模型名')
   const key = JSON.stringify([model, path.resolve(options.modelRoot), path.resolve(options.cacheDir), options.moduleDir])
@@ -133,7 +133,7 @@ export async function ensureBakedModel(model: string, options: BakeOptions): Pro
   return task
 }
 
-/** 先校验、复制并试烘焙，再替换应用自己的资源目录；失败不破坏旧资源。 */
+/** 原子化导入：先试烘焙验证有效性，成功后再整体替换，确保失败时不破坏已有资源。 */
 export async function importEmoteAssets(source: string, destination: string, options: Omit<BakeOptions, 'modelRoot'>): Promise<BakedModel> {
   await verifyEmoteRuntime(source)
   await filesUnder(source)
@@ -151,7 +151,7 @@ export async function importEmoteAssets(source: string, destination: string, opt
       if (moved) await rename(backup, destination)
       throw error
     }
-    if (moved) await rm(backup, { recursive: true, force: true }).catch(() => {}) // 清理失败不把已完成的导入报告为失败。
+    if (moved) await rm(backup, { recursive: true, force: true }).catch(() => {}) // 备份清理异常不阻断已成功的导入流程。
     return baked
   } finally { await rm(temporary, { recursive: true, force: true }) }
 }
