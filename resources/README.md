@@ -3,14 +3,16 @@
 This directory contains independent local copies of the assets the Electron
 scene host serves:
 
-- `emote/`: locally provisioned FreeMote runtime and all four AB/C ordinary-clothes/white-coat model packs. Developer-local; excluded from packaging. The PSB parser is a pinned native artifact under `vendor/emote-loader/` (see `docs/emote-loader-integration.md`).
-- `assets/idle/`: the idle scene stills.
-- `assets/images/`: room background, ambient layers, and subtitle frame.
-- `render/web/`: room drawing scripts, PixiJS and `wallpaper_engine.html`.
-- `wallpaper/crt_config.json`: authored room geometry.
+- `scene/`: room scene and stage container.
+  - `scene/stage/`: stage drawing scripts, PixiJS and `index.html`.
+  - `scene/room/`: authored room geometry (`crt_config.json`), background (`background.png`), and ambient layers (`ambient_high.png`, `ambient_low.png`).
+- `character/`:
+  - `character/emote/`: locally provisioned FreeMote runtime and model packs. Developer-local; excluded from packaging.
+  - `character/idle/`: the idle scene stills.
+- `ui/`: in-scene UI framing assets (`subtitle_frame.png`).
 - `LICENSES/`, `THIRD_PARTY_NOTICES.md`: copied license/provenance notices. Packaging copies the repository root `LICENSE` next to them.
 
-`wallpaper_engine.html` loads `/next/scene.js` and `/next/start.js` directly, so
+`scene/stage/index.html` loads `/next/scene.js` and `/next/start.js` directly, so
 its script list is the single source of truth for load order. The scene host no
 longer rewrites the HTML; it only generates the tiny `/next/start.js` bootstrap.
 
@@ -53,9 +55,9 @@ Layers and source art are not deleted or reordered to hide rendering errors.
 
 Some media are **intentionally not tracked by Git** (see `.gitignore`):
 
-- `/resources/assets/images/*` — only `amadeus_desktop_wallpaper.png` is tracked;
+- `/resources/scene/room/ambient_*.png` and `/resources/ui/subtitle_frame.png` — only `background.png` is tracked;
   the ambient blend layers and subtitle frame are not.
-- `/resources/emote/` — imported runtime and private model resources.
+- `/resources/character/emote/` — imported runtime and private model resources.
 
 A fresh clone therefore cannot run a complete scene until those files are copied
 in from the asset source. Missing ambient layers do not stop the room. Missing

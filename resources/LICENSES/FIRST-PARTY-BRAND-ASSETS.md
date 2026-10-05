@@ -3,7 +3,7 @@
 The Amadeus project owner and maintainer confirmed on 2026-08-29 that the
 following checked-in assets are their original works:
 
-- `assets/images/amadeus_desktop_wallpaper.png`
+- `scene/room/background.png` (formerly `assets/images/amadeus_desktop_wallpaper.png`)
 
 They are included in the Amadeus source release as first-party brand assets
 under the repository root `LICENSE` (Apache License 2.0). This record does not

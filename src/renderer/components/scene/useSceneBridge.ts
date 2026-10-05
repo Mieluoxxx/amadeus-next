@@ -85,7 +85,7 @@ function validateSceneUrl(rawUrl: string): { url: string; assetOrigin: string } 
     if (parsed.protocol !== 'http:') return null
     if (parsed.hostname !== '127.0.0.1') return null
     if (parsed.username || parsed.password || parsed.hash) return null
-    if (parsed.pathname !== '/render/web/wallpaper_engine.html') return null
+    if (parsed.pathname !== '/scene/stage/index.html' && parsed.pathname !== '/render/web/wallpaper_engine.html') return null
     const port = Number(parsed.port)
     if (!Number.isInteger(port) || port <= 0 || port > 65535) return null
     return { url: parsed.toString(), assetOrigin: `http://127.0.0.1:${port}` }

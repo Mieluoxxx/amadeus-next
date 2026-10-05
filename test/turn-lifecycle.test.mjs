@@ -29,7 +29,7 @@ function runtime(env = {}, clock = { value: Date.now() }, emote = {}) {
     dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
     timestampedSessionTitle: () => '新对话-2026-01-01-00-00',
     SessionStore: class { sessions = [{ id: 'one', title: 'One', messages: [] }, { id: 'two', title: 'Two', messages: [] }]; save() {} },
-    SceneHost: class { url = 'http://127.0.0.1:1234/render/web/wallpaper_engine.html'; async start() {}; setEmoteAssets(...args) { calls.push(['emote-assets', ...args]) }; reload() { calls.push(['reload-scene']) }; close() {} },
+    SceneHost: class { url = 'http://127.0.0.1:1234/scene/stage/index.html'; async start() {}; setEmoteAssets(...args) { calls.push(['emote-assets', ...args]) }; reload() { calls.push(['reload-scene']) }; close() {} },
     // 模型烘焙是原生工具调用：被测类只依赖它的返回值。
     ensureBakedModel: async () => ({ psb: '/fixture/model.psb', meta: '/fixture/model.meta.json' }),
     verifyEmoteRuntime: async () => {}, importEmoteAssets: async () => {},

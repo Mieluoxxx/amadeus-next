@@ -7,7 +7,7 @@ import path from 'node:path'
 const project = path.resolve(import.meta.dirname, '..')
 if (!process.argv[2]) throw new Error('用法：npm run assets:emote -- <素材来源目录>；不再隐式依赖相邻仓库')
 const source = path.resolve(process.argv[2])
-const destination = path.join(project, 'resources/emote')
+const destination = path.join(project, 'resources/character/emote')
 const output = await mkdtemp(path.join(project, 'resources/.emote-import-'))
 const backup = `${destination}.previous-${randomUUID()}`
 // The upstream packs keep their Japanese directory names; the imported tree is ASCII so the

@@ -24,9 +24,35 @@ export class SceneHost {
       }
       // Replace only the foreground character; background scene assets keep their existing route.
       // 烘焙产物（成品 PSB 与随附数据）由主进程写到用户目录，这里只把它挂成一个只读路由。
-      const roots: [string, string][] = [['/next/', this.bundle], ['/emote/', this.emoteRoot], ['/render/web/', path.join(this.root, 'render/web')], ['/assets/', path.join(this.root, 'assets')], ...(this.emoteCache ? [['/emote-cache/', this.emoteCache] as [string, string]] : [])]
+      const roots: [string, string][] = [
+        ['/next/', this.bundle],
+        ['/emote/', this.emoteRoot],
+        ['/scene/stage/', path.join(this.root, 'scene/stage')],
+        ['/scene/room/', path.join(this.root, 'scene/room')],
+        ['/character/idle/', path.join(this.root, 'character/idle')],
+        ['/ui/', path.join(this.root, 'ui')],
+        ['/render/web/', existsSync(path.join(this.root, 'scene/stage')) ? path.join(this.root, 'scene/stage') : path.join(this.root, 'render/web')],
+        ['/assets/idle/', existsSync(path.join(this.root, 'character/idle')) ? path.join(this.root, 'character/idle') : path.join(this.root, 'assets/idle')],
+        ['/assets/images/', existsSync(path.join(this.root, 'scene/room')) ? path.join(this.root, 'scene/room') : path.join(this.root, 'assets/images')],
+        ...(this.emoteCache ? [['/emote-cache/', this.emoteCache] as [string, string]] : [])
+      ]
       const route = roots.find(([prefix]) => url.pathname.startsWith(prefix))
-      const file = route && safeFilePath(route[1], url.pathname.slice(route[0].length))
+      let file = route && safeFilePath(route[1], url.pathname.slice(route[0].length))
+      if (route && (!file || !existsSync(file))) {
+        if (url.pathname === '/render/web/wallpaper_engine.html' && existsSync(path.join(route[1], 'index.html'))) {
+          file = path.join(route[1], 'index.html')
+        } else if (url.pathname === '/render/web/wallpaper_scene.js' && existsSync(path.join(route[1], 'scene.js'))) {
+          file = path.join(route[1], 'scene.js')
+        } else if (url.pathname === '/assets/images/amadeus_desktop_wallpaper.png' && existsSync(path.join(route[1], 'background.png'))) {
+          file = path.join(route[1], 'background.png')
+        } else if (url.pathname === '/assets/images/amadeus_ambient_high_blend.png' && existsSync(path.join(route[1], 'ambient_high.png'))) {
+          file = path.join(route[1], 'ambient_high.png')
+        } else if (url.pathname === '/assets/images/amadeus_ambient_low_blend.png' && existsSync(path.join(route[1], 'ambient_low.png'))) {
+          file = path.join(route[1], 'ambient_low.png')
+        } else if (url.pathname === '/assets/images/subtitle_frame_big.png' && existsSync(path.join(this.root, 'ui/subtitle_frame.png'))) {
+          file = path.join(this.root, 'ui/subtitle_frame.png')
+        }
+      }
       if (!route || !file || !existsSync(file) || !statSync(file).isFile()) { response.writeHead(404); response.end('not found'); return }
       const real = path.relative(realpathSync(route[1]), realpathSync(file))
       if (real.startsWith('..') || path.isAbsolute(real)) { response.writeHead(403); response.end(); return }
@@ -47,7 +73,7 @@ export class SceneHost {
     this.root = root
     this.bundle = bundle
     this.emoteCache = emoteCache
-    this.emoteRoot = path.join(root, 'emote')
+    this.emoteRoot = existsSync(path.join(root, 'character/emote')) ? path.join(root, 'character/emote') : path.join(root, 'emote')
   }
   setEmoteAssets(root: string, cache: string): void {
     if (!this.emoteCache) throw new Error('Scene cache root is not configured')
@@ -59,7 +85,11 @@ export class SceneHost {
     if (this.initialization) this.initialization.character = { renderer: 'emote', model: 'kurisu_ab_white', ...this.bakedUrls }
   }
   get origin(): string { return `http://127.0.0.1:${this.port}` }
-  get url(): string { return `${this.origin}/render/web/wallpaper_engine.html` }
+  get url(): string {
+    return existsSync(path.join(this.root, 'scene/stage/index.html'))
+      ? `${this.origin}/scene/stage/index.html`
+      : `${this.origin}/render/web/wallpaper_engine.html`
+  }
   async start(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       this.server.once('error', reject)
@@ -74,7 +104,10 @@ export class SceneHost {
   }
   reload(): void {
     let crtConfig: unknown = { img_size: [1672, 941], crt_corners: [[556, 629], [560, 199], [1127, 204], [1132, 630]] }
-    try { crtConfig = JSON.parse(readFileSync(path.join(this.root, 'wallpaper/crt_config.json'), 'utf8')) } catch (error) {
+    const crtConfigPath = existsSync(path.join(this.root, 'scene/room/crt_config.json'))
+      ? path.join(this.root, 'scene/room/crt_config.json')
+      : path.join(this.root, 'wallpaper/crt_config.json')
+    try { crtConfig = JSON.parse(readFileSync(crtConfigPath, 'utf8')) } catch (error) {
       if (this.initialization) throw error // Retain the last usable scene on an incomplete file save.
     }
     const cfg = crtConfig as { img_size?: unknown; crt_corners?: unknown } | null
@@ -83,19 +116,34 @@ export class SceneHost {
       throw new Error('Invalid CRT geometry; keeping the previous scene')
     }
     const idleUrls = (() => {
-      // resources/assets/idle 下的静帧随 /assets/ 路由提供；目录缺失时静默降级为无 idle 轮播。
+      const hasDomainIdle = existsSync(path.join(this.root, 'character/idle'))
+      const idleDir = hasDomainIdle ? path.join(this.root, 'character/idle') : path.join(this.root, 'assets/idle')
+      const routePrefix = hasDomainIdle ? 'character/idle' : 'assets/idle'
       try {
-        return readdirSync(path.join(this.root, 'assets/idle')).filter(name => name.endsWith('.png')).sort()
-          .map(name => `${this.origin}/assets/idle/${name}`)
+        return readdirSync(idleDir).filter(name => name.endsWith('.png')).sort()
+          .map(name => `${this.origin}/${routePrefix}/${name}`)
       } catch { return [] }
     })()
+    const backgroundUrl = existsSync(path.join(this.root, 'scene/room/background.png'))
+      ? `${this.origin}/scene/room/background.png`
+      : `${this.origin}/assets/images/amadeus_desktop_wallpaper.png`
+    const ambientUrl = existsSync(path.join(this.root, 'scene/room/ambient_high.png'))
+      ? `${this.origin}/scene/room/ambient_high.png`
+      : `${this.origin}/assets/images/amadeus_ambient_high_blend.png`
+    const ambientLowUrl = existsSync(path.join(this.root, 'scene/room/ambient_low.png'))
+      ? `${this.origin}/scene/room/ambient_low.png`
+      : `${this.origin}/assets/images/amadeus_ambient_low_blend.png`
+    const subtitleFrameUrl = existsSync(path.join(this.root, 'ui/subtitle_frame.png'))
+      ? `${this.origin}/ui/subtitle_frame.png`
+      : `${this.origin}/assets/images/subtitle_frame_big.png`
+
     this.initialization = {
       character: { renderer: 'emote', model: 'kurisu_ab_white', ...this.bakedUrls },
       scene: {
-        backgroundUrl: `${this.origin}/assets/images/amadeus_desktop_wallpaper.png`,
-        ambientUrl: `${this.origin}/assets/images/amadeus_ambient_high_blend.png`,
-        ambientLowUrl: `${this.origin}/assets/images/amadeus_ambient_low_blend.png`,
-        subtitleFrameUrl: `${this.origin}/assets/images/subtitle_frame_big.png`,
+        backgroundUrl,
+        ambientUrl,
+        ambientLowUrl,
+        subtitleFrameUrl,
         idleUrls,
         crtConfig,
       },

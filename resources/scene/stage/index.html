@@ -16,7 +16,7 @@
          addressed from there. A relative "../assets/..." resolved to
          /render/assets/... and 404'd both in the desktop host and in the
          in-window scene. */
-      background: #05070b url("/assets/images/amadeus_desktop_wallpaper.png") center/cover no-repeat;
+      background: #05070b url("/scene/room/background.png") center/cover no-repeat;
     }
     #canvas-container {
       width: 100%;
@@ -36,11 +36,11 @@
     var Module = { TOTAL_MEMORY: 512 * 1024 * 1024 };
     (function () {
       var SCRIPTS = [
-        "/render/web/vendor/pixi.min.js",
+        "/scene/stage/vendor/pixi.min.js",
         "/emote/FreeMoteDriver.js",
         "/emote/emoteplayer.js",
         "/next/scene.js",
-        "/render/web/wallpaper_scene.js",
+        "/scene/stage/scene.js",
         "/next/start.js"
       ];
       var CACHE_BUST = String(Date.now());
@@ -49,7 +49,7 @@
         if (i >= SCRIPTS.length) return;
         var s = document.createElement("script");
         var src = SCRIPTS[i];
-        if (src.indexOf("/render/web/vendor/") !== 0) {
+        if (src.indexOf("/scene/stage/vendor/") !== 0) {
           src += "?v=" + CACHE_BUST;
         }
         if (src.indexOf("/next/") === 0) s.type = "module";

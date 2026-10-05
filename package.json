@@ -67,7 +67,7 @@
       {
         "from": "resources",
         "to": "amadeus-assets",
-        "filter": ["**/*", "!emote/**"]
+        "filter": ["**/*", "!character/emote/**", "!emote/**"]
       },
       {
         "from": "LICENSE",

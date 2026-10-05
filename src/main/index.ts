@@ -29,7 +29,7 @@ function timestampedSessionTitle(): string {
 function projectRoot(): string {
   if (process.env.AMADEUS_NEXT_PROJECT_ROOT) return process.env.AMADEUS_NEXT_PROJECT_ROOT
   const bundledAssets = path.join(process.resourcesPath || '', 'amadeus-assets')
-  if (existsSync(path.join(bundledAssets, 'render/web/wallpaper_engine.html'))) return bundledAssets
+  if (existsSync(path.join(bundledAssets, 'scene/stage/index.html')) || existsSync(path.join(bundledAssets, 'render/web/wallpaper_engine.html'))) return bundledAssets
   return path.resolve(MODULE_DIR, '../../resources')
 }
 

@@ -49,7 +49,7 @@ app.on('browser-window-created', (_event, window) => {
   })
   window.webContents.once('did-finish-load', () => {
     void (async () => {
-      let frame = await wait(() => window.webContents.mainFrame.frames.find(f => f.url.includes('wallpaper_engine.html')), 'Scene iframe missing')
+      let frame = await wait(() => window.webContents.mainFrame.frames.find(f => f.url.includes('index.html') || f.url.includes('wallpaper_engine.html')), 'Scene iframe missing')
       await wait(() => frame.executeJavaScript('!!window.__amadeusCharacter && !!window.__sceneLastReport?.character'), 'Character did not render')
       const idle = active => window.webContents.send('next.event', { method: 'voice.event', params: { type: 'conversation-idle', active } })
       idle(true)
@@ -267,7 +267,7 @@ app.on('browser-window-created', (_event, window) => {
       await wait(() => ui('!!document.querySelector(".settings-page-shell")'), 'Settings did not reopen')
       assert.equal((await ui('window.amadeusNext.request("runtime.reload", {targets:["pi","scene"]})')).ok, true)
       await wait(() => ui('window.amadeusNext.request("runtime.status").then(result => result.status === "ready" || (result.status === "error" && Promise.reject(new Error(result.error))))'), 'Resource reload failed')
-      frame = await wait(() => window.webContents.mainFrame.frames.find(f => f.url.includes('wallpaper_engine.html') && f.url !== oldUrl), 'Scene generation was not replaced')
+      frame = await wait(() => window.webContents.mainFrame.frames.find(f => (f.url.includes('index.html') || f.url.includes('wallpaper_engine.html')) && f.url !== oldUrl), 'Scene generation was not replaced')
       await wait(() => frame.executeJavaScript('!!window.__amadeusCharacter'), 'Character missing after reload')
       assert.equal(process.pid, pid, 'Resource reload must not restart the main process')
       assert.equal(await chat('still there?', 'persist-third'), 'context-retained')

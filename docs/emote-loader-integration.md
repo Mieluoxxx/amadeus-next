@@ -31,7 +31,7 @@ npm run emote:loader -- /path/to/amadeus-emote-loader <commit>
 npm run assets:emote -- /path/to/amadeus-next-emote
 ```
 
-这一步只复制资源并规范化目录名，不复制解析器代码。结果为独立的 `resources/emote/`。
+这一步只复制资源并规范化目录名，不复制解析器代码。结果为独立的 `resources/character/emote/`。
 完成后即可移走素材来源仓库；日常运行不访问它，也不访问 CDN。
 
 FreeMote 和游戏模型依然不随公开发行物分发。打包应用的场景错误页提供“导入角色资源”，

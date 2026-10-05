@@ -12,6 +12,9 @@ release/
 temp/
 
 # Local media copies follow the legacy external-asset policy.
+/resources/scene/room/ambient_*.png
+/resources/ui/subtitle_frame.png
+/resources/character/emote/
 /resources/assets/images/*
 !/resources/assets/images/amadeus_desktop_wallpaper.png
 /resources/emote/

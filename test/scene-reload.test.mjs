@@ -9,7 +9,7 @@ test('scene resources reload on the same host and invalid geometry leaves the la
   const root = await mkdtemp(path.join(os.tmpdir(), 'amadeus-scene-reload-'))
   const host = new SceneHost(root, root)
   const config = { img_size: [100, 200], crt_corners: [[0, 0], [0, 10], [10, 10], [10, 0]] }
-  const file = path.join(root, 'wallpaper/crt_config.json')
+  const file = path.join(root, 'scene/room/crt_config.json')
   try {
     await mkdir(path.dirname(file))
     await writeFile(file, JSON.stringify(config))

@@ -8,7 +8,9 @@ import { EmoteCharacter, EMOTE_EXPRESSIONS, partVariablesFromTable, snapWrites, 
 import { ensureBakedModel, importEmoteAssets, verifyEmoteRuntime } from '../src/main/emoteBake.ts'
 import { SceneHost } from '../src/main/sceneHost.ts'
 
-const assetRoot = path.resolve(import.meta.dirname, '../resources/emote')
+const assetRoot = existsSync(path.resolve(import.meta.dirname, '../resources/character/emote'))
+  ? path.resolve(import.meta.dirname, '../resources/character/emote')
+  : path.resolve(import.meta.dirname, '../resources/emote')
 const loaderBinary = path.resolve(import.meta.dirname, '../dist/bin/AmadeusEmoteLoader')
 const modelPack = path.join(assetRoot, 'models/kurisu_ab_white')
 

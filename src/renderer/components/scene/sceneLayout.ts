@@ -11,7 +11,7 @@
  * These functions are pure so the contract is testable without Electron.
  */
 
-/** Authored size of `assets/images/amadeus_desktop_wallpaper.png`. */
+/** Authored size of `scene/room/background.png`. */
 const SCENE_DESIGN = { width: 1672, height: 941 } as const
 
 /**
@@ -21,7 +21,7 @@ const SCENE_DESIGN = { width: 1672, height: 941 } as const
  * and overlay placement both use the cabinet, not the glass alone.
  *
  * Re-derive this from the artwork if the scene image changes; it must still
- * contain the CRT glass polygon in `wallpaper/crt_config.json`.
+ * contain the CRT glass polygon in `scene/room/crt_config.json`.
  */
 const SCENE_CABINET = { x: 470, y: 100, width: 780, height: 645 } as const
 

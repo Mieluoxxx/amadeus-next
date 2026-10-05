@@ -25,7 +25,7 @@ voice or other third-party material, and is not a substitute for one.
 ## Not bundled with the packaged application
 
 The following components are developer-local only. `package.json` filters
-`emote/**` out of `extraResources`, so no distributed artifact contains them.
+`character/emote/**` (and legacy `emote/**`) out of `extraResources`, so no distributed artifact contains them.
 
 ### FreeMote / E-mote runtime
 
@@ -44,7 +44,7 @@ from any shipped artifact.
 
 ### Idle scene stills
 
-The stills under `assets/idle/` have no recorded
+The stills under `character/idle/` (formerly `assets/idle/`) have no recorded
 source, license, or consent, and reproduce character art whose rights stay with
 the original publishers. They are not covered by the repository's code license.
 See `resources/README.md` for their current tracking and packaging status.
@@ -54,9 +54,9 @@ See `resources/README.md` for their current tracking and packaging status.
 ## PixiJS
 
 - Source: <https://github.com/pixijs/pixijs>
-- Checked-in bundle: PixiJS v7.4.3, loaded by `render/web/wallpaper_engine.html`
+- Checked-in bundle: PixiJS v7.4.3, loaded by `scene/stage/index.html` (formerly `render/web/wallpaper_engine.html`)
 - License: MIT
-- Local evidence: notice retained in `render/web/vendor/pixi.min.js`.
+- Local evidence: notice retained in `scene/stage/vendor/pixi.min.js`.
 
 ## First-party brand assets
 

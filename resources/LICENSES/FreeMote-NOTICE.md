@@ -28,7 +28,7 @@ This integration is for local non-commercial evaluation. Imported material is
 not relicensed under the project's Apache License 2.0. Public redistribution and
 commercial use require a separate rights review.
 
-`resources/emote/` is excluded from the packaged app: `package.json` filters it
+`resources/character/emote/` (formerly `resources/emote/`) is excluded from the packaged app: `package.json` filters it
 out of `extraResources`, so a built artifact ships no CC BY-NC-SA runtime code.
 The directory stays a developer-local asset produced by
 `npm run assets:emote`, which fetches the FreeMote driver from jsDelivr under its

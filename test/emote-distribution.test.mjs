@@ -10,15 +10,20 @@ import path from 'node:path'
 import { beforePack, prepareEmoteLoader } from '../scripts/emote-loader.mjs'
 import { ensureBakedModel, importEmoteAssets } from '../src/main/emoteBake.ts'
 
-test('explicit asset provisioning is repeatable and a failed import preserves the previous copy', { skip: !existsSync(new URL('../resources/emote/FreeMoteDriver.js', import.meta.url)) }, async () => {
+const emoteRelDir = existsSync(new URL('../resources/character/emote/FreeMoteDriver.js', import.meta.url))
+  ? 'resources/character/emote'
+  : 'resources/emote'
+const emoteDriverUrl = new URL(`../${emoteRelDir}/FreeMoteDriver.js`, import.meta.url)
+
+test('explicit asset provisioning is repeatable and a failed import preserves the previous copy', { skip: !existsSync(emoteDriverUrl) }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'amadeus-provision-'))
-  const source = path.join(root, 'source'), target = path.join(root, 'resources/emote')
+  const source = path.join(root, 'source'), target = path.join(root, emoteRelDir)
   const run = promisify(execFile)
   try {
     await mkdir(path.join(root, 'scripts'), { recursive: true })
     await cp(new URL('../scripts/provision-emote.mjs', import.meta.url), path.join(root, 'scripts/provision-emote.mjs'))
     await mkdir(target, { recursive: true })
-    for (const file of ['FreeMoteDriver.js', 'emoteplayer.js']) await cp(new URL(`../resources/emote/${file}`, import.meta.url), path.join(target, file))
+    for (const file of ['FreeMoteDriver.js', 'emoteplayer.js']) await cp(new URL(`../${emoteRelDir}/${file}`, import.meta.url), path.join(target, file))
     await mkdir(path.join(source, '红莉栖E-mote模型'), { recursive: true })
     await writeFile(path.join(source, 'README.md'), 'source notice')
     await writeFile(path.join(source, '红莉栖E-mote模型/README.md'), 'asset notice')

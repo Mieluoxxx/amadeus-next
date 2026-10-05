@@ -176,7 +176,7 @@ export default function ScenePage({
           // Behind the frame sits the same artwork, so a frame that had to drop
           // below cover scale still reads as one continuous picture.
           background: bridge.assetOrigin
-            ? `#05070b url(${bridge.assetOrigin}/assets/images/amadeus_desktop_wallpaper.png) center/cover no-repeat`
+            ? `#05070b url(${bridge.assetOrigin}/scene/room/background.png) center/cover no-repeat`
             : '#05070b',
         }}
       >
