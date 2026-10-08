@@ -87,8 +87,10 @@ export class AppRuntime {
     this.pi = deps.createPi(() => this.piEnv())
     // 角色资源与烘焙缓存与分发包解耦，置于用户数据目录以支持热更新与自定义导入。
     this.emoteCache = deps.env.AMADEUS_EMOTE_CACHE || path.join(deps.userData, 'emote-cache')
+    // 资源重组后 emote 位于 character 域；保留旧布局回退以兼容已安装的分发包。
     const imported = path.join(deps.userData, 'emote')
-    this.emoteRoot = existsSync(imported) ? imported : path.join(this.root, 'emote')
+    const bundled = path.join(this.root, 'character/emote')
+    this.emoteRoot = existsSync(imported) ? imported : existsSync(bundled) ? bundled : path.join(this.root, 'emote')
     this.scene = deps.createScene(this.emoteCache)
     this.store = deps.store
     this.loadPersistedSettings()
