@@ -1,27 +1,12 @@
-import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { cp, lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { promisify } from 'node:util'
+import type { Baker } from './emoteBakeNode.ts'
 
-const run = promisify(execFile)
-
-// 优先从 asar 外的 unpacked 目录执行原生可执行文件，规避打包后无法直接 spawn 的限制。
-function emoteLoaderPath(moduleDir: string): string {
-  const name = process.platform === 'win32' ? 'AmadeusEmoteLoader.exe' : 'AmadeusEmoteLoader'
-  const candidates = [
-    process.resourcesPath && path.join(process.resourcesPath, name),
-    path.resolve(moduleDir, '../bin', name),
-  ]
-  for (const candidate of candidates) {
-    if (candidate && existsSync(candidate)) return candidate
-  }
-  throw new Error('应用缺少 E-mote 加载器，请重新安装完整应用；开发环境请先运行 npm run emote:loader，再运行 npm run build')
-}
-
+export type { Baker } from './emoteBakeNode.ts'
 type BakedModel = { psb: string; meta: string }
-type BakeOptions = { moduleDir: string; modelRoot: string; cacheDir: string; timeoutMs?: number }
+type BakeOptions = { baker: Baker; modelRoot: string; cacheDir: string }
 const pending = new Map<string, Promise<BakedModel>>()
 
 const EMOTE_RUNTIME = {
@@ -39,6 +24,9 @@ export async function verifyEmoteRuntime(root: string): Promise<void> {
   }
 }
 
+/** 系统压缩/解压留下的元数据文件：不参与校验、复制与指纹，否则在访达里打开一次目录就会触发重新烘焙。 */
+const isSystemJunk = (name: string) => name === '.DS_Store' || name === '__MACOSX' || name.startsWith('._')
+
 /** 仅允许常规文件与目录，防御软链接越界与特殊设备文件遍历。 */
 async function filesUnder(root: string, relative = ''): Promise<string[]> {
   const file = path.join(root, relative)
@@ -46,11 +34,13 @@ async function filesUnder(root: string, relative = ''): Promise<string[]> {
   if (info.isFile()) return [relative]
   if (!info.isDirectory()) throw new Error(`资源必须是普通文件或目录，不能使用软链接：${file}`)
   const files: string[] = []
-  for (const name of (await readdir(file)).sort()) files.push(...await filesUnder(root, path.join(relative, name)))
+  for (const name of (await readdir(file)).sort()) {
+    if (!isSystemJunk(name)) files.push(...await filesUnder(root, path.join(relative, name)))
+  }
   return files
 }
 
-async function fingerprint(model: string, folder: string, loader: string): Promise<string> {
+async function fingerprint(model: string, folder: string, version: string): Promise<string> {
   const files = await filesUnder(folder)
   const index = JSON.parse(await readFile(path.join(folder, `${model}.psb.m.resx.json`), 'utf8'))
   for (const group of [index.Resources, index.ExtraResources]) {
@@ -62,7 +52,7 @@ async function fingerprint(model: string, folder: string, loader: string): Promi
       if (!files.includes(relative)) throw new Error(`缺少模型资源：${value}`)
     }
   }
-  const hash = createHash('sha256').update('amadeus-emote-cache-v2\0').update(await readFile(loader))
+  const hash = createHash('sha256').update('amadeus-emote-cache-v3\0').update(`${version}\0`)
   for (const file of files) {
     const bytes = await readFile(path.join(folder, file))
     hash.update(JSON.stringify([file, bytes.length])).update(bytes)
@@ -94,8 +84,7 @@ async function bake(model: string, options: BakeOptions): Promise<BakedModel> {
   const folder = path.resolve(options.modelRoot, model)
   const source = path.join(folder, `${model}.psb.m.json`)
   if (!existsSync(source)) throw new Error(`缺少模型包：${source}`)
-  const loader = emoteLoaderPath(options.moduleDir)
-  const key = await fingerprint(model, folder, loader)
+  const key = await fingerprint(model, folder, options.baker.version)
   const parent = path.join(options.cacheDir, model)
   const destination = path.join(parent, key)
   const paths = (directory: string): BakedModel => ({ psb: path.join(directory, `${model}.psb`), meta: path.join(directory, `${model}.meta.json`) })
@@ -104,11 +93,9 @@ async function bake(model: string, options: BakeOptions): Promise<BakedModel> {
   await mkdir(parent, { recursive: true })
   const temporary = await mkdtemp(path.join(parent, '.bake-'))
   try {
-    await run(loader, ['bake', '--model', folder, '--out', paths(temporary).psb], {
-      timeout: options.timeoutMs ?? 120_000, maxBuffer: 4 * 1024 * 1024,
-    })
+    await options.baker.bake({ folder, model, ...paths(temporary) })
     if (!await complete(paths(temporary), false)) throw new Error('E-mote 烘焙产物不完整或格式无效')
-    if (await fingerprint(model, folder, loader) !== key) throw new Error('烘焙期间模型或加载器发生变化，请重试')
+    if (await fingerprint(model, folder, options.baker.version) !== key) throw new Error('烘焙期间模型发生变化，请重试')
     await writeFile(path.join(temporary, 'complete.json'), JSON.stringify({ psb: (await lstat(paths(temporary).psb)).size, meta: (await lstat(paths(temporary).meta)).size }))
     // 优先复用已存在的同哈希产物，避免并发生成破坏正在服务的世代。
     if (!await complete(baked)) {
@@ -125,7 +112,7 @@ async function bake(model: string, options: BakeOptions): Promise<BakedModel> {
 /** 合并同一模型的并发烘焙请求，消除冗余计算并规避文件写入竞争。 */
 export async function ensureBakedModel(model: string, options: BakeOptions): Promise<BakedModel> {
   if (!/^[a-z][a-z0-9_]*$/.test(model)) throw new Error('无效的模型名')
-  const key = JSON.stringify([model, path.resolve(options.modelRoot), path.resolve(options.cacheDir), options.moduleDir])
+  const key = JSON.stringify([model, path.resolve(options.modelRoot), path.resolve(options.cacheDir), options.baker.version])
   const existing = pending.get(key)
   if (existing) return existing
   const task = bake(model, options).finally(() => pending.delete(key))
@@ -133,8 +120,20 @@ export async function ensureBakedModel(model: string, options: BakeOptions): Pro
   return task
 }
 
+/** 压缩包解开后常多套一层同名目录：选中的目录里只有一个子目录时自动进入，用户不必找准哪一层。 */
+async function emoteRootOf(selected: string): Promise<string> {
+  let root = selected
+  for (let depth = 0; depth < 2 && !existsSync(path.join(root, 'FreeMoteDriver.js')); depth++) {
+    const entries = (await readdir(root, { withFileTypes: true })).filter(entry => !isSystemJunk(entry.name))
+    if (entries.length !== 1 || !entries[0].isDirectory()) break
+    root = path.join(root, entries[0].name)
+  }
+  return root
+}
+
 /** 原子化导入：先试烘焙验证有效性，成功后再整体替换，确保失败时不破坏已有资源。 */
-export async function importEmoteAssets(source: string, destination: string, options: Omit<BakeOptions, 'modelRoot'>): Promise<BakedModel> {
+export async function importEmoteAssets(selected: string, destination: string, options: Omit<BakeOptions, 'modelRoot'>): Promise<BakedModel> {
+  const source = await emoteRootOf(selected)
   await verifyEmoteRuntime(source)
   await filesUnder(source)
   await mkdir(path.dirname(destination), { recursive: true })
@@ -142,7 +141,7 @@ export async function importEmoteAssets(source: string, destination: string, opt
   const backup = `${destination}.previous-${randomUUID()}`
   let moved = false
   try {
-    await cp(source, temporary, { recursive: true, dereference: false })
+    await cp(source, temporary, { recursive: true, dereference: false, filter: file => !isSystemJunk(path.basename(file)) })
     await filesUnder(temporary)
     await verifyEmoteRuntime(temporary)
     const baked = await ensureBakedModel('kurisu_ab_white', { ...options, modelRoot: path.join(temporary, 'models') })

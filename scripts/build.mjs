@@ -2,7 +2,6 @@ import { build } from 'vite'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mkdir, rename, rm } from 'node:fs/promises'
-import { prepareEmoteLoader } from './emote-loader.mjs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -34,7 +33,6 @@ export async function compileSpeechHelper() {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await prepareEmoteLoader(project, process.argv.includes('--require-emote'))
   await build({ configFile: path.join(project, 'vite.main.config.mjs') })
   await build({ configFile: path.join(project, 'vite.preload.config.mjs') })
   await build({ configFile: path.join(project, 'vite.scene.config.mjs') })

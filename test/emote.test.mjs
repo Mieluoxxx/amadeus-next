@@ -6,30 +6,28 @@ import os from 'node:os'
 import path from 'node:path'
 import { EmoteCharacter, EMOTE_EXPRESSIONS, partVariablesFromTable, snapWrites, updateEmoteControls, THINKING_SCAN, THINKING_HANDOFF_WAIT_MS, SPOKEN_THINKING_MS } from '../src/scene/emote.ts'
 import { ensureBakedModel, importEmoteAssets, verifyEmoteRuntime } from '../src/main/emoteBake.ts'
+import { nodeBaker } from '../src/main/emoteBakeNode.ts'
 import { SceneHost } from '../src/main/sceneHost.ts'
 
 const assetRoot = existsSync(path.resolve(import.meta.dirname, '../resources/character/emote'))
   ? path.resolve(import.meta.dirname, '../resources/character/emote')
   : path.resolve(import.meta.dirname, '../resources/emote')
-const loaderBinary = path.resolve(import.meta.dirname, '../dist/bin/AmadeusEmoteLoader')
 const modelPack = path.join(assetRoot, 'models/kurisu_ab_white')
 
-test('独立应用副本可导入、离线烘焙并服务模型；损坏的导入不覆盖旧资源', { skip: !existsSync(loaderBinary) || !existsSync(modelPack) }, async () => {
+test('独立应用副本可导入、离线烘焙并服务模型；损坏的导入不覆盖旧资源', { skip: !existsSync(modelPack) }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'amadeus-independent-'))
   const source = path.join(root, 'source'), imported = path.join(root, 'user/emote'), cacheDir = path.join(root, 'cache')
   const host = new SceneHost(root, root, cacheDir)
-  const moduleDir = path.join(root, 'app/main')
+  const baker = nodeBaker
   try {
-    await mkdir(path.join(root, 'app/bin'), { recursive: true })
-    await cp(loaderBinary, path.join(root, 'app/bin/AmadeusEmoteLoader'))
     await mkdir(path.join(source, 'models'), { recursive: true })
     for (const name of ['FreeMoteDriver.js', 'emoteplayer.js']) await cp(path.join(assetRoot, name), path.join(source, name))
     await cp(modelPack, path.join(source, 'models/kurisu_ab_white'), { recursive: true })
-    const baked = await importEmoteAssets(source, imported, { moduleDir, cacheDir })
+    const baked = await importEmoteAssets(source, imported, { baker, cacheDir })
     await rm(source, { recursive: true })
     await verifyEmoteRuntime(imported)
     assert.equal((await lstat(imported)).isSymbolicLink(), false)
-    assert.deepEqual(await ensureBakedModel('kurisu_ab_white', { moduleDir, cacheDir, modelRoot: path.join(imported, 'models') }), baked)
+    assert.deepEqual(await ensureBakedModel('kurisu_ab_white', { baker, cacheDir, modelRoot: path.join(imported, 'models') }), baked)
     await host.start()
     host.setEmoteAssets(imported, path.dirname(baked.psb))
     const { character } = await (await fetch(host.origin + '/next/init')).json()
@@ -38,17 +36,17 @@ test('独立应用副本可导入、离线烘焙并服务模型；损坏的导�
     assert.equal((await fetch(host.origin + '/emote/emoteplayer.js')).status, 200)
     await mkdir(source)
     await writeFile(path.join(source, 'FreeMoteDriver.js'), 'not the pinned driver')
-    await assert.rejects(importEmoteAssets(source, imported, { moduleDir, cacheDir }), /校验失败/)
+    await assert.rejects(importEmoteAssets(source, imported, { baker, cacheDir }), /校验失败/)
     await verifyEmoteRuntime(imported)
     assert.equal((await fetch(host.origin + character.metaUrl)).status, 200)
   } finally { host.close(); await rm(root, { recursive: true, force: true }) }
 })
 
-// 解析器（独立仓库编译出来的原生工具）负责烘焙；这里的验收点：产物齐备、结构可用、查表数据自洽。
-test('烘焙产物齐备且可被场景消费', { skip: !existsSync(loaderBinary) || !existsSync(modelPack) }, async () => {
+// 验收点：产物齐备、结构可用、查表数据自洽；基准数字与原 Rust 烘焙器逐模型对照过。
+test('烘焙产物齐备且可被场景消费', { skip: !existsSync(modelPack) }, async () => {
   const cache = await mkdtemp(path.join(os.tmpdir(), 'amadeus-bake-'))
   try {
-    const baked = await ensureBakedModel('kurisu_ab_white', { moduleDir: path.dirname(loaderBinary), modelRoot: path.join(assetRoot, 'models'), cacheDir: cache })
+    const baked = await ensureBakedModel('kurisu_ab_white', { baker: nodeBaker, modelRoot: path.join(assetRoot, 'models'), cacheDir: cache })
     const psb = await readFile(baked.psb)
     assert.ok(psb.length > 100 * 1024 * 1024, `成品 PSB 体积异常：${psb.length}`)
     assert.equal(psb.subarray(0, 4).toString('latin1'), 'PSB\0', '必须是 PSB v4 容器')
@@ -56,7 +54,10 @@ test('烘焙产物齐备且可被场景消费', { skip: !existsSync(loaderBinary
     assert.ok(Array.isArray(meta.metadata.variableMetaInfoList) && meta.metadata.variableMetaInfoList.length > 0, 'metadata 必须带上参数表')
     assert.ok(Array.isArray(meta.metadata.eyeControl), 'metadata 必须带上眼球控制')
     assert.ok(meta.parts.length > 0, '查表数据不能为空')
-    assert.ok(Object.keys(meta.snaps).length > 0, '表情的离散轨道必须导出')
+    assert.equal(Object.keys(meta.snaps).length, 39, '每条表情时间线都要有离散轨道条目')
+    assert.equal(Object.values(meta.snaps).flat().length, 44, '离散轨道总数')
+    assert.equal(meta.parts.length, 6, '启用的部件选择器数')
+    assert.equal(meta.metadata.base.motion, '全体構造', '基础入口必须换成模型自己的完整结构')
     // 手臂显隐是这套查表最容易写错的地方：A/B 两档必须互斥。
     const arm = meta.parts.find((selector) => selector.label === 'arm_type')
     assert.ok(arm, '必须导出 arm_type')

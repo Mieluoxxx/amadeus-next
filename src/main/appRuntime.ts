@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import type { BrowserWindow, Dialog, SafeStorage } from 'electron'
 import type { Clock } from './clock.ts'
-import type { ensureBakedModel, importEmoteAssets, verifyEmoteRuntime } from './emoteBake.ts'
+import type { Baker, ensureBakedModel, importEmoteAssets, verifyEmoteRuntime } from './emoteBake.ts'
 import type { FishTts } from './fishTts.ts'
 import type { PiHost } from './piHost.ts'
 import type { SceneHost } from './sceneHost.ts'
@@ -18,7 +18,7 @@ type Json = Record<string, unknown>
 export type RuntimeDeps = {
   env: NodeJS.ProcessEnv
   root: string
-  moduleDir: string
+  emoteBaker: Baker
   userData: string
   clock: Clock
   store: SessionStore
@@ -238,7 +238,7 @@ export class AppRuntime {
     if (!this.emotePreparation) {
       this.emotePreparation = (async () => {
         await this.deps.verifyEmoteRuntime(this.emoteRoot)
-        const baked = await this.deps.ensureBakedModel('kurisu_ab_white', { moduleDir: this.deps.moduleDir, modelRoot: path.join(this.emoteRoot, 'models'), cacheDir: this.emoteCache })
+        const baked = await this.deps.ensureBakedModel('kurisu_ab_white', { baker: this.deps.emoteBaker, modelRoot: path.join(this.emoteRoot, 'models'), cacheDir: this.emoteCache })
         this.scene.setEmoteAssets(this.emoteRoot, path.dirname(baked.psb))
       })().finally(() => { this.emotePreparation = null })
     }
@@ -258,7 +258,7 @@ export class AppRuntime {
       if (selection.canceled || !selection.filePaths[0]) return { ok: true, cancelled: true }
       await this.emotePreparation?.catch(() => {})
       const destination = path.join(this.deps.userData, 'emote')
-      const baked = await this.deps.importEmoteAssets(selection.filePaths[0], destination, { moduleDir: this.deps.moduleDir, cacheDir: this.emoteCache })
+      const baked = await this.deps.importEmoteAssets(selection.filePaths[0], destination, { baker: this.deps.emoteBaker, cacheDir: this.emoteCache })
       this.emoteRoot = destination
       this.scene.setEmoteAssets(destination, path.dirname(baked.psb))
       return { ok: true }

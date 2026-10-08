@@ -15,6 +15,7 @@ export default defineConfig({
       input: {
         index: path.join(root, 'src/main/index.ts'),
         'pi-worker': path.join(root, 'src/main/pi-worker.ts'),
+        'emote-bake-worker': path.join(root, 'src/main/emote-bake-worker.ts'),
       },
       external: [
         'electron',

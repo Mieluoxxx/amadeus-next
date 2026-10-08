@@ -1,4 +1,6 @@
 import type { Activity, CharacterEvent, Emotion } from '../shared/character.ts'
+import type { EmoteMeta, EmoteMetadata, Snaps } from '../shared/emote/bake.ts'
+import type { PartTable } from '../shared/emote/parts.ts'
 
 export const EMOTE_EXPRESSIONS: Record<Emotion, string> = {
   neutral: '表情_普通', thinking: '表情_困る00', serious: '表情_睨む',
@@ -14,9 +16,6 @@ type Player = {
   setVariableDiff(module: string, label: string, value: number, ms?: number): void
 }
 
-/** 烘焙生成的部件映射表，用于无感知推导离散层级。 */
-type PartTable = { label: string; defaultValue: number; options: { lower: number; upper: number; writes: Record<string, number> }[] }[]
-type Snaps = Record<string, [string, number][]>
 /** 提取离散轨道延迟写入（延后 175ms），避免与头身 350ms 线性过渡产生跳变撕裂。 */
 const SNAP_DELAY_MS = 175
 
@@ -214,15 +213,10 @@ export class EmoteCharacter {
 }
 
 type Bounds = { x: number; y: number; width: number; height: number }
-type Metadata = {
-  variableMetaInfoList: { id: string; defaultValue: number }[]
-  eyeControl: { enabled: boolean | number; label: string; varL: string; varR: string }[]
-  customSelectorList: { enabled: boolean | number; label: string }[]
-}
 type ControlPlayer = Pick<Player, 'setVariable'> & { getVariable(label: string): number }
 
 /** 适配早期 SDK 缺乏复合部件推导与眼睑分离计算的问题。 */
-export function updateEmoteControls(player: ControlPlayer, metadata: Metadata, table: PartTable): void {
+export function updateEmoteControls(player: ControlPlayer, metadata: EmoteMetadata, table: PartTable): void {
   const values = Object.fromEntries(metadata.customSelectorList.filter(control => control.enabled).map(control => [control.label, player.getVariable(control.label)]))
   // 强制选定白衣 B 姿态（抱胸立绘），复用共享资源包。
   if (Object.hasOwn(values, 'arm_type')) values.arm_type = 1
@@ -290,7 +284,7 @@ export function createEmoteRenderer() {
     if (!assets.psbUrl || !assets.metaUrl) throw new Error('E-mote 烘焙产物尚未准备，请重试场景')
     const [psbResponse, metaResponse] = await Promise.all([fetch(assets.psbUrl), fetch(assets.metaUrl)])
     if (!psbResponse.ok || !metaResponse.ok) throw new Error('E-mote 烘焙产物缺失，请重试场景')
-    const { metadata, parts, snaps } = await metaResponse.json() as { metadata: Metadata; parts: PartTable; snaps: Snaps }
+    const { metadata, parts, snaps } = await metaResponse.json() as EmoteMeta
     const bytes = new Uint8Array(await psbResponse.arrayBuffer())
     player.loadData(bytes)
     if (!player.playerId || !player.isCharaProfileAvailable) throw new Error('E-mote 无法识别白衣 A/B 模型')

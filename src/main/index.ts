@@ -8,6 +8,7 @@ import { AppRuntime } from './appRuntime.ts'
 import { systemClock } from './clock.ts'
 import { SceneHost } from './sceneHost.ts'
 import { ensureBakedModel, importEmoteAssets, verifyEmoteRuntime } from './emoteBake.ts'
+import { workerBaker } from './emoteBakeHost.ts'
 import { FishTts } from './fishTts.ts'
 import { PiHost } from './piHost.ts'
 import { ensurePromptFiles } from './role.ts'
@@ -99,7 +100,10 @@ function createRuntime(): AppRuntime {
   return new AppRuntime({
     env: process.env,
     root,
-    moduleDir: MODULE_DIR,
+    emoteBaker: workerBaker(() => utilityProcess.fork(path.join(MODULE_DIR, 'emote-bake-worker.js'), [], {
+      serviceName: 'Amadeus E-mote Baker',
+      stdio: 'ignore',
+    })),
     userData,
     clock: systemClock,
     store: new SessionStore(adoptLegacyFile(path.join(userData, 'amadeus-next-sessions.json'))),

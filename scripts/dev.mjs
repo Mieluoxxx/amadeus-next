@@ -6,7 +6,6 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import electron from 'electron'
 import { compileSpeechHelper } from './build.mjs'
-import { prepareEmoteLoader } from './emote-loader.mjs'
 
 const project = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const port = Number(process.argv.find(arg => arg.startsWith('--port='))?.split('=')[1] || 5199)
@@ -92,7 +91,6 @@ try {
     watchBuild('vite.preload.config.mjs', [['dist/preload/index.cjs', 'preload']]),
     watchBuild('vite.scene.config.mjs', [['dist/scene/scene.js', 'scene'], ['dist/scene/audio-worklet.js', 'scene']]),
     compileSpeechHelper(),
-    prepareEmoteLoader(project),
   ])
   const resourceRoots = [path.join(project, 'resources'), process.env.AMADEUS_NEXT_PROJECT_ROOT].filter(Boolean).map(root => path.resolve(root))
   server.watcher.add([...resourceRoots, path.join(project, 'native')])

@@ -3,6 +3,8 @@ import { createServer } from 'node:http'
 import path from 'node:path'
 import { SceneHost } from '../src/main/sceneHost.ts'
 import { ensureBakedModel, verifyEmoteRuntime } from '../src/main/emoteBake.ts'
+import { nodeBaker } from '../src/main/emoteBakeNode.ts'
+import { existsSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 
@@ -10,7 +12,7 @@ const root = path.resolve(import.meta.dirname, '../resources')
 const cache = await mkdtemp(path.join(os.tmpdir(), 'amadeus-scene-cache-'))
 const emoteDir = existsSync(path.join(root, 'character/emote')) ? path.join(root, 'character/emote') : path.join(root, 'emote')
 await verifyEmoteRuntime(emoteDir)
-const baked = await ensureBakedModel('kurisu_ab_white', { moduleDir: path.resolve(import.meta.dirname, '../dist/main'), modelRoot: path.join(emoteDir, 'models'), cacheDir: cache })
+const baked = await ensureBakedModel('kurisu_ab_white', { baker: nodeBaker, modelRoot: path.join(emoteDir, 'models'), cacheDir: cache })
 const scene = new SceneHost(root, path.resolve(import.meta.dirname, '../dist/scene'), cache)
 await scene.start()
 scene.setEmoteAssets(emoteDir, path.dirname(baked.psb))

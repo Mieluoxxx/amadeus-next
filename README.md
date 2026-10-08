@@ -22,10 +22,10 @@ npm start
 
 Run these commands from this project's directory. For development, use `npm run
 dev`. Pass the asset source explicitly for the one-time import. Once imported,
-runtime loading is offline and no longer depends on that checkout. The macOS
-arm64 Rust loader is already included under `vendor/emote-loader/`; ordinary
-builds do not need Rust, Cargo, or an adjacent loader repository. Without model
-resources the window still opens and offers import/retry instead of failing startup.
+runtime loading is offline and no longer depends on that checkout. Model baking
+is plain TypeScript, so no platform needs Rust, Cargo, or a prebuilt loader
+binary. Without model resources the window still opens and offers import/retry
+instead of failing startup.
 
 To create the macOS arm64 zip, run `npm run package:mac:zip`. The generated app is
 unsigned until a Developer ID certificate is supplied.
@@ -36,12 +36,10 @@ retained texture decoders, and CRT geometry. Development reads that directory
 directly, so no external asset path is needed once the directory is populated.
 
 The E-mote model packs and runtime under `resources/emote/` are developer-local
-and excluded from packaging (see `resources/THIRD_PARTY_NOTICES.md`). The PSB
-parser is delivered as a versioned binary; `build` and `dev` verify and copy it
-into `dist/bin/AmadeusEmoteLoader`. The scene's import action copies a prepared
-`emote/` directory into the application's own `userData/emote/`. After the window
-opens, the main process bakes the model into `userData/emote-cache/` on demand — see
-`docs/emote-loader-integration.md`.
+and excluded from packaging (see `resources/THIRD_PARTY_NOTICES.md`). The scene's
+import action copies an unzipped `emote/` directory into the application's own
+`userData/emote/`. After the window opens, a utility process bakes the model into
+`userData/emote-cache/` on demand — see `docs/emote-loader-integration.md`.
 
 Some of those media are deliberately not tracked by Git (the ambient layers,
 the subtitle frame, and the whole character pack), so **a fresh clone must be

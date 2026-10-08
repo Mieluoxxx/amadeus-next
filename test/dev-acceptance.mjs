@@ -13,7 +13,7 @@ const project = path.join(root, 'project')
 const assets = path.join(root, 'assets')
 await mkdir(project)
 await mkdir(assets)
-for (const name of ['src', 'scripts', 'native', 'vendor', 'resources', 'package.json', 'index.html', 'vite.main.config.mjs', 'vite.renderer.config.mjs', 'vite.preload.config.mjs', 'vite.scene.config.mjs']) {
+for (const name of ['src', 'scripts', 'native', 'resources', 'package.json', 'index.html', 'vite.main.config.mjs', 'vite.renderer.config.mjs', 'vite.preload.config.mjs', 'vite.scene.config.mjs']) {
   await cp(path.resolve(name), path.join(project, name), { recursive: true })
 }
 const reservation = createServer()
@@ -39,10 +39,9 @@ const wait = async (probe, label) => {
 const deadline = setTimeout(() => { child.kill('SIGKILL'); process.exitCode = 1 }, 60000)
 try {
   await wait(() => output.includes(`127.0.0.1:${port}`), 'Vite did not start')
-  for (const file of ['main/index.js', 'main/pi-worker.js', 'preload/index.cjs', 'scene/scene.js', 'scene/audio-worklet.js']) {
+  for (const file of ['main/index.js', 'main/pi-worker.js', 'main/emote-bake-worker.js', 'preload/index.cjs', 'scene/scene.js', 'scene/audio-worklet.js']) {
     assert.ok((await readFile(path.join(project, 'dist', file))).length > 0, `dev must write ${file} before serving`)
   }
-  assert.ok((await readFile(path.join(project, 'dist/bin/AmadeusEmoteLoader'))).length > 0, 'dev must prepare its own loader without a prior build')
   const origin = `http://127.0.0.1:${port}`
   const client = await (await fetch(`${origin}/@vite/client`)).text()
   const token = /const wsToken = "([^"]+)"/.exec(client)?.[1]
