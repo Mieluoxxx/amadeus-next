@@ -1,9 +1,5 @@
-import { useState, useEffect, useCallback, type ReactNode } from 'react'
-import FluentIcon, { type FluentIconName } from './FluentIcon'
+import { useState, useEffect, useCallback, type KeyboardEvent, type ReactNode } from 'react'
 import { translateDynamic, translateSetting, useI18n, type MessageKey } from '../i18n'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 
 interface Props {
@@ -18,6 +14,11 @@ const ASR_SETTINGS_GROUP: Record<string, string> = {
   openai_compatible: 'asr_remote',
   mimo: 'asr_mimo',
 }
+
+const SECTIONS = ['general', 'models', 'asr', 'tts', 'memory'] as const
+type SectionId = typeof SECTIONS[number]
+// 面板每次打开都会重新挂载；记住上次的标签，避免主人每次都被送回“通用”。
+let lastSection: SectionId = 'general'
 
 type StartupOption = string | { value: string; label: string }
 
@@ -57,19 +58,27 @@ interface DesktopSettingsSnapshot {
 }
 
 type UiMessage = { key: MessageKey; fallback?: string; values?: Record<string, unknown> }
+type SaveField = (field: StartupField, value: string | boolean | null, secret: boolean) => Promise<void>
 
 function asConfigurationGroups(value: unknown): ConfigurationGroup[] {
   return Array.isArray(value) ? value as ConfigurationGroup[] : []
 }
 
-function CardShell({ children, vertical = false }: { children: ReactNode; vertical?: boolean }) {
+const groupOk = (group: ConfigurationGroup) => group.status_ok ?? Boolean(group.configured)
+
+function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
-    <div
-      className={cn(
-        'setting-card flex rounded-2xl border border-black/[0.06] bg-white/75 backdrop-blur-xl transition-all duration-200 shadow-[0_2px_12px_rgba(0,0,0,0.03),inset_0_1px_1px_rgba(255,255,255,0.85)] hover:bg-white/85',
-        vertical ? 'flex-col items-stretch p-4 gap-2' : 'items-center min-h-[58px] px-4 py-3'
-      )}
-    >
+    <div className="settings-field-row">
+      <div className="settings-field-label">{label}</div>
+      <div className="settings-field-control">{children}</div>
+    </div>
+  )
+}
+
+function Card({ title, status, children }: { title?: ReactNode; status?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="settings-card">
+      {title ? <div className="settings-card-header"><span className="settings-card-title">{title}</span>{status}</div> : null}
       {children}
     </div>
   )
@@ -77,131 +86,32 @@ function CardShell({ children, vertical = false }: { children: ReactNode; vertic
 
 type ComboOption = string | { value: string; label: string }
 
-function ComboSelect({ value, onChange, options, disabled, fullWidth }: {
-  value: string; onChange: (v: string) => void; options: ComboOption[]; disabled?: boolean; fullWidth?: boolean
+function ComboSelect({ value, onChange, options, disabled, label }: {
+  value: string; onChange: (v: string) => void; options: ComboOption[]; disabled?: boolean; label: string
 }) {
   const { locale } = useI18n()
   return (
-    <select
-      value={value}
-      onChange={event => onChange(event.target.value)}
-      disabled={disabled}
-      className={cn('text-xs font-semibold bg-white/80 border border-black/[0.08] rounded-xl px-3 py-1.5 text-[#1d1d1f] outline-none hover:border-black/[0.15] focus:ring-2 focus:ring-[#0071e3]/40 disabled:opacity-40 cursor-pointer', fullWidth ? 'w-full min-w-0' : 'shrink-0')}
-      style={fullWidth ? { height: 34 } : { minWidth: 145, height: 34 }}
-    >
+    <select className="settings-select" aria-label={label} value={value} onChange={event => onChange(event.target.value)} disabled={disabled}>
       {options.map(option => {
         const optionValue = typeof option === 'string' ? option : option.value
-        const label = typeof option === 'string' ? option : option.label
-        return <option key={optionValue} value={optionValue}>{translateDynamic(locale, 'settings.option', optionValue, label)}</option>
+        const optionLabel = typeof option === 'string' ? option || 'default' : option.label
+        return <option key={optionValue} value={optionValue}>{translateDynamic(locale, 'settings.option', optionValue, optionLabel)}</option>
       })}
     </select>
   )
 }
 
-function ComboCard({ icon, title, value, onChange, options, disabled }: {
-  icon: FluentIconName; title: string; value: string
-  onChange: (v: string) => void; options: ComboOption[]; disabled?: boolean
+function IconAction({ label, glyph, busy = false, danger = false, disabled, onClick }: {
+  label: string; glyph: string; busy?: boolean; danger?: boolean; disabled?: boolean; onClick: () => void
 }) {
   return (
-    <CardShell>
-      <CardIcon name={icon} />
-      <div className="flex-1 min-w-0 pr-4">
-        <div className="text-[13px] font-semibold text-[#1d1d1f] leading-snug">{title}</div>
-      </div>
-      <ComboSelect value={value} onChange={onChange} options={options} disabled={disabled} />
-    </CardShell>
+    <button type="button" className="settings-icon-button" data-danger={danger || undefined} onClick={onClick} disabled={disabled} title={label} aria-label={label}>
+      <span aria-hidden="true">{busy ? '…' : glyph}</span>
+    </button>
   )
 }
 
-function ModelCard({ model, modelOptions, thinking, thinkingOptions, disabled, onModelChange, onThinkingChange }: {
-  model: string; modelOptions: ComboOption[]
-  thinking: string; thinkingOptions: string[]
-  disabled?: boolean
-  onModelChange: (v: string) => void; onThinkingChange: (v: string) => void
-}) {
-  const { t } = useI18n()
-  const row = (title: string, control: ReactNode, divided = false) => (
-    <div className={cn('flex flex-col gap-2', divided && 'border-t border-black/[0.06] pt-3')}>
-      <div className="flex items-center">
-        <CardIcon name="Robot" />
-        <div className="min-w-0 text-[13px] font-semibold text-[#1d1d1f] leading-snug">{title}</div>
-      </div>
-      {control}
-    </div>
-  )
-  return (
-    <CardShell vertical>
-      {row(t('settings.label.current_model'), modelOptions.length
-        ? <ComboSelect fullWidth value={model} onChange={onModelChange} options={modelOptions} disabled={disabled} />
-        : <span className="text-[12px] font-[550]" style={{ color: 'var(--text)' }}>{model || 'Pi'}</span>)}
-      {thinkingOptions.length > 1 ? row(
-        t('settings.thinking_level'),
-        <ComboSelect fullWidth value={thinking} onChange={onThinkingChange} options={thinkingOptions} disabled={disabled} />,
-        true,
-      ) : null}
-    </CardShell>
-  )
-}
-
-function CardIcon({ name }: { name: FluentIconName }) {
-  return (
-    <>
-      <div className="shrink-0 flex items-center justify-center w-6 h-6 rounded-lg bg-black/[0.04] text-[#86868b]">
-        <FluentIcon name={name} size={15} />
-      </div>
-      <div style={{ width: 12, flexShrink: 0 }} />
-    </>
-  )
-}
-
-function StatusPill({ ok, children }: { ok: boolean; children: ReactNode }) {
-  return (
-    <Badge
-      variant={ok ? 'success' : 'warning'}
-      className="text-[10px] font-semibold px-2.5 py-0.5"
-    >
-      {children}
-    </Badge>
-  )
-}
-
-function InlineFieldAction({ label, glyph, busy = false, tone = 'normal', disabled, onClick }: {
-  label: string
-  glyph: string
-  busy?: boolean
-  tone?: 'normal' | 'danger'
-  disabled?: boolean
-  onClick: () => void
-}) {
-  return (
-    <Button
-      variant={tone === 'danger' ? 'destructive' : 'ghost'}
-      size="icon-sm"
-      onClick={onClick}
-      disabled={disabled}
-      title={label}
-      aria-label={label}
-      className={cn(
-        'w-6 h-6 rounded-md p-0',
-        tone === 'danger' ? 'text-rose-600 hover:bg-rose-50' : 'text-[#86868b] hover:text-[#1d1d1f]'
-      )}
-    >
-      {busy ? (
-        <FluentIcon name="Sync" size={12} className="animate-spin" />
-      ) : (
-        <span aria-hidden="true" className={glyph === '×' ? 'text-base leading-none' : 'text-xs font-bold leading-none'}>
-          {glyph}
-        </span>
-      )}
-    </Button>
-  )
-}
-
-function StartupFieldRow({ field, desktop, onSave }: {
-  field: StartupField
-  desktop: DesktopSettingsSnapshot | null
-  onSave: (field: StartupField, value: string | boolean | null, secret: boolean) => Promise<void>
-}) {
+function StartupFieldRow({ field, desktop, onSave }: { field: StartupField; desktop: DesktopSettingsSnapshot | null; onSave: SaveField }) {
   const { locale, t } = useI18n()
   const source = field.key ? desktop?.sources?.[field.key] || 'default' : 'default'
   const storedValue = field.key && source === 'user' ? desktop?.values?.[field.key] : undefined
@@ -213,6 +123,7 @@ function StartupFieldRow({ field, desktop, onSave }: {
   const secretConfigured = field.type === 'secret'
     ? Boolean(desktop?.secrets?.[field.key]?.configured ?? field.configured)
     : false
+  const label = translateSetting(locale, 'field', field.key, field.label)
 
   useEffect(() => {
     setDraft(storedValue !== undefined ? storedValue : field.value ?? '')
@@ -230,195 +141,115 @@ function StartupFieldRow({ field, desktop, onSave }: {
     }
   }
 
-  return (
-    <div className="settings-field-row flex items-start gap-5" style={{ padding: '10px 0', borderTop: '1px solid rgba(17,24,39,0.075)' }}>
-      <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-[600]" style={{ color: 'var(--text)', lineHeight: '18px', letterSpacing: '-0.006em' }}>{translateSetting(locale, 'field', field.key, field.label)}</div>
-        </div>
-      <div className="settings-field-control flex items-center gap-1.5 shrink-0" style={{ width: 320, maxWidth: '43%' }}>
-        {!field.editable || !field.key ? (
-          <span className="text-[13px] truncate ml-auto" style={{ color: 'var(--text)' }}>{String(field.value ?? '')}</span>
-        ) : field.type === 'secret' ? (
-          <div className="relative min-w-0 flex-1">
-            <Input
-              type="password"
-              value={secretDraft}
-              onChange={event => setSecretDraft(event.target.value)}
-              disabled={locked || busy}
-              placeholder={secretConfigured ? t('settings.placeholder.secret_replace') : t('settings.placeholder.secret_empty')}
-              autoComplete="new-password"
-              onKeyDown={event => {
-                if (event.key === 'Enter' && secretDraft && !locked && !busy) {
-                  void save(secretDraft, true)
-                }
-              }}
-              className={cn(
-                'h-8',
-                secretDraft && secretConfigured ? 'pr-16' : secretDraft || secretConfigured ? 'pr-12' : 'pr-3'
-              )}
-            />
-            {(secretDraft || secretConfigured) ? (
-              <div className="absolute inset-y-0 right-1 flex items-center gap-0.5">
-                {secretDraft ? (
-                  <InlineFieldAction
-                    label={`${t('settings.action.save')} ${translateSetting(locale, 'field', field.key, field.label)}`}
-                    glyph="✓"
-                    busy={busy}
-                    disabled={locked || busy}
-                    onClick={() => void save(secretDraft, true)}
-                  />
-                ) : null}
-                {secretConfigured ? (
-                  <InlineFieldAction
-                    label={`${t('settings.action.clear')} ${translateSetting(locale, 'field', field.key, field.label)}`}
-                    glyph="×"
-                    tone="danger"
-                    disabled={locked || busy}
-                    onClick={() => void save(null, true)}
-                  />
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ) : field.type === 'select' ? (
-          <select
-            value={String(draft)}
-            onChange={event => {
-              const value = event.target.value
-              setDraft(value)
-              if (value !== String(initial)) void save(value, false)
-            }}
-            disabled={locked || busy}
-            className="min-w-0 flex-1 h-8 text-xs font-semibold bg-white/80 border border-black/[0.08] rounded-xl px-2.5 outline-none focus:ring-2 focus:ring-[#0071e3]/40 disabled:opacity-50 cursor-pointer"
-          >
-            {(field.options || []).map(option => {
-              const optionValue = typeof option === 'string' ? option : option.value
-              const optionLabel = typeof option === 'string' ? option || 'default' : option.label
-              return <option key={optionValue} value={optionValue}>{translateDynamic(locale, 'settings.option', optionValue, optionLabel)}</option>
-            })}
-          </select>
-        ) : field.type === 'boolean' ? (
-          <select
-            value={String(draft)}
-            onChange={event => {
-              const value = event.target.value === 'true'
-              setDraft(value)
-              if (String(value) !== String(initial)) void save(value, false)
-            }}
-            disabled={locked || busy}
-            className="min-w-0 flex-1 h-8 text-xs font-semibold bg-white/80 border border-black/[0.08] rounded-xl px-2.5 outline-none focus:ring-2 focus:ring-[#0071e3]/40 disabled:opacity-50 cursor-pointer"
-          >
-            <option value="true">{t('settings.action.on')}</option>
-            <option value="false">{t('settings.action.off')}</option>
-          </select>
-        ) : (
-          <Input
-            type={field.type === 'url' ? 'url' : field.type === 'number' ? 'number' : 'text'}
-            min={field.min}
-            max={field.max}
-            step={field.step}
-            value={String(draft)}
-            onChange={event => setDraft(event.target.value)}
-            onBlur={() => {
-              if (!locked && !busy && String(draft) !== String(initial)) void save(String(draft), false)
-            }}
-            onKeyDown={event => {
-              if (event.key === 'Enter') event.currentTarget.blur()
-            }}
-            disabled={locked || busy}
-            className="min-w-0 flex-1 h-8"
-          />
-        )}
-        {busy && field.type !== 'secret' ? <span className="text-[10px] shrink-0" style={{ color: 'var(--muted)' }}>{t('settings.saving_label')}</span> : null}
+  let control: ReactNode
+  if (!field.editable || !field.key) {
+    control = <span className="settings-readonly">{String(field.value ?? '')}</span>
+  } else if (field.type === 'secret') {
+    control = (
+      <div className="settings-secret">
+        <input
+          className="settings-input"
+          type="password"
+          aria-label={label}
+          value={secretDraft}
+          onChange={event => setSecretDraft(event.target.value)}
+          disabled={locked || busy}
+          placeholder={secretConfigured ? t('settings.placeholder.secret_replace') : t('settings.placeholder.secret_empty')}
+          autoComplete="new-password"
+          onKeyDown={event => { if (event.key === 'Enter' && secretDraft && !locked && !busy) void save(secretDraft, true) }}
+        />
+        {secretDraft ? <IconAction label={`${t('settings.action.save')} ${label}`} glyph="✓" busy={busy} disabled={locked || busy} onClick={() => void save(secretDraft, true)} /> : null}
+        {secretConfigured ? <IconAction label={`${t('settings.action.clear')} ${label}`} glyph="×" danger disabled={locked || busy} onClick={() => void save(null, true)} /> : null}
       </div>
-    </div>
+    )
+  } else if (field.type === 'select' || field.type === 'boolean') {
+    const options: ComboOption[] = field.type === 'boolean'
+      ? [{ value: 'true', label: t('settings.action.on') }, { value: 'false', label: t('settings.action.off') }]
+      : field.options || []
+    control = (
+      <ComboSelect
+        label={label}
+        value={String(draft)}
+        options={options}
+        disabled={locked || busy}
+        onChange={raw => {
+          const value = field.type === 'boolean' ? raw === 'true' : raw
+          setDraft(value)
+          if (String(value) !== String(initial)) void save(value, false)
+        }}
+      />
+    )
+  } else {
+    control = (
+      <input
+        className="settings-input"
+        type={field.type === 'url' ? 'url' : field.type === 'number' ? 'number' : 'text'}
+        aria-label={label}
+        min={field.min}
+        max={field.max}
+        step={field.step}
+        value={String(draft)}
+        onChange={event => setDraft(event.target.value)}
+        onBlur={() => { if (!locked && !busy && String(draft) !== String(initial)) void save(String(draft), false) }}
+        onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }}
+        disabled={locked || busy}
+      />
+    )
+  }
+
+  return (
+    <Row label={<>{label}{busy && field.type !== 'secret' ? <span className="settings-field-busy">{t('settings.saving_label')}</span> : null}</>}>
+      {control}
+    </Row>
   )
 }
 
-function ConfigurationCard({ group, desktop, onSave, defaultOpen }: {
-  group: ConfigurationGroup
-  desktop: DesktopSettingsSnapshot | null
-  onSave: (field: StartupField, value: string | boolean | null, secret: boolean) => Promise<void>
-  defaultOpen?: boolean
-}) {
+function GroupStatus({ group }: { group: ConfigurationGroup }) {
   const { locale, t } = useI18n()
-  const statusOk = group.status_ok ?? Boolean(group.configured)
-  const statusText = group.status
+  const ok = groupOk(group)
+  const text = group.status
     ? translateDynamic(locale, 'settings.status', group.status, group.status.replaceAll('_', ' ').replace(/^./, value => value.toUpperCase()))
-    : group.configured ? t('settings.status.configured') : t('settings.status.needs_setup')
-  const groupLabel = translateSetting(locale, 'group', group.id, group.label)
-  const [expanded, setExpanded] = useState(defaultOpen ?? Boolean(group.active || !statusOk))
-  const header = (
-    <div className="flex items-start gap-2.5 flex-1 min-w-0">
-      <div className="flex items-center justify-center mt-0.5" style={{ width: 24, color: group.active ? 'var(--accent)' : 'var(--muted)' }}>
-        <FluentIcon name="Robot" size={17} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <div className="text-[14px] font-[700]" style={{ color: 'var(--text)', lineHeight: '19px' }}>{groupLabel}</div>
-          {group.active ? <span className="text-[9px] font-[700]" style={{ color: 'var(--accent)' }}>{t('settings.status.active', 'ACTIVE')}</span> : null}
-        </div>
-        {group.description ? <div className="text-[11px] mt-0.5" style={{ color: 'var(--muted)', lineHeight: '16px' }}>{translateSetting(locale, 'groupDescription', group.id, group.description)}</div> : null}
-        {group.status_detail ? <div className="text-[10.5px] mt-0.5" style={{ color: 'var(--faint)', lineHeight: '15px' }}>{group.status_detail}</div> : null}
-      </div>
-      <StatusPill ok={statusOk}>{statusText}</StatusPill>
-    </div>
-  )
+    : ok ? t('settings.status.configured') : t('settings.status.needs_setup')
+  // 正常状态只保留指示点，文字仅在需要处理时出现，避免每张卡片都堆满“已配置”。
   return (
-    <CardShell vertical>
-      {group.fields.length ? (
-        <details className="settings-config-disclosure" open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}>
-          <summary className="settings-config-summary flex items-start gap-2 pb-1 cursor-pointer list-none">
-            {header}
-            <span className="settings-disclosure-chevron" aria-hidden="true">›</span>
-          </summary>
-          <div className="settings-config-body">
-            {group.fields.map(field => <StartupFieldRow key={`${group.id}-${field.key || field.label}`} field={field} desktop={desktop} onSave={onSave} />)}
-            {group.advanced_fields?.length ? (
-              <details className="settings-advanced-disclosure">
-                <summary>{t('settings.advanced')}</summary>
-                {group.advanced_fields.map(field => <StartupFieldRow key={`${group.id}-${field.key || field.label}`} field={field} desktop={desktop} onSave={onSave} />)}
-              </details>
-            ) : null}
-          </div>
-        </details>
-      ) : (
-        <>
-          <div className="pb-2">{header}</div>
-          <div className="text-[11px] pt-2" style={{ color: 'var(--muted)', borderTop: '1px solid var(--border)' }}>{t('settings.note.no_user_settings')}</div>
-        </>
-      )}
-    </CardShell>
+    <span className="settings-status" data-ok={ok} title={text}>
+      <span className="settings-status-dot" aria-hidden="true" />
+      {ok ? <span className="sr-only">{text}</span> : text}
+    </span>
   )
 }
 
-function ConfigurationCollection({ groups, desktop, onSave, empty }: {
-  groups: ConfigurationGroup[]
-  desktop: DesktopSettingsSnapshot | null
-  onSave: (field: StartupField, value: string | boolean | null, secret: boolean) => Promise<void>
-  empty: string
-}) {
-  if (!groups.length) return <div className="text-[11px]" style={{ color: 'var(--muted)' }}>{empty}</div>
+function GroupFields({ group, desktop, onSave }: { group: ConfigurationGroup; desktop: DesktopSettingsSnapshot | null; onSave: SaveField }) {
+  const { t } = useI18n()
   return (
     <>
-      {groups.map(group => (
-        <ConfigurationCard
-          key={group.id}
-          group={group}
-          desktop={desktop}
-          onSave={onSave}
-        />
-      ))}
+      {group.fields.map(field => <StartupFieldRow key={`${group.id}-${field.key || field.label}`} field={field} desktop={desktop} onSave={onSave} />)}
+      {group.advanced_fields?.length ? (
+        <details className="settings-advanced">
+          <summary>{t('settings.advanced')}</summary>
+          {group.advanced_fields.map(field => <StartupFieldRow key={`${group.id}-${field.key || field.label}`} field={field} desktop={desktop} onSave={onSave} />)}
+        </details>
+      ) : null}
     </>
   )
 }
 
-function SettingsGroup({ children }: { children: ReactNode }) {
-  return <section className="flex flex-col" style={{ gap: 8 }}>{children}</section>
+function GroupCard({ group, desktop, onSave }: { group: ConfigurationGroup; desktop: DesktopSettingsSnapshot | null; onSave: SaveField }) {
+  const { locale, t } = useI18n()
+  return (
+    <Card title={translateSetting(locale, 'group', group.id, group.label)} status={<GroupStatus group={group} />}>
+      {group.description ? <p className="settings-card-note">{translateSetting(locale, 'groupDescription', group.id, group.description)}</p> : null}
+      {group.status_detail ? <p className="settings-card-note">{group.status_detail}</p> : null}
+      {group.fields.length || group.advanced_fields?.length
+        ? <GroupFields group={group} desktop={desktop} onSave={onSave} />
+        : <p className="settings-card-note">{t('settings.note.no_user_settings')}</p>}
+    </Card>
+  )
 }
 
-function SettingsSection({ id, children }: { id: 'general' | 'models' | 'asr' | 'tts'; children: ReactNode }) {
-  return <section data-section={id} className="flex flex-col settings-section-content">{children}</section>
+function GroupCards({ groups, desktop, onSave, empty }: { groups: ConfigurationGroup[]; desktop: DesktopSettingsSnapshot | null; onSave: SaveField; empty: string }) {
+  if (!groups.length) return <p className="settings-empty">{empty}</p>
+  return <>{groups.map(group => <GroupCard key={group.id} group={group} desktop={desktop} onSave={onSave} />)}</>
 }
 
 export default function SettingsPage({ send, subscribe }: Props) {
@@ -432,6 +263,7 @@ export default function SettingsPage({ send, subscribe }: Props) {
   const [piModel, setPiModel] = useState('')
   const [thinkingLevel, setThinkingLevel] = useState('off')
   const [thinkingLevels, setThinkingLevels] = useState<string[]>([])
+  const [activeSection, setActiveSection] = useState<SectionId>(lastSection)
   const reloading = reloadStatus === 'queued' || reloadStatus === 'applying'
 
   const refreshDesktop = useCallback(async () => {
@@ -462,17 +294,23 @@ export default function SettingsPage({ send, subscribe }: Props) {
 
   useEffect(() => {
     if (reloading) return
-    let cancelled = false
-    void send('pi.models').then(result => {
-      if (cancelled) return
-      if (!result.ok) throw new Error(String(result.error))
-      setPiModels(result.models as ComboOption[])
-      setPiModel(String(result.current || ''))
-      setThinkingLevel(String(result.thinkingLevel || 'off'))
-      setThinkingLevels(result.thinkingLevels as string[])
-    }).catch(reason => { if (!cancelled) setError({ key: 'settings.loading_error', fallback: String(reason) }) })
-    return () => { cancelled = true }
-  }, [reloading, send])
+    // 设置页常驻挂载，模型也可能在输入框里被切换；每次变更后重新拉取，只采用最新一次请求的结果。
+    let latest = 0
+    const load = () => {
+      const request = ++latest
+      void send('pi.models').then(result => {
+        if (request !== latest) return
+        if (!result.ok) throw new Error(String(result.error))
+        setPiModels(result.models as ComboOption[])
+        setPiModel(String(result.current || ''))
+        setThinkingLevel(String(result.thinkingLevel || 'off'))
+        setThinkingLevels(result.thinkingLevels as string[])
+      }).catch(reason => { if (request === latest) setError({ key: 'settings.loading_error', fallback: String(reason) }) })
+    }
+    load()
+    const unsubscribe = subscribe('pi.model', load)
+    return () => { latest = -1; unsubscribe() }
+  }, [reloading, send, subscribe])
 
   const changeModel = async (model: string, thinkingLevel?: string) => {
     setSaving('pi_model')
@@ -502,11 +340,7 @@ export default function SettingsPage({ send, subscribe }: Props) {
     }
   }, [send, setLocale, t])
 
-  const handleStartupSave = useCallback(async (
-    field: StartupField,
-    value: string | boolean | null,
-    secret: boolean,
-  ) => {
+  const handleStartupSave = useCallback<SaveField>(async (field, value, secret) => {
     if (!window.amadeus || !field.key) return
     setSaving(field.key)
     setError(null)
@@ -528,7 +362,9 @@ export default function SettingsPage({ send, subscribe }: Props) {
   const val = (key: string, fallback: string) => String(config[key] ?? fallback)
 
   const voiceConfiguration = asConfigurationGroups(config.voice_configuration)
-  const generalGroups = asConfigurationGroups(config.general_configuration)
+  const generalConfiguration = asConfigurationGroups(config.general_configuration)
+  const memoryGroups = generalConfiguration.filter(group => group.id === 'memory')
+  const generalGroups = generalConfiguration.filter(group => group.id !== 'memory')
 
   const asrBackendId = val('asr_backend', 'qwen3_asr')
   const asrBackends = Array.isArray(config.asr_backends)
@@ -560,91 +396,118 @@ export default function SettingsPage({ send, subscribe }: Props) {
     ['tts_embedded_v3', 'tts_remote', 'tts_mimo', 'voice_reference_profile'].includes(group.id)
     && !group.active
   ))
+  const needsSetup: Record<SectionId, boolean> = {
+    general: generalGroups.some(group => !groupOk(group)),
+    models: false,
+    asr: [...activeAsrGroups, ...captureGroups, ...wakeGroups].some(group => !groupOk(group)),
+    tts: activeOutputGroups.some(group => !groupOk(group)),
+    memory: memoryGroups.some(group => !groupOk(group)),
+  }
+
+  const select = (id: SectionId) => { lastSection = id; setActiveSection(id) }
+  const onTabKey = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
+    if (!step) return
+    event.preventDefault()
+    const next = SECTIONS[(SECTIONS.indexOf(activeSection) + step + SECTIONS.length) % SECTIONS.length]
+    select(next)
+    event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[data-tab="${next}"]`)?.focus()
+  }
+
+  // 未激活的标签页用 hidden 保留在 DOM 中：草稿输入不丢失，切换也不触发重新拉取。
+  const section = (id: SectionId, children: ReactNode) => (
+    <section data-section={id} id={`settings-panel-${id}`} role="tabpanel" aria-labelledby={`settings-tab-${id}`} className="settings-section" hidden={activeSection !== id}>
+      {children}
+    </section>
+  )
 
   return (
-    <div className="settings-scroll-area flex-1 overflow-y-auto" tabIndex={0}>
-      <div className="settings-page-shell">
-        <div className="flex items-center justify-between gap-4 settings-page-titlebar">
-          <div>
-            <h1 className="font-[700]" style={{ color: 'var(--text)', fontSize: 21, lineHeight: '28px', letterSpacing: '-0.025em' }}>{t('settings.title')}</h1>
-          </div>
-          <div className="settings-encryption-state">
-            <span className="settings-health-dot" data-ok={desktop?.encryptionAvailable ? 'true' : 'false'} />
-            {desktop?.encryptionAvailable ? t('settings.security.available') : t('settings.security.unavailable')}
-          </div>
-        </div>
-
-        <main className="settings-main">
-          <div className="flex flex-col settings-page-sections">
-            <SettingsSection id="general">
-              <SettingsGroup>
-                {/* The panel remounts whenever it is reopened, so `config` is empty until the fetch lands. The interface language the renderer is already using is the only true value available then; an English literal would misreport the active choice. */}
-                <ComboCard icon="Language" title={t('settings.label.interface_language')} value={val('presentation_locale', locale)} onChange={value => void handleChange('presentation_locale', value)} options={[{ value: 'en-US', label: t('settings.option.english') }, { value: 'zh-CN', label: t('settings.option.chinese') }, { value: 'ja-JP', label: t('settings.option.japanese') }]} />
-              </SettingsGroup>
-
-              {generalGroups.length ? (
-                <SettingsGroup>
-                  <ConfigurationCollection groups={generalGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-                </SettingsGroup>
-              ) : null}
-            </SettingsSection>
-            <SettingsSection id="models">
-              <SettingsGroup>
-                <ModelCard
-                model={piModel}
-                modelOptions={piModels}
-                thinking={thinkingLevel}
-                thinkingOptions={thinkingLevels}
-                disabled={Boolean(saving) || reloading}
-                onModelChange={value => void changeModel(value)}
-                onThinkingChange={value => void changeModel(piModel, value)}
-              />
-              </SettingsGroup>
-            </SettingsSection>
-            <SettingsSection id="asr">
-              {/* 1. Which configuration is in force, remote or embedded. */}
-              <SettingsGroup>
-                <ComboCard icon="Microphone" title={t('settings.label.asr_mode')} value={asrBackendId} onChange={value => void handleChange('asr_backend', value)} options={asrBackendOptions} />
-              </SettingsGroup>
-
-              {/* 2. Everything that belongs to the selected recognizer, including the
-                     language and vocabulary it consumes. */}
-              <SettingsGroup>
-                <ConfigurationCollection groups={activeAsrGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-              </SettingsGroup>
-
-              {captureGroups.length ? (
-                <SettingsGroup>
-                  <ConfigurationCollection groups={captureGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-                </SettingsGroup>
-              ) : null}
-
-              {wakeGroups.length ? (
-                <SettingsGroup>
-                  <ConfigurationCollection groups={wakeGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-                </SettingsGroup>
-              ) : null}
-            </SettingsSection>
-            <SettingsSection id="tts">
-              <SettingsGroup>
-                <ConfigurationCollection groups={activeOutputGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_active_connection')} />
-              </SettingsGroup>
-
-              {otherOutputGroups.length ? (
-                <details className="settings-secondary-disclosure">
-                  <summary>{t('settings.other_voice_backends')}</summary>
-                  <div className="flex flex-col gap-2 mt-3">
-                    <ConfigurationCollection groups={otherOutputGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-                  </div>
-                </details>
-              ) : null}
-            </SettingsSection>
-          </div>
-
-          {saving ? <div className="settings-feedback text-[11px] animate-pulse" style={{ color: 'var(--accent)' }}>{t('settings.saving', undefined, { key: saving })}</div> : null}
-          {error ? <div className="settings-feedback text-[11px] rounded-md p-3" style={{ color: '#b42318', background: '#FEF3F2' }}>{error.fallback ?? t(error.key, undefined, error.values)}</div> : null}
-        </main>
+    <div className="settings-page-shell">
+      <div className="settings-nav" role="tablist" aria-label={t('settings.title')}>
+        {SECTIONS.map(id => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            id={`settings-tab-${id}`}
+            data-tab={id}
+            aria-selected={activeSection === id}
+            aria-controls={`settings-panel-${id}`}
+            tabIndex={activeSection === id ? 0 : -1}
+            className="settings-nav-item"
+            onClick={() => select(id)}
+            onKeyDown={onTabKey}
+          >
+            {t(`settings.section.${id}` as MessageKey)}
+            {needsSetup[id] ? <span className="settings-nav-alert" title={t('settings.status.needs_setup')} /> : null}
+          </button>
+        ))}
       </div>
+
+      <main className="settings-main settings-scroll-area">
+        {section('general', (
+          <Card>
+            {/* The panel remounts whenever it is reopened, so `config` is empty until the fetch lands. The interface language the renderer is already using is the only true value available then; an English literal would misreport the active choice. */}
+            <Row label={t('settings.label.interface_language')}>
+              <ComboSelect label={t('settings.label.interface_language')} value={val('presentation_locale', locale)} onChange={value => void handleChange('presentation_locale', value)} options={[{ value: 'en-US', label: t('settings.option.english') }, { value: 'zh-CN', label: t('settings.option.chinese') }, { value: 'ja-JP', label: t('settings.option.japanese') }]} />
+            </Row>
+            {generalGroups.map(group => <GroupFields key={group.id} group={group} desktop={desktop} onSave={handleStartupSave} />)}
+          </Card>
+        ))}
+
+        {section('models', (
+          <Card>
+            <Row label={t('settings.label.current_model')}>
+              {piModels.length
+                ? <ComboSelect label={t('settings.label.current_model')} value={piModel} onChange={value => void changeModel(value)} options={piModels} disabled={Boolean(saving) || reloading} />
+                : <span className="settings-readonly">{piModel || 'Pi'}</span>}
+            </Row>
+            {thinkingLevels.length > 1 ? (
+              <Row label={t('settings.thinking_level')}>
+                <ComboSelect label={t('settings.thinking_level')} value={thinkingLevel} onChange={value => void changeModel(piModel, value)} options={thinkingLevels} disabled={Boolean(saving) || reloading} />
+              </Row>
+            ) : null}
+          </Card>
+        ))}
+
+        {section('asr', (
+          <>
+            {/* A one-entry backend list is not a choice; the active recognizer's card already names it. */}
+            {asrBackendOptions.length > 1 ? (
+              <Card>
+                <Row label={t('settings.label.asr_mode')}>
+                  <ComboSelect label={t('settings.label.asr_mode')} value={asrBackendId} onChange={value => void handleChange('asr_backend', value)} options={asrBackendOptions} />
+                </Row>
+              </Card>
+            ) : null}
+            <GroupCards groups={[...activeAsrGroups, ...captureGroups, ...wakeGroups]} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
+          </>
+        ))}
+
+        {section('tts', (
+          <>
+            <GroupCards groups={activeOutputGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_active_connection')} />
+            {otherOutputGroups.length ? (
+              <details className="settings-advanced settings-card">
+                <summary>{t('settings.other_voice_backends')}</summary>
+                <GroupCards groups={otherOutputGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
+              </details>
+            ) : null}
+          </>
+        ))}
+
+        {section('memory', (
+          <GroupCards groups={memoryGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
+        ))}
+
+        {saving ? <div className="settings-feedback" data-tone="busy">{t('settings.saving', undefined, { key: saving })}</div> : null}
+        {error ? <div className="settings-feedback" data-tone="error" role="alert">{error.fallback ?? t(error.key, undefined, error.values)}</div> : null}
+
+        <footer className="settings-footer">
+          <span className="settings-status-dot" data-ok={Boolean(desktop?.encryptionAvailable)} aria-hidden="true" />
+          {desktop?.encryptionAvailable ? t('settings.security.available') : t('settings.security.unavailable')}
+        </footer>
+      </main>
     </div>
   )
 }

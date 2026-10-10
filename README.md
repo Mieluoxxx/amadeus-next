@@ -50,9 +50,9 @@ under `src/renderer/`.
 
 The Fish credentials can be configured in the environment (`FISH_API_KEY`,
 `FISH_VOICE_ID`, and optionally `FISH_API_MODEL`) or in the scene settings.
-The Fish model selector includes `s2.1-pro-free`, `s2-pro`, and `s1`. Select
-`s2.1-pro-free` explicitly to use Fish's free model, subject to its fair-use
-limits. Adding this option does not change existing selections or the default.
+The Fish model selector includes `s2.1-pro-free`, `s2-pro`, and `s1`. The
+default is `s2.1-pro-free`, Fish's free model, subject to its fair-use limits;
+an existing selection is kept.
 
 The app uses a separate Electron user-data store, so it starts with its own
 session history and never rewrites the legacy `sessions/` data.

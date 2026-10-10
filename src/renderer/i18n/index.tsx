@@ -30,6 +30,7 @@ const EN = {
   'locale.zh-CN': '简体中文',
   'locale.ja-JP': '日本語',
   'settings.title': 'Settings',
+  'settings.section.general': 'General', 'settings.section.models': 'Model', 'settings.section.asr': 'Recognition', 'settings.section.tts': 'Voice', 'settings.section.memory': 'Memory',
   'settings.thinking_level': 'Thinking level',
   'settings.reload_error': 'Runtime reload failed',
   'settings.loading_error': 'Could not load settings',
@@ -227,6 +228,7 @@ const ZH: Messages = {
   ...MAIN_LOCALE_MESSAGES['zh-CN'],
   'locale.en-US': 'English', 'locale.zh-CN': '简体中文', 'locale.ja-JP': '日本語',
   'settings.title': '设置',
+  'settings.section.general': '通用', 'settings.section.models': '对话模型', 'settings.section.asr': '语音识别', 'settings.section.tts': '语音合成', 'settings.section.memory': '长期记忆',
   'settings.loading_error': '无法加载设置', 'settings.save_error': '无法保存 {key}', 'settings.update_error': '无法更新 {key}', 'settings.saving': '正在保存 {key}…',
   'settings.saving_label': '正在保存…',
 
@@ -276,6 +278,7 @@ const JA: Messages = {
   ...MAIN_LOCALE_MESSAGES['ja-JP'],
   'locale.en-US': 'English', 'locale.zh-CN': '简体中文', 'locale.ja-JP': '日本語',
   'settings.title': '設定',
+  'settings.section.general': '一般', 'settings.section.models': '対話モデル', 'settings.section.asr': '音声認識', 'settings.section.tts': '音声合成', 'settings.section.memory': '長期記憶',
   'settings.loading_error': '設定を読み込めません', 'settings.save_error': '{key} を保存できません', 'settings.update_error': '{key} を更新できません', 'settings.saving': '{key} を保存中…',
 
 
@@ -315,22 +318,26 @@ type SettingCopy = Record<'group' | 'field' | 'description' | 'groupDescription'
 
 const ZH_SETTINGS: SettingCopy = {
   group: {
-    asr_local: 'Apple Speech（本地）', speech_synthesis: 'Fish Audio 实时合成', network: '网络',
+    asr_local: 'Apple Speech（本地）', speech_synthesis: 'Fish Audio 实时合成', display: '显示', network: '网络', memory: '长期记忆（Jev）',
   },
   field: {
     asr_language: '识别语言', FISH_API_KEY: 'Fish Audio API 密钥', FISH_VOICE_ID: 'Fish 声音 ID', FISH_API_MODEL: 'Fish 模型',
     mouth_gain: '嘴型增益', mouth_silence_threshold: '静音阈值', voice_sync_offset_ms: '音画同步偏移（毫秒）', network_proxy: '网络代理',
+    scene_frame_rate: '场景帧率（FPS）',
+    JEV_API_URL: 'Jev API 地址', JEV_API_KEY: 'Jev API 密钥', JEV_MODEL: 'Jev 模型',
   },
   description: {}, groupDescription: {}, status: {}, option: {},
 }
 
 const JA_SETTINGS: SettingCopy = {
   group: {
-    asr_local: 'Apple Speech（ローカル）', speech_synthesis: 'Fish Audio リアルタイム合成', network: 'ネットワーク',
+    asr_local: 'Apple Speech（ローカル）', speech_synthesis: 'Fish Audio リアルタイム合成', display: '表示', network: 'ネットワーク', memory: '長期記憶（Jev）',
   },
   field: {
     asr_language: '認識言語', FISH_API_KEY: 'Fish Audio API キー', FISH_VOICE_ID: 'Fish ボイス ID', FISH_API_MODEL: 'Fish モデル',
     mouth_gain: '口の動きのゲイン', mouth_silence_threshold: '無音しきい値', voice_sync_offset_ms: '音声同期オフセット（ミリ秒）', network_proxy: 'ネットワークプロキシ',
+    scene_frame_rate: 'シーンのフレームレート（FPS）',
+    JEV_API_URL: 'Jev API エンドポイント', JEV_API_KEY: 'Jev API キー', JEV_MODEL: 'Jev モデル',
   },
   description: {}, groupDescription: {}, status: {}, option: {},
 }

@@ -235,6 +235,24 @@ export function createEmoteRenderer() {
   const app = new PIXI.Application({ resizeTo: window, backgroundAlpha: 0, antialias: true, autoDensity: true, resolution: Math.min(2, window.devicePixelRatio || 1) })
   document.getElementById('canvas-container')!.append(app.view)
   app.view.setAttribute('aria-label', '红莉栖白衣 B 实时模型场景')
+  // Pixi 自带的 maxFPS 先把帧间隔截断成整数再比较，60Hz 屏幕上设 60 只能跑到 30；改由自己按 vsync 节流。
+  // 容差取半个 120Hz 帧以内，使目标帧率恰好落在 vsync 上时不会被抖动挤到下一帧。
+  app.stop()
+  // 口型同步才需要高帧率；不说话时呼吸、眨眼等动作 15fps 已足够，故待机时封顶以节省 E-mote 每帧的固定开销。
+  const STANDBY_INTERVAL = 1000 / 15
+  let configuredInterval = 1000 / 30
+  let speaking = false
+  let frameInterval = STANDBY_INTERVAL
+  const applyInterval = () => { frameInterval = speaking ? configuredInterval : Math.max(configuredInterval, STANDBY_INTERVAL) }
+  let lastFrame = -Infinity
+  let frameRequest = 0
+  const frame = (now: number) => {
+    frameRequest = requestAnimationFrame(frame)
+    if (now - lastFrame < frameInterval - 4) return
+    lastFrame = now
+    app.ticker.update(now)
+  }
+  frameRequest = requestAnimationFrame(frame)
   const sprite = new PIXI.Sprite()
   sprite.visible = false
   app.stage.addChild(sprite)
@@ -247,7 +265,8 @@ export function createEmoteRenderer() {
     const covered = !waitForIdle || host.wallpaperApp?.scene?.idleOpaque?.() === true
     sprite.visible = loaded && !broken && !(hidden && covered)
   }
-  app.ticker.add(syncVisibility)
+  // 须在场景各层本帧更新完之后、渲染之前判定，否则静帧盖满后角色要晚一帧才隐藏；限帧后这一帧可长达 66ms。
+  app.ticker.add(syncVisibility, null, PIXI.UPDATE_PRIORITY.LOW + 1)
   let viewport: Bounds | null = null
   /** 微调放大比例配合 CRT 遮罩，消除底部空隙并裁切边缘溢出。 */
   const EMOTE_ZOOM = 1.1
@@ -266,6 +285,8 @@ export function createEmoteRenderer() {
     setSpriteViewportMask(mask: unknown) { sprite.mask = mask },
     /** 单独控制前景 Sprite 可见性，避免隐藏画布连同底层的静帧轮播一起清空。 */
     setForegroundVisible(visible: boolean, coveredByIdle = false) { hidden = !visible; waitForIdle = coveredByIdle; syncVisibility() },
+    setFrameRate(fps: number) { configuredInterval = 1000 / fps; applyInterval() },
+    setSpeaking(value: boolean) { if (value !== speaking) { speaking = value; applyInterval() } },
   }
   // 监听渲染器尺寸变化，保证窗口缩放后场景布局同步对齐。
   app.renderer.on('resize', () => host.wallpaperApp?.scene?.layout())
@@ -304,6 +325,13 @@ export function createEmoteRenderer() {
     if (!pixels.some((value, index) => index % 4 === 3 && value > 0)) throw new Error('E-mote 未绘制出角色像素')
     sprite.texture = PIXI.Texture.from(canvas)
     loaded = true; syncVisibility(); layout()
+    // E-mote 自带 rAF 循环，与 Pixi 各自出帧时相位错开，单边限帧后合成器仍逐帧出图；改由同一节拍驱动，且先画角色再上传纹理。
+    const device = Runtime.device
+    const drawAnimation = Object.getPrototypeOf(device).drawAnimation
+    device.drawAnimation = () => {}
+    cancelAnimationFrame(device.requestId)
+    // idle 静帧盖满后角色不可见，骨骼、物理与绘制（每帧约 8ms）全部跳过；离开 idle 时 setForegroundVisible 先恢复可见，下一节拍即先画再上传，不会露出旧画面。
+    app.ticker.add(() => { if (sprite.visible) drawAnimation.call(device, app.ticker.lastTime) })
     // 每帧仅同步一次 Canvas 纹理，平衡渲染性能与资源占用。
     app.ticker.add(() => { if (sprite.visible) sprite.texture.baseTexture.update() })
     const failed = () => {
@@ -314,7 +342,7 @@ export function createEmoteRenderer() {
     Runtime.renderCanvas.addEventListener('webglcontextlost', failed)
     app.view.addEventListener('webglcontextlost', failed)
     // 依赖 iframe 卸载回收 WebGL 堆内存，规避老旧 SDK 内部内存释放接口缺陷。
-    window.addEventListener('pagehide', () => { cancelAnimationFrame(Runtime.device.requestId); app.destroy(true) }, { once: true })
+    window.addEventListener('pagehide', () => { cancelAnimationFrame(frameRequest); cancelAnimationFrame(Runtime.device.requestId); app.destroy(true) }, { once: true })
     host.__amadeusEmote = { model, pose: 'B', player, canvas }
     report('')
     return character

@@ -13,7 +13,7 @@ const project = path.join(root, 'project')
 const assets = path.join(root, 'assets')
 await mkdir(project)
 await mkdir(assets)
-for (const name of ['src', 'scripts', 'native', 'resources', 'package.json', 'index.html', 'vite.main.config.mjs', 'vite.renderer.config.mjs', 'vite.preload.config.mjs', 'vite.scene.config.mjs']) {
+for (const name of ['src', 'scripts', 'native', 'resources', 'package.json', 'vite']) {
   await cp(path.resolve(name), path.join(project, name), { recursive: true })
 }
 const reservation = createServer()

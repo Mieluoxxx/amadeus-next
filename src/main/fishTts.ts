@@ -48,7 +48,7 @@ export class FishTts {
       fail(fishFailure('invalid_configuration', 'configuration')); return
     }
     const apiKey = String(config.FISH_API_KEY || '').trim()
-    const model = String(config.FISH_API_MODEL || 's2-pro').trim()
+    const model = String(config.FISH_API_MODEL || 's2.1-pro-free').trim()
     if (!apiKey) { fail(fishFailure('missing_key', 'configuration')); return }
     if (/[\r\n]/.test(apiKey) || /[\r\n]/.test(model)) { fail(fishFailure('invalid_header', 'configuration')); return }
     this.phase = 'handshake'

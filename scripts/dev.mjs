@@ -12,7 +12,7 @@ const port = Number(process.argv.find(arg => arg.startsWith('--port='))?.split('
 // macOS 原生文件事件不可用时，Rolldown 可能在首次构建写入前静默结束。
 const polling = process.env.CHOKIDAR_USEPOLLING?.toLowerCase()
 const watchOptions = { usePolling: polling === undefined ? process.platform === 'darwin' : ['1', 'true'].includes(polling), interval: 100 }
-const server = await createServer({ configFile: path.join(project, 'vite.renderer.config.mjs'), server: { host: '127.0.0.1', port, strictPort: true, watch: watchOptions } })
+const server = await createServer({ configFile: path.join(project, 'vite/renderer.config.mjs'), server: { host: '127.0.0.1', port, strictPort: true, watch: watchOptions } })
 const watchers = []
 const pending = new Set()
 let timer, nativeTimer, child, closing = false, nativeBuild = Promise.resolve()
@@ -87,9 +87,9 @@ process.once('SIGTERM', () => { void close() })
 
 try {
   await Promise.all([
-    watchBuild('vite.main.config.mjs', [['dist/main/index.js', 'main'], ['dist/main/pi-worker.js', 'pi-worker']]),
-    watchBuild('vite.preload.config.mjs', [['dist/preload/index.cjs', 'preload']]),
-    watchBuild('vite.scene.config.mjs', [['dist/scene/scene.js', 'scene'], ['dist/scene/audio-worklet.js', 'scene']]),
+    watchBuild('vite/main.config.mjs', [['dist/main/index.js', 'main'], ['dist/main/pi-worker.js', 'pi-worker']]),
+    watchBuild('vite/preload.config.mjs', [['dist/preload/index.cjs', 'preload']]),
+    watchBuild('vite/scene.config.mjs', [['dist/scene/scene.js', 'scene'], ['dist/scene/audio-worklet.js', 'scene']]),
     compileSpeechHelper(),
   ])
   const resourceRoots = [path.join(project, 'resources'), process.env.AMADEUS_NEXT_PROJECT_ROOT].filter(Boolean).map(root => path.resolve(root))

@@ -33,9 +33,9 @@ export async function compileSpeechHelper() {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await build({ configFile: path.join(project, 'vite.main.config.mjs') })
-  await build({ configFile: path.join(project, 'vite.preload.config.mjs') })
-  await build({ configFile: path.join(project, 'vite.scene.config.mjs') })
+  await build({ configFile: path.join(project, 'vite/main.config.mjs') })
+  await build({ configFile: path.join(project, 'vite/preload.config.mjs') })
+  await build({ configFile: path.join(project, 'vite/scene.config.mjs') })
   await compileSpeechHelper()
-  if (!mainOnly) await build({ configFile: path.join(project, 'vite.renderer.config.mjs') })
+  if (!mainOnly) await build({ configFile: path.join(project, 'vite/renderer.config.mjs') })
 }

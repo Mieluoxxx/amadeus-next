@@ -27,6 +27,9 @@ export type VoiceEvent = TurnKey & (
 export type PlaybackEvent = TurnKey & { type: 'playing' | 'buffering' | 'ended' | 'error'; error?: string }
 export type SceneInitialization = { character: { renderer: 'emote'; model: 'kurisu_ab_white'; psbUrl?: string; metaUrl?: string }; scene: Record<string, unknown> }
 export type ConversationIdleEvent = { type: 'conversation-idle'; active: boolean }
+export const SCENE_FRAME_RATES = [15, 30, 60] as const
+export type SceneFrameRate = typeof SCENE_FRAME_RATES[number]
+export type SceneFrameRateEvent = { type: 'frame-rate'; fps: SceneFrameRate }
 export function sameTurn(a: TurnKey | null, b: TurnKey): boolean {
   return !!a && a.generation === b.generation && a.sessionId === b.sessionId && a.turnId === b.turnId
 }

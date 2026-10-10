@@ -1,7 +1,7 @@
 import type { CharacterEvent } from '../shared/character.ts'
 import { createEmoteRenderer, type EmoteCharacter } from './emote.ts'
 import { AlignmentTimeline } from '../shared/presentation.ts'
-import { isTurnKey, sameTurn, type VoiceEvent, type ConversationIdleEvent, type TurnKey, type SceneInitialization, type Calibration } from '../shared/voice.ts'
+import { isTurnKey, sameTurn, SCENE_FRAME_RATES, type VoiceEvent, type ConversationIdleEvent, type SceneFrameRateEvent, type TurnKey, type SceneInitialization, type Calibration } from '../shared/voice.ts'
 
 const host = window as any
 const loadCharacter = createEmoteRenderer()
@@ -56,7 +56,9 @@ function diagnostic(message: string): void {
 function dispatch(event: CharacterEvent): void {
   if (!sprite) return
   sprite.dispatch(event)
-  host.wallpaperApp?.scene?.setSpeaking(['playing', 'buffering'].includes(sprite.state.playback))
+  const speaking = ['playing', 'buffering'].includes(sprite.state.playback)
+  host.wallpaperApp?.scene?.setSpeaking(speaking)
+  host.renderApp?.setSpeaking(speaking)
   // 挂载运行时只读快照供调试与集成测试检查。
   host.__amadeusCharacter = { ...sprite.state }
 }
@@ -157,10 +159,14 @@ function pcm(bytes: Uint8Array): void {
   else pending.push({ generation: key.generation, samples })
 }
 
-function receive(event: VoiceEvent | ConversationIdleEvent): void {
+function receive(event: VoiceEvent | ConversationIdleEvent | SceneFrameRateEvent): void {
   if (event.type === 'conversation-idle') {
     conversationIdle = event.active
     applyIdle()
+    return
+  }
+  if (event.type === 'frame-rate') {
+    if (SCENE_FRAME_RATES.includes(event.fps)) host.renderApp?.setFrameRate(event.fps)
     return
   }
   if (!isTurnKey(event)) return
@@ -256,7 +262,6 @@ function tick(): void {
     }
   }
   dispatch({ type: 'tick', now: performance.now() })
-  requestAnimationFrame(tick)
 }
 
 window.addEventListener('amadeus:scene-ready', () => {
@@ -284,7 +289,8 @@ window.addEventListener('amadeus:scene-ready', () => {
       port.postMessage({ type: 'connected' })
     })
     window.parent.postMessage({ source: 'amadeus-scene', status: 'voice-ready', sceneLoadToken: token }, '*')
-    requestAnimationFrame(tick)
+    // 口型与表情须在角色绘制前就位，故以高于 E-mote 绘制的优先级挂到同一节拍上。
+    host.renderApp.getPixiApp().ticker.add(tick, null, host.PIXI.UPDATE_PRIORITY.HIGH)
   })().catch(error => window.dispatchEvent(new CustomEvent('amadeus:scene-failed', { detail: String(error) })))
 }, { once: true })
 

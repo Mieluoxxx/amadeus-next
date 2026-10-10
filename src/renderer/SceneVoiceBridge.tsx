@@ -38,6 +38,7 @@ export default function SceneVoiceBridge({ runtime }: { runtime: NextRuntime }) 
             if (current !== connection || !isTurnKey(result.key)) return
             ready = true
             port?.postMessage({ ...result.key, type: 'reset' })
+            if (result.frameRate) port?.postMessage({ type: 'frame-rate', fps: result.frameRate })
             if (result.text) port?.postMessage({ ...result.key, type: 'text', value: { text: String(result.text), cues: [] } })
           }).catch(reason => setError(String(reason)))
         } else if (value?.type === 'lost') disconnect()

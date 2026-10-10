@@ -136,7 +136,12 @@ app.on('browser-window-created', (_event, window) => {
           const scale = Math.min(c.width / (b.right - b.left), c.height / (b.bottom - b.top)) * 0.94
           p.setScale(scale, 0)
           p.setCoord(-(b.left + b.right) / 2 * scale, -(b.top + b.bottom) / 2 * scale, 0)
-          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+          // E-mote 由场景节拍驱动且待机限帧，固定等两个 rAF 未必赶上重绘；等它实际画完两帧再读像素。
+          const drawn = async () => {
+            const device = window.EmotePlayer.device, start = device.lastAnimationTime
+            while (device.lastAnimationTime === start) await new Promise(resolve => requestAnimationFrame(resolve))
+          }
+          await drawn(); await drawn()
           const read = (x, y, width, height) => c.getContext('2d').getImageData(
             Math.round(c.width / 2 + p.coord[0] + x * scale), Math.round(c.height / 2 + p.coord[1] + y * scale),
             Math.round(width * scale), Math.round(height * scale)).data
@@ -160,7 +165,7 @@ app.on('browser-window-created', (_event, window) => {
       console.log('PASS: full-body white-coat B hides unused sleeves while preserving the head/body')
       const ui = script => window.webContents.executeJavaScript(script)
       await ui('document.querySelector(\'[data-testid="scene-open-more"]\').click()')
-      await wait(() => ui('document.querySelectorAll(".settings-main section[data-section]").length === 4'), 'Settings did not open')
+      await wait(() => ui('document.querySelectorAll(".settings-main section[data-section]").length === 5'), 'Settings did not open')
       assert.equal(await ui('!!document.querySelector(\'[data-testid="runtime-reload"]\')'), false, 'Runtime maintenance must not be exposed in settings')
       assert.doesNotMatch(await ui('document.querySelector(".settings-page-shell").textContent'), /运行时热重载|重新加载资源|恢复 Pi 进程|恢复语音助手/)
       await wait(() => ui('!!document.querySelector("[data-section=tts] .settings-field-row input[type=password]")'), 'Fish settings missing')
@@ -237,7 +242,7 @@ app.on('browser-window-created', (_event, window) => {
       await wait(() => ui('document.querySelector(\'[data-testid="scene-provider"]\')?.textContent === "fixture-alternate"'), 'A model changed elsewhere must update the composer')
       await ui('window.amadeusNext.request("pi.model.set", {model:"fixture/fixture-alternate",thinkingLevel:"high"})')
       await ui('document.querySelector(\'[data-testid="scene-open-more"]\').click()')
-      await wait(() => ui('document.querySelectorAll(".settings-main section[data-section]").length === 4'), 'Settings did not reopen')
+      await wait(() => ui('document.querySelectorAll(".settings-main section[data-section]").length === 5'), 'Settings did not reopen')
       await wait(() => ui('document.querySelectorAll("[data-section=models] select").length === 2'), 'Model and thinking controls must remain available')
       assert.doesNotMatch(await ui('document.querySelector("[data-section=models]").textContent'), /当前模型连接|其他模型连接|高级模型角色|当前没有选中的活动连接|没有用户管理的连接设置/)
       assert.deepEqual(await ui('Array.from(document.querySelectorAll("[data-section=models] select"), select => select.value)'), ['fixture/fixture-alternate', 'high'])
@@ -293,6 +298,15 @@ app.on('browser-window-created', (_event, window) => {
       // Production IPC -> React MessageChannel -> real scene -> AudioWorklet.
       const key = { sessionId: 'acceptance', turnId: 'audio', generation: 1000 }
       const send = params => window.webContents.send('next.event', { method: 'voice.event', params: { ...key, ...params } })
+      // 固定为 60 才能区分说话时的满帧与待机封顶；测试窗口未必有焦点，否则两者都会被失焦封顶在 15。
+      window.webContents.send('next.event', { method: 'voice.event', params: { type: 'frame-rate', fps: 60 } })
+      const frameRate = () => frame.executeJavaScript(`new Promise(resolve => {
+        const ticker = window.renderApp.getPixiApp().ticker
+        let frames = 0
+        const count = () => frames++
+        ticker.add(count)
+        setTimeout(() => { ticker.remove(count); resolve(frames) }, 1000)
+      })`)
       send({ type: 'begin', speech: true, calibration: { mouthGain: 8, silenceThreshold: 0.08, syncOffsetMs: 0 } })
       await frame.executeJavaScript(`(() => {
         window.__acceptanceSubtitles = []
@@ -308,6 +322,8 @@ app.on('browser-window-created', (_event, window) => {
       try {
         await wait(() => frame.executeJavaScript('window.__amadeusPlayback.status === "playing"'), 'Audio did not begin')
         await wait(() => frame.executeJavaScript('window.__amadeusEmote.player.getVariable("face_talk") > 0'), 'Audible PCM did not open the native mouth')
+        const speakingRate = await frameRate()
+        assert.ok(speakingRate > 40, `Speech must render at the configured rate for lip sync, got ${speakingRate} fps`)
         const state = await frame.executeJavaScript('window.__amadeusCharacter')
         assert.equal(state.emotion, 'smile')
         send({ type: 'calibration', calibration: { mouthGain: 12, silenceThreshold: 0.1, syncOffsetMs: 150 } })
@@ -318,6 +334,8 @@ app.on('browser-window-created', (_event, window) => {
         assert.deepEqual(await frame.executeJavaScript('window.__acceptanceSubtitles.filter(Boolean)'), ['你好', '世界'], 'Subtitles must follow the utterance being spoken, in order')
         assert.equal(await frame.executeJavaScript('window.__amadeusEmote.player.getVariable("face_talk")'), 0, 'Drained audio must close the native mouth')
         await wait(() => frame.executeJavaScript('window.__amadeusCharacter.label === "表情_普通"'), 'Missing return to the native idle expression')
+        const standbyRate = await frameRate()
+        assert.ok(standbyRate >= 12 && standbyRate <= 18, `Standby must cap the scene at 15 fps, got ${standbyRate} fps`)
         send({ type: 'begin', generation: 1001, speech: true, calibration: { mouthGain: 8, silenceThreshold: 0.08, syncOffsetMs: 0 } })
         send({ type: 'audio', generation: 1001, pcm })
         await wait(() => frame.executeJavaScript('window.__amadeusPlayback.generation === 1001 && window.__amadeusPlayback.status === "playing"'), 'Second playback did not start')
@@ -326,7 +344,7 @@ app.on('browser-window-created', (_event, window) => {
         await wait(() => frame.executeJavaScript('window.__amadeusPlayback.generation === 1002'), 'Reset not delivered')
         assert.equal(await frame.executeJavaScript('window.__amadeusCharacter.playback'), 'quiet')
         assert.equal(await frame.executeJavaScript('window.wallpaperApp.scene._speakingGate'), 0)
-        console.log('PASS: production Electron bridge, real PCM playback, smile cue, drain, post-speech exit, stale generation')
+        console.log('PASS: production Electron bridge, real PCM playback, smile cue, drain, post-speech exit, stale generation, full-rate speech with a 15 fps standby cap')
         send({ type: 'error', generation: 1002, error: 'Fish handshake failed [payment_required, HTTP 402]: Check API billing.',
           diagnostic: { provider: 'fish', phase: 'handshake', code: 'payment_required', httpStatus: 402 } })
         await wait(() => ui('document.body.textContent.includes("payment_required, HTTP 402")'), 'Detailed Fish failure was not shown')

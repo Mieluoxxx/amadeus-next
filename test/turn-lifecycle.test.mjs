@@ -318,6 +318,43 @@ test('resource reload waits for Pi and playback, coalesces requests, and preserv
   assert.equal(prompts.length, 1, 'Reload must never replay a prompt')
 })
 
+test('scene frame rate is validated, persisted in the snapshot, broadcast and replayed on scene handshake', async () => {
+  const { app, calls } = runtime()
+  await app.init()
+  assert.equal((await app.request('scene.ready')).frameRate, 30)
+  for (const bad of [0, 45, 'fast', '']) {
+    assert.equal((await app.request('system.set_config', { values: { scene_frame_rate: bad } })).ok, false)
+  }
+  const start = calls.length
+  assert.equal((await app.request('desktop.settings.update', { values: { scene_frame_rate: '60' } })).ok, true)
+  const events = calls.slice(start).filter(([type, value]) => type === 'voice.event' && value.type === 'frame-rate').map(([, value]) => value)
+  assert.deepEqual(events, [{ type: 'frame-rate', fps: 60 }])
+  const { values } = await app.request('system.get_config')
+  assert.equal(values.scene_frame_rate, 60)
+  const field = values.general_configuration.find(group => group.id === 'display').fields.find(item => item.key === 'scene_frame_rate')
+  assert.deepEqual([field.value, field.options], ['60', ['15', '30', '60']])
+  assert.equal((await app.request('scene.ready')).frameRate, 60)
+})
+
+test('an unfocused window caps the scene at 15 FPS without touching the saved setting', async () => {
+  const { app, calls } = runtime()
+  const window = new EventEmitter()
+  window.webContents = new EventEmitter()
+  app.attach(window)
+  await app.init()
+  const frameRates = () => calls.filter(([type, value]) => type === 'voice.event' && value.type === 'frame-rate').map(([, value]) => value.fps)
+  await app.request('system.set_config', { values: { scene_frame_rate: 60 } })
+  window.emit('blur')
+  assert.equal((await app.request('scene.ready')).frameRate, 15)
+  assert.equal((await app.request('system.get_config')).values.scene_frame_rate, 60)
+  window.emit('focus')
+  assert.equal((await app.request('scene.ready')).frameRate, 60)
+  await app.request('system.set_config', { values: { scene_frame_rate: 15 } })
+  window.emit('blur')
+  window.emit('focus')
+  assert.deepEqual(frameRates(), [60, 15, 60, 15], 'focus changes that do not alter the effective rate stay silent')
+})
+
 test('reload rejects unknown/development targets and calibration updates do not reset a turn', async () => {
   const { app, calls, prompts } = runtime()
   await app.init()
@@ -454,6 +491,43 @@ test('the network proxy setting is validated, persisted, and replaces only the P
   // Clearing the address is a valid change too and reaches the same path.
   assert.equal((await app.request('system.set_config', { values: { network_proxy: '' } })).ok, true)
   assert.equal(app.piEnv().HTTP_PROXY, undefined)
+})
+
+test('Jev endpoint, key, and model are user settings that reach only the Pi worker', async () => {
+  const { app, calls } = runtime()
+  await app.init()
+  assert.equal(app.piEnv().AMADEUS_JEV_API_KEY, undefined, 'without a key the worker skips Jev entirely')
+  assert.equal((await app.request('system.set_config', { values: { JEV_API_URL: 'ftp://example.com' } })).ok, false)
+  const applied = await app.request('system.set_config', { values: { JEV_API_URL: ' https://api.typesafe.ai/v1/systemone ', JEV_MODEL: 'jev-latest', JEV_API_KEY: ' secret-key ' } })
+  assert.equal(applied.ok, true)
+  assert.equal(applied.values.JEV_API_KEY, undefined, 'the key must never be echoed to the renderer')
+  assert.deepEqual(app.piEnv(), { AMADEUS_JEV_URL: 'https://api.typesafe.ai/v1/systemone', AMADEUS_JEV_MODEL: 'jev-latest', AMADEUS_JEV_API_KEY: 'secret-key' })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(calls.some(([type]) => type === 'restart-pi'), true)
+  // Blank fields fall back to the free OpenCode Zen endpoint rather than an unusable empty value.
+  await app.request('system.set_config', { values: { JEV_API_URL: '', JEV_MODEL: '' } })
+  assert.equal(app.piEnv().AMADEUS_JEV_URL, 'https://opencode.ai/zen/v1/systemone')
+  assert.equal(app.piEnv().AMADEUS_JEV_MODEL, 'jev-1.13-free')
+  assert.equal((await app.request('system.set_config', { values: { JEV_API_KEY: null } })).ok, true)
+  assert.equal(app.piEnv().AMADEUS_JEV_API_KEY, undefined)
+})
+
+test('the Jev client posts typed questions and returns answers by question id', async t => {
+  const { jevConfig, systemOne } = await import('../src/main/jev.ts')
+  assert.equal(jevConfig({}), null)
+  const config = jevConfig({ AMADEUS_JEV_API_KEY: 'k' })
+  assert.deepEqual(config, { url: 'https://opencode.ai/zen/v1/systemone', apiKey: 'k', model: 'jev-1.13-free' })
+  const requests = []
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    requests.push([url, init])
+    return new Response(JSON.stringify({ model: 'jev-1.13.0', answers: { needs_memory: { type: 'noul', noul: 0.9 } } }))
+  })
+  const answers = await systemOne(config, 'hello', { needs_memory: { type: 'noul', instructions: 'Q?' } })
+  assert.equal(answers.needs_memory.noul, 0.9)
+  assert.equal(requests[0][1].headers.Authorization, 'Bearer k')
+  assert.deepEqual(JSON.parse(requests[0][1].body), { model: 'jev-1.13-free', state: 'hello', questions: { needs_memory: { type: 'noul', instructions: 'Q?' } } })
+  t.mock.method(globalThis, 'fetch', async () => new Response('echo of private text', { status: 401 }))
+  await assert.rejects(systemOne(config, 'hello', {}), error => error.message === 'Jev request failed: HTTP 401')
 })
 
 test('disposing the runtime cancels its conversation-idle timer', async () => {

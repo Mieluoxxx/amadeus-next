@@ -3,10 +3,23 @@ import { normalizeEmotion, type Emotion } from './character.ts'
 type PresentationCue = { offset: number; emotion: Emotion }
 /** 字幕在口播文本中的字符偏移，用于音频时间戳同步对齐。 */
 type PresentationSubtitle = { offset: number; text: string }
-/** 拆分口播文本（TTS 朗读）、界面显示文本与逐句对齐字幕，支持双语显示。 */
-export type PresentedText = { text: string; cues: PresentationCue[]; subtitles: PresentationSubtitle[]; display: string }
+/**
+ * 拆分口播文本、界面显示文本与逐句对齐字幕，支持双语显示。
+ * `speech` 是实际发给 TTS 的文本，带 Fish 语音标签；`text` 不含标签，cue 与字幕偏移都以它为准，
+ * 这样无论服务端回传的对齐内容是否保留标签，时间轴都能对上。
+ */
+export type PresentedText = { text: string; speech: string; cues: PresentationCue[]; subtitles: PresentationSubtitle[]; display: string }
 
 const BLOCK_TAGS = ['<zh>', '</zh>', '<jp>', '</jp>']
+// Fish S2 把中括号当作自然语言描述而非固定枚举；限定为短英文短语，避免吞掉日文或 Markdown 链接里的方括号。
+const VOICE_TAG = /^\[[a-z][a-z' -]{0,39}\]/i
+const VOICE_TAG_PREFIX = /^\[[a-z' -]{0,40}$/i
+const VOICE_TAGS = /\[[a-z][a-z' -]{0,39}\](?!\()/gi
+// 模型只标了表情时按表情补一个语气；neutral 不补，否则长回复每句都会被压成同一种平淡语调。
+const VOICE_FOR_EMOTION: Partial<Record<Emotion, string>> = {
+  smile: '[happy]', thinking: '[hesitant]', serious: '[serious]', sad: '[sad]',
+  shy: '[embarrassed]', surprise: '[surprised]', angry: '[angry]',
+}
 
 /** 流式双语分词器：隔离中文字幕与日文口播内容，并维持跨分片代码块状态。 */
 export class PresentationText {
@@ -18,15 +31,20 @@ export class PresentationText {
   private zhSeen = false
   private jp = ''
   private jpStart = 0
+  private voiceDue = ''
+  private voiced = false
 
   push(delta: string, final = false): PresentedText {
     this.pending += delta
     let text = ''
+    let speech = ''
     let display = ''
     const cues: PresentationCue[] = []
     const subtitles: PresentationSubtitle[] = []
     const emit = (value: string) => {
       if (this.mode === 'zh') { this.zh += value; return }
+      if (/\S/.test(value)) { speech += this.voiceDue; this.voiceDue = ''; this.voiced = false }
+      speech += value
       text += value
       if (this.mode === 'jp') this.jp += value
       else display += value
@@ -96,9 +114,24 @@ export class PresentationText {
             const emotion = match && normalizeEmotion(match[1] || match[2] || match[3])
             if (emotion) {
               cues.push({ offset: this.length + text.length, emotion })
+              // 模型已为这句写了语音标签时不再叠加兜底语气，标签与表情谁先写都一样。
+              this.voiceDue = this.voiced ? '' : VOICE_FOR_EMOTION[emotion] ?? ''
               this.pending = this.pending.slice(end + 1)
               continue
             }
+          }
+        }
+        if (!final && VOICE_TAG_PREFIX.test(this.pending)) break
+        const voice = this.pending.match(VOICE_TAG)
+        if (voice) {
+          // 需要看到下一个字符才能排除 `[text](url)` 形式的链接。
+          if (voice[0].length === this.pending.length && !final) break
+          if (this.pending[voice[0].length] !== '(') {
+            speech += voice[0]
+            this.voiceDue = ''
+            this.voiced = true
+            this.pending = this.pending.slice(voice[0].length)
+            continue
           }
         }
       }
@@ -110,7 +143,7 @@ export class PresentationText {
       else if (this.mode === 'jp') closeJp()
     }
     this.length += text.length
-    return { text, cues, subtitles, display }
+    return { text, speech, cues, subtitles, display }
   }
 
   finish(): PresentedText { return this.push('', true) }
@@ -147,15 +180,20 @@ export class AlignmentTimeline {
     let cursor = 0
     let reached = -1
     for (const chunk of [...this.chunks.values()].sort((a, b) => a.chunk_seq - b.chunk_seq)) {
-      const start = this.text.indexOf(chunk.content, cursor)
+      // 本地文本不含语音标签；回传内容可能原样带着它们，原文匹配不上时再去掉标签重试。
+      let content = chunk.content
+      let start = this.text.indexOf(content, cursor)
+      if (start < 0) { content = content.replace(VOICE_TAGS, ''); start = content ? this.text.indexOf(content, cursor) : -1 }
       if (start < 0) continue // 服务端文本规整化差异导致无法匹配时跳过，避免推导错误偏移。
-      cursor = start + chunk.content.length
+      cursor = start + content.length
       let segmentCursor = 0
       for (const segment of chunk.alignment?.segments || []) {
         if (typeof segment.text !== 'string' || !segment.text || !Number.isFinite(segment.start) || !Number.isFinite(segment.end) || segment.start < 0 || segment.end < segment.start) continue
-        const segmentAt = chunk.content.indexOf(segment.text, segmentCursor)
+        let segmentText = segment.text
+        let segmentAt = content.indexOf(segmentText, segmentCursor)
+        if (segmentAt < 0) { segmentText = segmentText.replace(VOICE_TAGS, ''); segmentAt = segmentText ? content.indexOf(segmentText, segmentCursor) : -1 }
         if (segmentAt < 0) continue
-        segmentCursor = segmentAt + segment.text.length
+        segmentCursor = segmentAt + segmentText.length
         if (chunk.chunk_audio_offset_sec + segment.start <= this.position) reached = Math.max(reached, start + segmentAt)
       }
     }

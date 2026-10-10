@@ -9,10 +9,15 @@ import type { PiHost } from './piHost.ts'
 import type { SceneHost } from './sceneHost.ts'
 import type { SessionStore, StoredSession } from './sessionStore.ts'
 import type { SpeechBridge } from './speechBridge.ts'
+import { DEFAULT_JEV_MODEL, DEFAULT_JEV_URL } from './jev.ts'
 import { PresentationText } from '../shared/presentation.ts'
-import { sameTurn, isTurnKey, type TurnKey, type VoiceEvent, type PlaybackEvent, type Calibration } from '../shared/voice.ts'
+import { sameTurn, isTurnKey, SCENE_FRAME_RATES, type TurnKey, type VoiceEvent, type PlaybackEvent, type Calibration, type SceneFrameRate } from '../shared/voice.ts'
 
 type Json = Record<string, unknown>
+
+// 落盘时以 `<key>_ENCRYPTED` 形式经 safeStorage 加密，明文永不写入设置文件。
+const SECRET_KEYS = ['FISH_API_KEY', 'JEV_API_KEY']
+const UNFOCUSED_FRAME_RATE: SceneFrameRate = 15
 
 /** 集中注入所有外部环境依赖（Electron、路径、硬件、时钟），实现核心逻辑与运行环境解耦以支持无头测试。 */
 export type RuntimeDeps = {
@@ -43,6 +48,7 @@ export class AppRuntime {
   private readonly store: SessionStore
   private readonly pi: PiHost
   private readonly windows = new Set<BrowserWindow>()
+  private windowFocused = true
   private readonly config: Json
   private readonly speech: SpeechBridge
   private readonly tts: FishTts
@@ -77,11 +83,15 @@ export class AppRuntime {
       tts_backend: 'fish_stream',
       tts_mode: 'stream',
       FISH_API_KEY: deps.env.FISH_API_KEY || '',
-      FISH_API_MODEL: deps.env.FISH_API_MODEL || 's2-pro',
+      FISH_API_MODEL: deps.env.FISH_API_MODEL || 's2.1-pro-free',
       FISH_VOICE_ID: deps.env.FISH_VOICE_ID || '',
+      JEV_API_URL: deps.env.JEV_API_URL || DEFAULT_JEV_URL,
+      JEV_API_KEY: deps.env.JEV_API_KEY || '',
+      JEV_MODEL: deps.env.JEV_MODEL || DEFAULT_JEV_MODEL,
       mouth_gain: 8,
       mouth_silence_threshold: 0.08,
       voice_sync_offset_ms: 0,
+      scene_frame_rate: 30,
       network_proxy: '',
     }
     this.pi = deps.createPi(() => this.piEnv())
@@ -124,6 +134,14 @@ export class AppRuntime {
     this.windows.add(window)
     window.on('closed', () => { this.windows.delete(window); this.sceneReady = false; this.listeningEnabled = false; this.cancelTurn(); this.speech.stop() })
     window.webContents.on('render-process-gone', () => { void this.request('scene.lost') })
+    window.on('focus', () => this.setWindowFocused(true))
+    window.on('blur', () => this.setWindowFocused(false))
+  }
+
+  private setWindowFocused(focused: boolean): void {
+    const previous = this.sceneFrameRate()
+    this.windowFocused = focused
+    if (this.sceneFrameRate() !== previous) this.emit('voice.event', { type: 'frame-rate', fps: this.sceneFrameRate() })
   }
 
   async request(method: string, params: Json = {}): Promise<Json> {
@@ -180,7 +198,7 @@ export class AppRuntime {
         this.emit('voice.event', { type: 'conversation-idle', active: this.idleActive })
         if (this.sceneReload) this.sceneReload.resolve()
         this.resumeListening()
-        return { ok: true, key: this.activeTurn || this.idleKey(), text: this.activeTurn?.text || '', calibration: this.calibration() }
+        return { ok: true, key: this.activeTurn || this.idleKey(), text: this.activeTurn?.text || '', calibration: this.calibration(), frameRate: this.sceneFrameRate() }
       case 'scene.lost':
         if (params.token && params.token !== this.sceneToken) return { ok: true }
         this.sceneReady = false
@@ -404,10 +422,13 @@ export class AppRuntime {
     return { ...this.sessionPayload(session), ok: true, source: 'next' }
   }
 
-  // Pi 子进程在启动时从环境变量加载代理配置，故代理变更需重建 worker。
+  // Pi 子进程在启动时从环境变量加载代理与 Jev 配置，故二者变更都需重建 worker。
   private piEnv(): Record<string, string> {
     const proxy = String(this.config.network_proxy || '').trim()
-    return proxy ? { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: proxy, HTTPS_PROXY: proxy } : {}
+    const env: Record<string, string> = proxy ? { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: proxy, HTTPS_PROXY: proxy } : {}
+    const jevKey = String(this.config.JEV_API_KEY || '')
+    if (jevKey) Object.assign(env, { AMADEUS_JEV_URL: String(this.config.JEV_API_URL), AMADEUS_JEV_MODEL: String(this.config.JEV_MODEL), AMADEUS_JEV_API_KEY: jevKey })
+    return env
   }
 
   private setConfig(values: Json): Json {
@@ -419,6 +440,11 @@ export class AppRuntime {
       }
       values[key] = Number(value)
     }
+    if ('scene_frame_rate' in values) {
+      const fps = Number(values.scene_frame_rate)
+      if (!SCENE_FRAME_RATES.includes(fps as SceneFrameRate)) return { ok: false, error: `Invalid scene_frame_rate: expected one of ${SCENE_FRAME_RATES.join(', ')}` }
+      values.scene_frame_rate = fps
+    }
     if ('network_proxy' in values) {
       const proxy = String(values.network_proxy ?? '').trim()
       let parsed: URL | null = null
@@ -429,12 +455,23 @@ export class AppRuntime {
       }
       values.network_proxy = proxy
     }
+    if ('JEV_API_URL' in values) {
+      const url = String(values.JEV_API_URL ?? '').trim()
+      let parsed: URL | null = null
+      try { parsed = new URL(url) } catch { parsed = null }
+      if (url && (!parsed || !['http:', 'https:'].includes(parsed.protocol))) {
+        return { ok: false, error: 'Invalid JEV_API_URL: expected an http:// or https:// URL' }
+      }
+      values.JEV_API_URL = url || DEFAULT_JEV_URL
+    }
+    if ('JEV_MODEL' in values) values.JEV_MODEL = String(values.JEV_MODEL ?? '').trim() || DEFAULT_JEV_MODEL
+    if (typeof values.JEV_API_KEY === 'string') values.JEV_API_KEY = values.JEV_API_KEY.trim()
     const previousLanguage = this.config.asr_language
-    const previousProxy = this.config.network_proxy
+    const previousPiEnv = JSON.stringify(this.piEnv())
     Object.assign(this.config, values)
     this.persistSettings()
-    // 代理变更仅在子进程边界热重启，避免破坏正在进行的语音合成与场景渲染。
-    if (this.config.network_proxy !== previousProxy) this.queueReload({ targets: ['pi-worker'] }, false)
+    // 代理与 Jev 变更仅在子进程边界热重启，避免破坏正在进行的语音合成与场景渲染。
+    if (JSON.stringify(this.piEnv()) !== previousPiEnv) this.queueReload({ targets: ['pi-worker'] }, false)
     if (this.listeningEnabled && this.config.asr_language !== previousLanguage) {
       this.speech.stop()
       this.resumeListening()
@@ -443,21 +480,22 @@ export class AppRuntime {
     if (['mouth_gain', 'mouth_silence_threshold', 'voice_sync_offset_ms'].some(key => key in values)) {
       this.voice({ ...(this.activeTurn || this.idleKey()), type: 'calibration', calibration: this.calibration() })
     }
+    if ('scene_frame_rate' in values) this.emit('voice.event', { type: 'frame-rate', fps: this.sceneFrameRate() })
     return { ok: true, values: this.configSnapshot() }
   }
 
   private desktopSettings(): Json {
     const snapshot = this.configSnapshot()
     const values = Object.fromEntries(Object.entries(snapshot).flatMap(([key, value]) => {
-      if (['FISH_API_KEY', 'FISH_VOICE_ID', 'voice_configuration', 'general_configuration', 'asr_backends'].includes(key)) return []
+      if ([...SECRET_KEYS, 'FISH_VOICE_ID', 'voice_configuration', 'general_configuration', 'asr_backends'].includes(key)) return []
       return [[key, String(value ?? '')]]
     }))
-    const secrets = Object.fromEntries(['FISH_API_KEY', 'FISH_VOICE_ID'].map(key => [key, { configured: Boolean(this.config[key]), source: 'user', locked: false }]))
+    const secrets = Object.fromEntries([...SECRET_KEYS, 'FISH_VOICE_ID'].map(key => [key, { configured: Boolean(this.config[key]), source: 'user', locked: false }]))
     return { values, sources: {}, locked: {}, secrets, encryptionAvailable: this.deps.safeStorage.isEncryptionAvailable() }
   }
 
   private configSnapshot(): Json {
-    const { FISH_API_KEY: _fishApiKey, ...publicConfig } = this.config
+    const publicConfig = Object.fromEntries(Object.entries(this.config).filter(([key]) => !SECRET_KEYS.includes(key)))
     return {
       ...publicConfig,
       asr_backends: [{ id: 'apple_speech', label: 'Apple Speech', deployment: 'native' }],
@@ -483,7 +521,7 @@ export class AppRuntime {
           fields: [
             { key: 'FISH_API_KEY', label: 'Fish Audio API key', type: 'secret', editable: true, restart_required: false },
             { key: 'FISH_VOICE_ID', label: 'Fish voice ID', type: 'text', value: String(this.config.FISH_VOICE_ID || ''), editable: true, restart_required: false },
-            { key: 'FISH_API_MODEL', label: 'Fish model', type: 'select', value: String(this.config.FISH_API_MODEL || 's2-pro'), options: ['s2.1-pro-free', 's2-pro', 's1'], editable: true, restart_required: false },
+            { key: 'FISH_API_MODEL', label: 'Fish model', type: 'select', value: String(this.config.FISH_API_MODEL || 's2.1-pro-free'), options: ['s2.1-pro-free', 's2-pro', 's1'], editable: true, restart_required: false },
           ],
           advanced_fields: [
             { key: 'mouth_gain', label: 'Mouth gain', type: 'number', value: this.config.mouth_gain, min: 0, max: 32, step: 0.5, editable: true },
@@ -494,9 +532,23 @@ export class AppRuntime {
       ],
       general_configuration: [
         {
+          id: 'display', label: 'Display', configured: true,
+          fields: [
+            { key: 'scene_frame_rate', label: 'Scene frame rate (FPS)', type: 'select', value: String(this.frameRate()), options: SCENE_FRAME_RATES.map(String), editable: true },
+          ],
+        },
+        {
           id: 'network', label: 'Network', configured: true,
           fields: [
             { key: 'network_proxy', label: 'Network proxy', type: 'text', value: String(this.config.network_proxy || ''), editable: true },
+          ],
+        },
+        {
+          id: 'memory', label: 'Long-term memory (Jev)', configured: Boolean(this.config.JEV_API_KEY),
+          fields: [
+            { key: 'JEV_API_URL', label: 'Jev API endpoint', type: 'text', value: String(this.config.JEV_API_URL), editable: true },
+            { key: 'JEV_API_KEY', label: 'Jev API key', type: 'secret', editable: true },
+            { key: 'JEV_MODEL', label: 'Jev model', type: 'text', value: String(this.config.JEV_MODEL), editable: true },
           ],
         },
       ],
@@ -514,17 +566,21 @@ export class AppRuntime {
   private loadPersistedSettings(): void {
     const stored = this.deps.settings.read()
     for (const [key, value] of Object.entries(stored)) {
-      if (key in this.config && key !== 'FISH_API_KEY') this.config[key] = value
+      if (key in this.config && !SECRET_KEYS.includes(key)) this.config[key] = value
     }
-    if (this.deps.safeStorage.isEncryptionAvailable() && typeof stored.FISH_API_KEY_ENCRYPTED === 'string') {
-      try { this.config.FISH_API_KEY = this.deps.safeStorage.decryptString(Buffer.from(stored.FISH_API_KEY_ENCRYPTED, 'base64')) } catch { /* keep environment value */ }
+    if (!this.deps.safeStorage.isEncryptionAvailable()) return
+    for (const key of SECRET_KEYS) {
+      const encrypted = stored[`${key}_ENCRYPTED`]
+      if (typeof encrypted !== 'string') continue
+      try { this.config[key] = this.deps.safeStorage.decryptString(Buffer.from(encrypted, 'base64')) } catch { /* keep environment value */ }
     }
   }
 
   private persistSettings(): void {
-    const data: Json = Object.fromEntries(Object.entries(this.config).filter(([key]) => key !== 'FISH_API_KEY'))
-    if (this.deps.safeStorage.isEncryptionAvailable() && String(this.config.FISH_API_KEY || '')) {
-      try { data.FISH_API_KEY_ENCRYPTED = this.deps.safeStorage.encryptString(String(this.config.FISH_API_KEY)).toString('base64') } catch { /* keep the in-memory value */ }
+    const data: Json = Object.fromEntries(Object.entries(this.config).filter(([key]) => !SECRET_KEYS.includes(key)))
+    for (const key of SECRET_KEYS) {
+      if (!this.deps.safeStorage.isEncryptionAvailable() || !String(this.config[key] || '')) continue
+      try { data[`${key}_ENCRYPTED`] = this.deps.safeStorage.encryptString(String(this.config[key])).toString('base64') } catch { /* keep the in-memory value */ }
     }
     this.deps.settings.write(data)
   }
@@ -569,9 +625,9 @@ export class AppRuntime {
       turn.text += value.display
       this.emit('chat.token', { session_id: session.id, turn_id: turnId, token: turn.text })
       this.voice({ ...turn, type: 'text', value })
-      if (turn.speech && value.text) {
+      if (turn.speech && value.speech) {
         if (!synthesisStarted) { this.tts.start(turn); synthesisStarted = true }
-        this.tts.push(value.text)
+        this.tts.push(value.speech)
       }
     }
     try {
@@ -623,6 +679,14 @@ export class AppRuntime {
   private calibration(): Calibration {
     const number = (value: unknown, fallback: number, min: number, max: number) => Number.isFinite(Number(value)) ? Math.max(min, Math.min(max, Number(value))) : fallback
     return { mouthGain: number(this.config.mouth_gain, 8, 0, 32), silenceThreshold: number(this.config.mouth_silence_threshold, 0.08, 0, 1), syncOffsetMs: number(this.config.voice_sync_offset_ms, 0, -1000, 1000) }
+  }
+  private frameRate(): SceneFrameRate {
+    const fps = Number(this.config.scene_frame_rate)
+    return SCENE_FRAME_RATES.includes(fps as SceneFrameRate) ? fps as SceneFrameRate : 30
+  }
+  // 失焦时窗口多半只是挂在一旁陪伴，15fps 足以维持角色呼吸与口型，用户设得更低时仍以其为准。
+  private sceneFrameRate(): SceneFrameRate {
+    return this.windowFocused ? this.frameRate() : Math.min(this.frameRate(), UNFOCUSED_FRAME_RATE) as SceneFrameRate
   }
   private cancelTurn(): void {
     this.cancelListeningResume()
