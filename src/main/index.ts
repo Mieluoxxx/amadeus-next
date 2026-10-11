@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { AppRuntime } from './appRuntime.ts'
+import { bootMark } from './bootProfile.ts'
 import { systemClock } from './clock.ts'
 import { SceneHost } from './sceneHost.ts'
 import { ensureBakedModel, importEmoteAssets, verifyEmoteRuntime } from './emoteBake.ts'
@@ -16,6 +17,8 @@ import { SessionStore } from './sessionStore.ts'
 import { SpeechBridge, systemSpeechOptions } from './speechBridge.ts'
 
 type Json = Record<string, unknown>
+
+bootMark('main-loaded')
 
 const DEV_SERVER_URL = process.env.AMADEUS_NEXT_DEV_URL || 'http://127.0.0.1:5199'
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
@@ -130,6 +133,7 @@ function createRuntime(): AppRuntime {
     importEmoteAssets,
     createScene: cacheDir => new SceneHost(root, path.join(MODULE_DIR, '../scene'), cacheDir),
     createPi: (piEnv, onEvent) => new PiHost(() => {
+      bootMark('pi-fork')
       const home = piHome()
       const overrides = piEnv()
       return utilityProcess.fork(path.join(MODULE_DIR, 'pi-worker.js'), [], {
@@ -145,7 +149,10 @@ function createRuntime(): AppRuntime {
         serviceName: 'Amadeus Pi Runtime',
         stdio: 'ignore',
       })
-    }, onEvent),
+    }, event => {
+      if (event.name === 'worker.ready') bootMark('pi-ready')
+      onEvent(event)
+    }),
     createSpeech: emit => new SpeechBridge(emit, systemSpeechOptions(MODULE_DIR)),
     createTts: (config, emit) => new FishTts(config, emit),
   })
@@ -168,18 +175,27 @@ async function createWindow(): Promise<void> {
       autoplayPolicy: 'no-user-gesture-required',
     },
   })
+  bootMark('window-created')
+  window.webContents.once('did-finish-load', () => bootMark('renderer-loaded'))
   runtime.attach(window)
   if (process.env.AMADEUS_NEXT_DEV === '1') await window.loadURL(DEV_SERVER_URL)
   else await window.loadFile(path.join(MODULE_DIR, '../renderer/index.html'))
 }
 
 app.whenReady().then(async () => {
+  bootMark('app-ready')
   runtime = createRuntime()
-  await runtime.init()
+  bootMark('runtime-created')
   ipcMain.handle('next.request', (event, method: string, params: Json) => {
     if (event.senderFrame !== event.sender.mainFrame) throw new Error('Only the application frame can call the runtime')
-    return runtime.request(method, params || {})
+    const result = runtime.request(method, params || {})
+    if (method === 'scene.ready' || method === 'wallpaper.start') {
+      void result.then(value => { if (value.ok) bootMark(method === 'scene.ready' ? 'scene-handshake' : 'character-ready') }, () => {})
+    }
+    return result
   })
+  // 窗口不等 Pi：worker 冷启动要数百毫秒，卡住时更要等满启动超时，而场景与角色并不依赖它；依赖 worker 的请求由 runtime 排队到就绪之后。
+  void runtime.init().then(() => bootMark('runtime-ready'), error => console.error('[amadeus-next] Runtime init failed', error))
   await createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow()

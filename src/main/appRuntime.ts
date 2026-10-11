@@ -44,6 +44,9 @@ const TURN_WATCHDOG_MS = 120_000
 // worker 被替换期间这些转发方法统一回绝，避免请求落到正在关库的进程上。
 const WORKER_METHODS = /^(session\.(list|create|load|rename|delete)|task\.(cancel|approve)|memory\.(list|write|delete|accept|reject|clear|status|configure))$/
 
+// 窗口先于 runtime 就绪创建；这些只读本地状态，不必排在 Pi 启动后面。其余方法可能开麦、投递汇报或碰会话，必须等启动完成。
+const PRE_INIT_METHODS = /^(system\.get_config|desktop\.settings\.get|runtime\.status|voice\.playback)$/
+
 const message = (error: unknown): string => error instanceof Error ? error.message : String(error)
 const codeOf = (error: unknown): string => error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string' ? (error as { code: string }).code : 'failed'
 
@@ -92,6 +95,9 @@ export class AppRuntime {
   private workerCurrentId = ''
   private ensuring: Promise<void> | null = null
   private started = false
+  private initializing: Promise<void> | null = null
+  private initialized = false
+  private sceneStarting: Promise<void> | null = null
   // 删除中的会话不再接受新消息（architecture §2.2 删除时序第 0 步）。
   private readonly deleting = new Set<string>()
   private readonly approvals = new Map<string, Set<string>>()
@@ -183,14 +189,22 @@ export class AppRuntime {
     })
   }
 
-  async init(): Promise<void> {
-    // 资源就绪校验推迟至首屏渲染时按需触发，避免阻塞主窗口创建。
-    await this.scene.start()
-    this.markActivity()
-    await this.pi.init()
-    // worker 没起来也不能让应用起不来；会话列表和首条消息会再试。
-    await this.ensureCurrent().catch(() => {})
-    this.started = true
+  init(): Promise<void> {
+    this.initializing ??= (async () => {
+      try {
+        // 资源就绪校验推迟至首屏渲染时按需触发，避免阻塞主窗口创建。
+        this.sceneStarting = this.scene.start()
+        // worker 在第一个 await 之前 fork，才能赶在窗口创建之前起跑；它与场景服务互不依赖。
+        const piStarting = this.pi.init()
+        await this.sceneStarting
+        this.markActivity()
+        await piStarting
+        // worker 没起来也不能让应用起不来；会话列表和首条消息会再试。
+        await this.ensureCurrent().catch(() => {})
+        this.started = true
+      } finally { this.initialized = true }
+    })()
+    return this.initializing
   }
 
   attach(window: BrowserWindow): void {
@@ -213,11 +227,15 @@ export class AppRuntime {
   }
 
   async request(method: string, params: Json = {}): Promise<Json> {
+    // 启动完成后不再多等一个微任务，保持就绪后的调度时序与原来一致。
+    if (!this.initialized && this.initializing && method !== 'wallpaper.start' && !PRE_INIT_METHODS.test(method)) await this.initializing.catch(() => {})
     if (this.workerReloading && WORKER_METHODS.test(method)) return { ok: false, error: 'Runtime reload pending' }
     switch (method) {
       case 'wallpaper.start':
         try {
           if (this.importingEmote) throw new Error('正在导入角色资源，请稍后重试')
+          // 场景地址依赖本地服务端口；角色烘焙校验与 Pi 启动互不依赖，可以并行。
+          await this.sceneStarting
           await this.prepareEmote()
           return { ok: true, status: 'ready', url: this.scene.url }
         } catch (error) {
