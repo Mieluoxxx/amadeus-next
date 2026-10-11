@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, utilityProcess } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell, utilityProcess } from 'electron'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -96,6 +96,7 @@ function adoptLegacyFile(file: string): string {
 function createRuntime(): AppRuntime {
   const root = projectRoot()
   const userData = app.getPath('userData')
+  const memoryDir = path.join(userData, 'memory')
   const settingsFile = settingsPath()
   return new AppRuntime({
     env: process.env,
@@ -105,31 +106,46 @@ function createRuntime(): AppRuntime {
       stdio: 'ignore',
     })),
     userData,
+    memoryDir,
     clock: systemClock,
     store: new SessionStore(adoptLegacyFile(path.join(userData, 'amadeus-next-sessions.json'))),
     settings: { read: () => readYaml(settingsFile), write: data => writeYaml(settingsFile, data) },
     safeStorage,
     dialog,
+    shell,
+    notify: (title, body) => {
+      if (!Notification.isSupported()) return
+      const notification = new Notification({ title, body })
+      // 点通知回到窗口，确认按钮就在那里。
+      notification.on('click', () => {
+        const window = BrowserWindow.getAllWindows()[0]
+        if (window) { if (window.isMinimized()) window.restore(); window.show(); window.focus() }
+      })
+      notification.show()
+    },
     exit: code => app.exit(code),
     timestampedSessionTitle,
     verifyEmoteRuntime,
     ensureBakedModel,
     importEmoteAssets,
     createScene: cacheDir => new SceneHost(root, path.join(MODULE_DIR, '../scene'), cacheDir),
-    createPi: piEnv => new PiHost(() => {
+    createPi: (piEnv, onEvent) => new PiHost(() => {
       const home = piHome()
+      const overrides = piEnv()
       return utilityProcess.fork(path.join(MODULE_DIR, 'pi-worker.js'), [], {
         cwd: home.cwd,
         env: {
-          ...process.env, ...piEnv(),
+          ...process.env, ...overrides,
+          // 设置页是委托模型的唯一来源：选“与对话模型相同”时，继承来的同名环境变量不能悄悄生效。
+          AMADEUS_DELEGATION_MODEL: overrides.AMADEUS_DELEGATION_MODEL ?? '',
           PI_CODING_AGENT_DIR: home.agentDir, AMADEUS_NEXT_PI_CWD: home.cwd,
           AMADEUS_NEXT_PI_AUTH: home.authPath, AMADEUS_NEXT_PI_MODELS: home.modelsPath,
-          AMADEUS_NEXT_PI_SESSIONS: path.join(userData, 'pi-sessions'),
+          AMADEUS_NEXT_SESSIONS: path.join(userData, 'sessions'), AMADEUS_MEMORY_DIR: memoryDir,
         },
         serviceName: 'Amadeus Pi Runtime',
         stdio: 'ignore',
       })
-    }),
+    }, onEvent),
     createSpeech: emit => new SpeechBridge(emit, systemSpeechOptions(MODULE_DIR)),
     createTts: (config, emit) => new FishTts(config, emit),
   })

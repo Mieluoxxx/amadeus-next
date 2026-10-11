@@ -18,9 +18,15 @@ process.env.PI_OFFLINE = '1'
 delete process.env.AMADEUS_NEXT_PROJECT_ROOT
 delete process.env.AMADEUS_NEXT_CHARACTER_ROOT
 delete process.env.FISH_API_KEY
-const deadline = setTimeout(() => { console.error('Electron acceptance timed out'); app.exit(1) }, 60000)
+const deadline = setTimeout(() => { console.error('Electron acceptance timed out'); app.exit(1) }, 120000)
 const requests = []
 let releaseHeld
+// 旧版 SessionStore 的历史：只读，应在会话列表里单独出现。
+writeFileSync(path.join(app.getPath('userData'), 'amadeus-next-sessions.json'), JSON.stringify({ currentId: '', sessions: [
+  { id: 'legacy-1', title: '旧对话', messages: [{ role: 'user', text: 'old question', turn_id: 'a' }, { role: 'assistant', text: 'old answer', turn_id: 'a' }] },
+] }))
+// 记忆抽取等后台任务也会请求模型；验收只数主对话的请求（带 handoff 工具的那些）。
+const mainRequests = () => requests.filter(value => value.tools?.some(tool => tool.function?.name === 'handoff'))
 const modelServer = createServer(async (request, response) => {
   let body = ''
   for await (const chunk of request) body += chunk
@@ -28,11 +34,18 @@ const modelServer = createServer(async (request, response) => {
   requests.push(value)
   const userContent = value.messages.findLast(message => message.role === 'user')?.content
   const userText = typeof userContent === 'string' ? userContent : (userContent || []).map(part => part.text || '').join('')
-  if (userText === 'hold-for-reload') await new Promise(resolve => { releaseHeld = resolve })
+  if (userText.includes('hold-for-reload')) await new Promise(resolve => { releaseHeld = resolve })
   const retained = value.messages.some(message => message.role === 'assistant' && message.content === 'saved-marker')
   response.writeHead(200, { 'Content-Type': 'text/event-stream' })
   const frame = (delta, finish_reason = null) => `data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', model: value.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`
-  response.end(frame({ role: 'assistant', content: retained ? 'context-retained' : 'saved-marker' }) + frame({}, 'stop') + 'data: [DONE]\n\n')
+  const isSubagent = value.tools?.some(tool => tool.function?.name === 'web_search')
+  if (isSubagent) return response.end(frame({ role: 'assistant', content: 'subagent-findings' }) + frame({}, 'stop') + 'data: [DONE]\n\n')
+  if (userText.includes('delegate-research') && !value.messages.some(message => message.role === 'tool')) {
+    const call = { index: 0, id: 'call_handoff', type: 'function', function: { name: 'handoff', arguments: JSON.stringify({ kind: 'research', title: '查资料', brief: 'Find the fixture findings and report them back plainly.' }) } }
+    return response.end(frame({ role: 'assistant', content: '好，我去查。' }) + frame({ tool_calls: [call] }) + frame({}, 'tool_calls') + 'data: [DONE]\n\n')
+  }
+  const text = userText.includes('amadeus_handoff_result') ? 'report-spoken' : retained ? 'context-retained' : 'saved-marker'
+  response.end(frame({ role: 'assistant', content: text }) + frame({}, 'stop') + 'data: [DONE]\n\n')
 })
 const wait = async (probe, message, timeout = 15000) => {
   const start = Date.now()
@@ -50,6 +63,9 @@ app.on('browser-window-created', (_event, window) => {
   window.webContents.once('did-finish-load', () => {
     void (async () => {
       let frame = await wait(() => window.webContents.mainFrame.frames.find(f => f.url.includes('index.html') || f.url.includes('wallpaper_engine.html')), 'Scene iframe missing')
+      // 渲染进程收到的 next.event 都记下来，回合结果与汇报卡片靠它断言。
+      const hookEvents = () => window.webContents.executeJavaScript('window.__acceptanceEvents = window.__acceptanceEvents || []; if (!window.__acceptanceHooked) { window.__acceptanceHooked = true; window.amadeusNext.onEvent(event => window.__acceptanceEvents.push(event)) } true')
+      await hookEvents()
       await wait(() => frame.executeJavaScript('!!window.__amadeusCharacter && !!window.__sceneLastReport?.character'), 'Character did not render')
       const idle = active => window.webContents.send('next.event', { method: 'voice.event', params: { type: 'conversation-idle', active } })
       idle(true)
@@ -199,12 +215,29 @@ app.on('browser-window-created', (_event, window) => {
         !result.values.voice_configuration.find(group => group.id === 'speech_synthesis').configured)`), 'Clearing the key was not applied live')
       await ui('document.querySelector(\'[data-testid="scene-open-more"]\').click()')
       console.log('PASS: settings save, model/language changes and key clearing apply live without a backend restart')
+      const events = (method, predicate = '() => true') => ui(`(window.__acceptanceEvents || []).filter(event => event.method === ${JSON.stringify(method)} && (${predicate})(event.params)).map(event => event.params)`)
       const chat = async (text, turnId) => {
         const result = await ui(`window.amadeusNext.request('chat.send', {text:${JSON.stringify(text)},turn_id:${JSON.stringify(turnId)}})`)
         assert.equal(result.ok, true)
-        return wait(() => ui(`window.amadeusNext.request('session.list').then(result => result.messages.find(message => message.role === 'assistant' && message.turn_id === ${JSON.stringify(turnId)})?.text)`), 'Local Pi reply missing')
+        return wait(() => events('chat.complete', `params => params.turn_id === ${JSON.stringify(turnId)}`).then(list => list[0]?.full_text), 'Local Pi reply missing')
+      }
+      // 历史来自 worker（durable 条目），重启后与实时一致。
+      const history = async () => {
+        const current = (await ui('window.amadeusNext.request("session.list")')).current_session_id
+        return (await ui(`window.amadeusNext.request("session.load", {session_id:${JSON.stringify(current)}})`)).messages
       }
       assert.equal(await chat('remember this', 'persist-first'), 'saved-marker')
+      const listed = await ui('window.amadeusNext.request("session.list")')
+      const legacy = listed.sessions.find(item => item.id === 'legacy-1')
+      assert.equal(legacy?.readonly, true, 'pre-migration history is listed as read-only')
+      const durableSession = listed.current_session_id
+      assert.notEqual(durableSession, 'legacy-1')
+      const old = await ui('window.amadeusNext.request("session.load", {session_id:"legacy-1"})')
+      assert.deepEqual(old.messages.map(message => message.text), ['old question', 'old answer'])
+      assert.deepEqual(await ui('window.amadeusNext.request("chat.send", {text:"continue the old chat"})'), { ok: false, error: 'legacy session is read-only' })
+      assert.equal((await ui(`window.amadeusNext.request("session.load", {session_id:${JSON.stringify(durableSession)}})`)).ok, true)
+      assert.deepEqual((await history()).map(message => [message.role, message.text]), [['user', 'remember this'], ['assistant', 'saved-marker']], 'the first turn is read back from the durable store')
+      console.log('PASS: legacy sessions stay readable and read-only; new turns persist in durable and read back as subtitles text')
       const models = await ui('window.amadeusNext.request("pi.models")')
       assert.equal(models.current, 'fixture/fixture-model')
       assert.equal((await ui('window.amadeusNext.request("pi.model.set", {model:"fixture/fixture-alternate"})')).current, 'fixture/fixture-alternate')
@@ -265,7 +298,7 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(restoredModel.current, 'fixture/fixture-alternate')
       assert.equal(restoredModel.thinkingLevel, 'high')
       assert.equal(await chat('what did you remember?', 'persist-second'), 'context-retained')
-      assert.equal(requests.length, 2, 'Restart must not replay requests')
+      assert.equal(mainRequests().length, 2, 'Restart must not replay requests')
       const pid = process.pid
       const oldUrl = frame.url
       await ui('document.querySelector(\'[data-testid="scene-open-more"]\').click()')
@@ -276,7 +309,7 @@ app.on('browser-window-created', (_event, window) => {
       await wait(() => frame.executeJavaScript('!!window.__amadeusCharacter'), 'Character missing after reload')
       assert.equal(process.pid, pid, 'Resource reload must not restart the main process')
       assert.equal(await chat('still there?', 'persist-third'), 'context-retained')
-      assert.equal(requests.length, 3)
+      assert.equal(mainRequests().length, 3)
       await ui('document.querySelector(\'[data-testid="scene-open-more"]\').click()')
       console.log('PASS: real Pi session survives worker replacement and resource reload; no request replay; fresh scene handshake')
       const heldReply = chat('hold-for-reload', 'held-reply')
@@ -287,8 +320,35 @@ app.on('browser-window-created', (_event, window) => {
       releaseHeld()
       assert.equal(await heldReply, 'context-retained')
       await wait(() => ui('window.amadeusNext.request("runtime.status").then(result => result.status === "ready" || (result.status === "error" && Promise.reject(new Error(result.error))))'), 'Queued Pi reload failed')
-      assert.equal(requests.length, 4)
+      assert.equal(mainRequests().length, 4)
       console.log('PASS: a real in-flight Pi reply drains before reload; new requests are rejected rather than replayed')
+      // 委托 -> 子代理 -> 汇报：红莉栖先说一句，子代理在后台干活，话筒空闲时她主动汇报，汇报显示为卡片而不是用户气泡。
+      assert.equal(await chat('please delegate-research this', 'delegate'), '好，我去查。')
+      const task = await wait(() => events('task.graph', 'params => params.tasks.some(task => task.status === "done")').then(list => list.at(-1)?.tasks.find(task => task.status === 'done')), 'The delegated task never finished', 40000)
+      assert.equal(task.title, '查资料')
+      const reportCard = await wait(() => events('task.report').then(list => list[0]), 'The report was not delivered', 20000)
+      assert.deepEqual([reportCard.taskId, reportCard.title, reportCard.status], [task.taskId, '查资料', 'done'])
+      const spoken = await wait(() => events('chat.complete', 'params => params.kind === "report"').then(list => list[0]), 'The report was not spoken', 20000)
+      assert.equal(spoken.full_text, 'report-spoken')
+      assert.equal(spoken.turn_id, reportCard.turnId)
+      const reportRequest = mainRequests().at(-1)
+      assert.match(reportRequest.messages.findLast(message => message.role === 'user').content, /subagent-findings/, 'the subagent result reached the main conversation')
+      const transcript = await history()
+      assert.ok(transcript.some(message => message.role === 'card'), 'the report is rendered as a card in the history')
+      assert.equal(transcript.some(message => message.role === 'user' && /amadeus_handoff_result/.test(message.text)), false, 'the fenced report is never shown as something the owner said')
+      assert.equal(transcript.at(-1).text, 'report-spoken')
+      for (const tokens of await events('chat.token')) assert.doesNotMatch(tokens.token, /amadeus_/, 'internal tags never reach the subtitles')
+      assert.equal(mainRequests().length, 6, 'one request for the delegating turn and one for the report; nothing is replayed')
+      console.log('PASS: delegation runs in the background and the report is spoken as its own turn, shown as a card')
+      // worker 被强杀：主动退避重拉，对话和已投递的汇报都还在，也不会重放请求。
+      const victim = workerPids()[0]
+      process.kill(victim, 'SIGKILL')
+      await wait(() => { const pids = workerPids(); return pids.length === 1 && pids[0] !== victim }, 'The killed worker was not restarted automatically', 30000)
+      assert.equal(await chat('are you still there?', 'after-crash'), 'context-retained')
+      assert.equal(mainRequests().length, 7, 'a crash replays nothing')
+      assert.equal((await events('chat.error')).length, 0)
+      assert.equal((await history()).filter(message => message.role === 'card').length, 1, 'the delivered report is not repeated after the restart')
+      console.log('PASS: a killed worker is restarted automatically; the conversation and the delivered report survive without replay')
       await frame.executeJavaScript(`(() => {
         const NativeNode = window.AudioWorkletNode
         window.AudioWorkletNode = class extends NativeNode {
@@ -363,9 +423,10 @@ app.on('browser-window-created', (_event, window) => {
         const loaded = once(window.webContents, 'did-finish-load')
         await ui('window.amadeusNext.request("dev.reload", {targets:["preload"]})')
         await loaded
+        await hookEvents()
         await wait(() => ui('window.amadeusNext.request("runtime.status").then(result => result.status === "ready")'), 'Preload/window reload did not rebind the scene')
         assert.deepEqual(workerPids(), piBeforePreload)
-        assert.equal((await ui('window.amadeusNext.request("session.list")')).messages.at(-1).text, 'context-retained')
+        assert.equal((await history()).findLast(message => message.role === 'assistant').text, 'context-retained')
         assert.equal((await ui('window.amadeusNext.request("pi.models")')).current, 'fixture/fixture-alternate')
         console.log('PASS: preload/window replacement keeps the Pi process, selected model and conversation')
         // The GUI choice is global: what the user picked is what every session uses, and it is remembered.

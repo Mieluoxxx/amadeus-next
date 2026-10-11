@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, type KeyboardEvent, type ReactNode } from 'react'
 import { translateDynamic, translateSetting, useI18n, type MessageKey } from '../i18n'
-import { cn } from '@/lib/utils'
+import { Card, ComboSelect, IconAction, Row, type ComboOption } from './settings/parts'
+import MemorySettings from './MemorySettings'
 
 interface Props {
   send: (method: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
@@ -14,6 +15,11 @@ const ASR_SETTINGS_GROUP: Record<string, string> = {
   openai_compatible: 'asr_remote',
   mimo: 'asr_mimo',
 }
+
+const WEB_SEARCH_GROUP_IDS = ['web_search']
+const WEB_SEARCH_LABELS: Record<string, string> = { brave: 'Brave Search', tavily: 'Tavily' }
+
+const DELEGATION_MODEL_KEY = 'delegation_model'
 
 const SECTIONS = ['general', 'models', 'asr', 'tts', 'memory'] as const
 type SectionId = typeof SECTIONS[number]
@@ -65,51 +71,6 @@ function asConfigurationGroups(value: unknown): ConfigurationGroup[] {
 }
 
 const groupOk = (group: ConfigurationGroup) => group.status_ok ?? Boolean(group.configured)
-
-function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
-  return (
-    <div className="settings-field-row">
-      <div className="settings-field-label">{label}</div>
-      <div className="settings-field-control">{children}</div>
-    </div>
-  )
-}
-
-function Card({ title, status, children }: { title?: ReactNode; status?: ReactNode; children: ReactNode }) {
-  return (
-    <div className="settings-card">
-      {title ? <div className="settings-card-header"><span className="settings-card-title">{title}</span>{status}</div> : null}
-      {children}
-    </div>
-  )
-}
-
-type ComboOption = string | { value: string; label: string }
-
-function ComboSelect({ value, onChange, options, disabled, label }: {
-  value: string; onChange: (v: string) => void; options: ComboOption[]; disabled?: boolean; label: string
-}) {
-  const { locale } = useI18n()
-  return (
-    <select className="settings-select" aria-label={label} value={value} onChange={event => onChange(event.target.value)} disabled={disabled}>
-      {options.map(option => {
-        const optionValue = typeof option === 'string' ? option : option.value
-        const optionLabel = typeof option === 'string' ? option || 'default' : option.label
-        return <option key={optionValue} value={optionValue}>{translateDynamic(locale, 'settings.option', optionValue, optionLabel)}</option>
-      })}
-    </select>
-  )
-}
-
-function IconAction({ label, glyph, busy = false, danger = false, disabled, onClick }: {
-  label: string; glyph: string; busy?: boolean; danger?: boolean; disabled?: boolean; onClick: () => void
-}) {
-  return (
-    <button type="button" className="settings-icon-button" data-danger={danger || undefined} onClick={onClick} disabled={disabled} title={label} aria-label={label}>
-      <span aria-hidden="true">{busy ? '…' : glyph}</span>
-    </button>
-  )
-}
 
 function StartupFieldRow({ field, desktop, onSave }: { field: StartupField; desktop: DesktopSettingsSnapshot | null; onSave: SaveField }) {
   const { locale, t } = useI18n()
@@ -364,7 +325,38 @@ export default function SettingsPage({ send, subscribe }: Props) {
   const voiceConfiguration = asConfigurationGroups(config.voice_configuration)
   const generalConfiguration = asConfigurationGroups(config.general_configuration)
   const memoryGroups = generalConfiguration.filter(group => group.id === 'memory')
-  const generalGroups = generalConfiguration.filter(group => group.id !== 'memory')
+  // 主进程把网页搜索作为配置分组下发（id 为 web_search）；服务商名只是小写 id，这里换成可读的标签。
+  const webSearchGroup = generalConfiguration.find(group => WEB_SEARCH_GROUP_IDS.includes(group.id))
+  // 委托模型的候选就是对话用的那份模型列表；主进程只知道当前值，所以下拉在这里补全。
+  const delegationOptions = (current: string): ComboOption[] => {
+    const options: ComboOption[] = [{ value: '', label: t('settings.delegation_model.same') }, ...piModels]
+    // 已保存的模型不在列表里（凭据被移除、列表还没回来）时保留它，否则下拉框会悄悄显示成"与对话模型相同"。
+    if (current && !piModels.some(option => (typeof option === 'string' ? option : option.value) === current)) options.push({ value: current, label: current })
+    return options
+  }
+  const generalGroups = generalConfiguration
+    .filter(group => group.id !== 'memory' && !WEB_SEARCH_GROUP_IDS.includes(group.id))
+    .map(group => ({
+      ...group,
+      fields: group.fields.map(field => field.key === DELEGATION_MODEL_KEY
+        ? { ...field, type: 'select' as const, options: delegationOptions(String(field.value ?? '')) }
+        : field),
+    }))
+  const webSearchLabel = (value: string) => value === '' ? t('settings.web_search.none') : WEB_SEARCH_LABELS[value] ?? value
+  const webSearchView: ConfigurationGroup | undefined = webSearchGroup && {
+    ...webSearchGroup,
+    fields: webSearchGroup.fields.map(field => {
+      if (!/provider$/i.test(field.key)) return field
+      const current = String(field.value ?? '')
+      const values = field.options?.length
+        ? field.options.map(option => typeof option === 'string' ? option : option.value)
+        : ['', ...Object.keys(WEB_SEARCH_LABELS)]
+      // 已保存的服务商不在选项里时保留它，否则下拉框会悄悄显示成"未配置"。
+      if (!values.includes('')) values.unshift('')
+      if (current && !values.includes(current)) values.push(current)
+      return { ...field, type: 'select', options: values.map(value => ({ value, label: webSearchLabel(value) })) }
+    }),
+  }
 
   const asrBackendId = val('asr_backend', 'qwen3_asr')
   const asrBackends = Array.isArray(config.asr_backends)
@@ -446,6 +438,7 @@ export default function SettingsPage({ send, subscribe }: Props) {
 
       <main className="settings-main settings-scroll-area">
         {section('general', (
+          <>
           <Card>
             {/* The panel remounts whenever it is reopened, so `config` is empty until the fetch lands. The interface language the renderer is already using is the only true value available then; an English literal would misreport the active choice. */}
             <Row label={t('settings.label.interface_language')}>
@@ -453,6 +446,13 @@ export default function SettingsPage({ send, subscribe }: Props) {
             </Row>
             {generalGroups.map(group => <GroupFields key={group.id} group={group} desktop={desktop} onSave={handleStartupSave} />)}
           </Card>
+          {webSearchView ? (
+            <Card title={t('settings.web_search.title')} status={<GroupStatus group={webSearchView} />}>
+              <p className="settings-card-note">{t('settings.web_search.note')}</p>
+              <GroupFields group={webSearchView} desktop={desktop} onSave={handleStartupSave} />
+            </Card>
+          ) : null}
+          </>
         ))}
 
         {section('models', (
@@ -497,7 +497,10 @@ export default function SettingsPage({ send, subscribe }: Props) {
         ))}
 
         {section('memory', (
-          <GroupCards groups={memoryGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
+          <>
+            <MemorySettings send={send} subscribe={subscribe} />
+            <GroupCards groups={memoryGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
+          </>
         ))}
 
         {saving ? <div className="settings-feedback" data-tone="busy">{t('settings.saving', undefined, { key: saving })}</div> : null}

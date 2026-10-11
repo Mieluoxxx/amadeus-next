@@ -3,6 +3,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useI18n } from '../../i18n'
 import { ATTACHMENT_ONLY_TEXT, visualPayload, type VisualAttachment } from './visualAttachment'
 import {
   asrDraftOutcome,
@@ -14,15 +15,22 @@ import {
   reconcileLoadedMessages,
   type SceneMessage,
 } from './sceneMessageReconciliation'
+import { useSceneTasks } from './useSceneTasks'
+import { useComposingReport } from './useComposingReport'
+import { field, normalizeCard, text as textOf, type CardData } from './taskTypes'
 
 export type { SceneMessage } from './sceneMessageReconciliation'
 
 type SendFn = (method: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
 type SubscribeFn = (method: string, fn: (params: Record<string, unknown>) => void) => () => void
 
-type SceneSession = {
+export type SceneSession = {
   id: string
   title: string
+  /** 旧会话分组：只能看，不能续。 */
+  readonly: boolean
+  pendingReports: number
+  pendingApprovals: number
 }
 
 type SceneSessionChange = {
@@ -61,9 +69,13 @@ function normalizeMessages(items: unknown, sessionId = ''): SceneMessage[] {
   return items
     .map(item => {
       const value = item && typeof item === 'object' ? item as Record<string, unknown> : {}
-      const role = value.role === 'assistant' || value.role === 'system' ? value.role : 'user'
+      const role = value.role === 'assistant' || value.role === 'system' || value.role === 'card' ? value.role : 'user'
       const turnId = String(value.turn_id ?? value.turnId ?? '') || undefined
-      const text = String(value.content ?? value.text ?? '')
+      // worker 的历史把卡片数据放在嵌套的 `card` 里；`task.report` 事件则是平铺的，两种都认。
+      const card = role === 'card'
+        ? normalizeCard(value.card && typeof value.card === 'object' ? value.card as Record<string, unknown> : value)
+        : undefined
+      const text = card ? card.summary : String(value.content ?? value.text ?? '')
       const authoritativeId = String(value.id ?? value.message_id ?? value.messageId ?? '')
       const stableKey = `${role}\u0000${turnId || ''}\u0000${text}`
       const occurrence = occurrences.get(stableKey) || 0
@@ -73,13 +85,20 @@ function normalizeMessages(items: unknown, sessionId = ''): SceneMessage[] {
         identity: authoritativeId ? 'authoritative' : 'derived',
         role,
         text,
+        ...(card ? { card } : {}),
         sessionId: String(value.session_id ?? value.sessionId ?? sessionId) || undefined,
         turnId,
         streaming: false,
         local: false,
       } as SceneMessage
     })
-    .filter(message => message.text)
+    // 卡片的正文是汇报摘要，可以为空；标题和任务 id 才是它存在的依据。
+    .filter(message => message.text || (message.card && (message.card.taskId || message.card.title)))
+}
+
+const counter = (value: unknown): number => {
+  const count = Number(value)
+  return Number.isFinite(count) && count > 0 ? Math.floor(count) : 0
 }
 
 function normalizeSessions(items: unknown): SceneSession[] {
@@ -87,7 +106,13 @@ function normalizeSessions(items: unknown): SceneSession[] {
   return items
     .map(item => {
       const value = item && typeof item === 'object' ? item as Record<string, unknown> : {}
-      return { id: String(value.id || ''), title: String(value.title || '') }
+      return {
+        id: String(value.id || ''),
+        title: String(value.title || ''),
+        readonly: value.readonly === true,
+        pendingReports: counter(value.pendingReports ?? value.pending_reports),
+        pendingApprovals: counter(value.pendingApprovals ?? value.pending_approvals),
+      }
     })
     .filter(session => session.id)
 }
@@ -120,6 +145,7 @@ export function useSceneSession({
 }) {
   const [messages, setMessages] = useState<SceneMessage[]>([])
   const [sessions, setSessions] = useState<SceneSession[]>([])
+  const sessionsRef = useRef<SceneSession[]>([])
   const [sessionId, setSessionId] = useState('')
   const [draft, setDraft] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -129,6 +155,11 @@ export function useSceneSession({
   const [models, setModels] = useState<{ value: string; label: string }[]>([])
   const [sessionChange, setSessionChange] = useState<SceneSessionChange | null>(null)
   const [operationError, setOperationError] = useState('')
+  const [replying, setReplying] = useState(false)
+  const [stopping, setStopping] = useState(false)
+  const { t } = useI18n()
+  const tasksApi = useSceneTasks({ send, subscribe, connected, sessionId, onProblem: setOperationError })
+  const { applyLoaded: applyLoadedTasks, forgetSession: forgetSessionTasks } = tasksApi
   const activeSessionRef = useRef('')
   const streamingTextRef = useRef('')
   const draftRef = useRef('')
@@ -143,6 +174,11 @@ export function useSceneSession({
   // 记录用户主动中止的回合，忽略后续到达的残余流式 Token，防止已取消的回复继续增量上屏。
   const interruptedTurnsRef = useRef<Set<string>>(new Set())
   const activeTurnRef = useRef('')
+  /** 回合 id 的唯一写入口：停止按钮要靠 state 重绘，ref 单独改不会触发。 */
+  const setActiveTurn = useCallback((turnId: string) => {
+    activeTurnRef.current = turnId
+    setReplying(Boolean(turnId))
+  }, [])
   /** 记录最新请求加载的目标会话与代数，用于异步响应时序判定。 */
   const requestedSessionRef = useRef('')
   const loadGenerationRef = useRef(0)
@@ -183,13 +219,17 @@ export function useSceneSession({
       : undefined
     const nextId = String(payload.current_session_id || session?.id || '')
     const switched = Boolean(nextId) && activeSessionRef.current !== nextId
+    if (nextId && session?.readonly === true) {
+      setSessions(previous => previous.map(item => item.id === nextId ? { ...item, readonly: true } : item))
+    }
+    if (nextId) applyLoadedTasks(nextId, payload.tasks)
     if (nextId) {
       activeSessionRef.current = nextId
       setSessionId(nextId)
       if (switched) {
         // 流式状态作用域属于单次回合而非会话：切换会话时重置流式标记，避免上个会话的中断状态污染新会话。
         interruptedTurnsRef.current = new Set()
-        activeTurnRef.current = ''
+        setActiveTurn('')
         streamingTextRef.current = ''
         setStreaming(false)
         acknowledgedMessageKeysRef.current = new Set()
@@ -234,7 +274,7 @@ export function useSceneSession({
       setStreaming(false)
     }
     return nextId
-  }, [])
+  }, [applyLoadedTasks, setActiveTurn])
 
   const loadSession = useCallback(async (id: string): Promise<SceneSessionOperationResult> => {
     // 仅采纳代数匹配且意图最新的加载回执，丢弃用户已离开会话的迟到响应。
@@ -325,6 +365,34 @@ export function useSceneSession({
     })
   }, [])
 
+  const upsertCardMessage = useCallback((turnId: string, card: CardData) => {
+    const session = activeSessionRef.current
+    setMessages(previous => {
+      const index = previous.findIndex(message => message.role === 'card'
+        && (!message.sessionId || message.sessionId === session)
+        && ((card.taskId && message.card?.taskId === card.taskId) || (turnId && message.turnId === turnId)))
+      if (index >= 0) {
+        const next = [...previous]
+        next[index] = { ...next[index], text: card.summary, card }
+        return next
+      }
+      const entry: SceneMessage = {
+        id: `card:${session || 'current'}:${card.taskId || turnId || crypto.randomUUID()}`,
+        role: 'card',
+        text: card.summary,
+        card,
+        sessionId: session || undefined,
+        turnId: turnId || undefined,
+        local: true,
+      }
+      // 汇报的第一个 token 可能先于卡片事件到达；卡片是回答的前因，必须排在它前面。
+      const reply = turnId
+        ? previous.findIndex(message => message.role === 'assistant' && message.turnId === turnId)
+        : -1
+      return reply >= 0 ? [...previous.slice(0, reply), entry, ...previous.slice(reply)] : [...previous, entry]
+    })
+  }, [])
+
   // 首次初始化拉取会话列表并加载活跃会话历史。
   useEffect(() => {
     if (!connected) return
@@ -407,6 +475,8 @@ export function useSceneSession({
   }, [connected, send, sessionId, streaming, model, models.length, modelRetry])
 
   useEffect(() => { draftRef.current = draft }, [draft])
+  useEffect(() => { sessionsRef.current = sessions }, [sessions])
+  useComposingReport({ send, connected, draft, sessionId })
 
   useEffect(() => {
     const unsubscribers: Array<() => void> = []
@@ -417,7 +487,7 @@ export function useSceneSession({
       const session = eventSessionId(params)
       if (session && session !== activeSessionRef.current) return
       if (turnId && activeTurnRef.current && turnId !== activeTurnRef.current) return
-      if (turnId) activeTurnRef.current = turnId
+      if (turnId) setActiveTurn(turnId)
       streamingTextRef.current = String(params.token ?? '')
       setStreaming(true)
       upsertAssistantMessage(turnId, streamingTextRef.current, true)
@@ -429,7 +499,7 @@ export function useSceneSession({
         streamingTextRef.current = ''
         if (activeTurnRef.current === turnId) {
           setStreaming(false)
-          activeTurnRef.current = ''
+          setActiveTurn('')
         }
         return
       }
@@ -439,7 +509,7 @@ export function useSceneSession({
       upsertAssistantMessage(turnId, text, false)
       streamingTextRef.current = ''
       setStreaming(false)
-      if (activeTurnRef.current === turnId) activeTurnRef.current = ''
+      if (activeTurnRef.current === turnId) setActiveTurn('')
     }))
     unsubscribers.push(subscribe('chat.error', params => {
       const errorTurnId = String(params.turn_id ?? '')
@@ -448,7 +518,7 @@ export function useSceneSession({
       if (errorTurnId && activeTurnRef.current && errorTurnId !== activeTurnRef.current) return
       if (!errorTurnId && !activeTurnRef.current) return
       if (errorTurnId) interruptedTurnsRef.current.add(errorTurnId)
-      if (!errorTurnId || activeTurnRef.current === errorTurnId) activeTurnRef.current = ''
+      if (!errorTurnId || activeTurnRef.current === errorTurnId) setActiveTurn('')
       setStreaming(false)
       streamingTextRef.current = ''
       setMessages(previous => [...previous, {
@@ -481,7 +551,14 @@ export function useSceneSession({
       if (turnId) upsertAssistantMessage(turnId, text || streamed || '[interrupted by user]', false)
       streamingTextRef.current = ''
       setStreaming(false)
-      if (activeTurnRef.current === turnId) activeTurnRef.current = ''
+      if (activeTurnRef.current === turnId) setActiveTurn('')
+    }))
+    unsubscribers.push(subscribe('task.report', params => {
+      const session = eventSessionId(params)
+      if (session && session !== activeSessionRef.current) return
+      const card = normalizeCard(params)
+      if (!card.taskId && !card.title) return
+      upsertCardMessage(textOf(field(params, 'turnId', 'turn_id')), card)
     }))
     unsubscribers.push(subscribe('session.changed', params => {
       // 统一收敛会话变更入口，防止过期广播破坏当前正在进行的会话状态。
@@ -548,9 +625,11 @@ export function useSceneSession({
       settledOperationIdsRef.current.clear()
       pendingOperationRef.current = null
     }
-  }, [subscribe, upsertAssistantMessage, applySessionPayload, updateDraft])
+  }, [subscribe, upsertAssistantMessage, upsertCardMessage, applySessionPayload, updateDraft, setActiveTurn])
 
   const sendText = useCallback(async (rawText: string, attachment: VisualAttachment | null = null) => {
+    // 旧会话是只读的，输入框已禁用；这里兜住快捷键等绕过输入框的入口。
+    if (readonlyRef.current) return false
     const typed = rawText.trim()
     // 允许仅发送图片附件，自动填充占位文本以触发视觉理解流程。
     const text = typed || (attachment ? ATTACHMENT_ONLY_TEXT : '')
@@ -615,7 +694,7 @@ export function useSceneSession({
       const turnId = crypto.randomUUID()
 
       // 乐观插入用户消息并锁定回合 ID，防止快速到达的首字 Token 渲染在用户提问之前。
-      activeTurnRef.current = turnId
+      setActiveTurn(turnId)
       interruptedTurnsRef.current.delete(turnId)
       const userMessageId = `user:${targetSession}:${turnId}`
       setMessages(previous => [...previous, {
@@ -660,7 +739,7 @@ export function useSceneSession({
               local: true,
             },
           ])
-          if (activeTurnRef.current === turnId) activeTurnRef.current = ''
+          if (activeTurnRef.current === turnId) setActiveTurn('')
         }
         return false
       }
@@ -689,7 +768,7 @@ export function useSceneSession({
     } finally {
       sendingRef.current = false
     }
-  }, [send, provider, createSession, updateDraft])
+  }, [send, provider, createSession, updateDraft, setActiveTurn])
 
   /** 在对话流中显式提示附件处理异常，避免静默失败。 */
   const reportProblem = useCallback((text: string) => {
@@ -728,6 +807,114 @@ export function useSceneSession({
     () => sessions.find(session => session.id === sessionId) || null,
     [sessions, sessionId],
   )
+  const readonly = activeSession?.readonly === true
+  const readonlyRef = useRef(false)
+  useEffect(() => { readonlyRef.current = readonly }, [readonly])
+
+  const refreshSessions = useCallback(async () => {
+    try {
+      const listed = await send('session.list', {})
+      if (listed.ok !== false && Array.isArray(listed.sessions)) setSessions(normalizeSessions(listed.sessions))
+    } catch {
+      // 列表刷新失败不影响当前会话，下次打开列表时会再试。
+    }
+  }, [send])
+
+  // 非当前会话的汇报与确认只靠列表上的徽标提示；主进程在计数变化时推 session.updated，直接按条目替换，不必整表重拉。
+  useEffect(() => {
+    if (!connected) return
+    return subscribe('session.updated', params => {
+      const [entry] = normalizeSessions([params])
+      if (!entry) return
+      setSessions(previous => {
+        const index = previous.findIndex(item => item.id === entry.id)
+        if (index >= 0) {
+          const next = [...previous]
+          next[index] = { ...entry, readonly: previous[index].readonly || entry.readonly, title: entry.title || previous[index].title }
+          return next
+        }
+        // 新会话排在可续写的会话之后、旧会话分组之前。
+        const firstLegacy = previous.findIndex(item => item.readonly)
+        return firstLegacy < 0 ? [...previous, entry] : [...previous.slice(0, firstLegacy), entry, ...previous.slice(firstLegacy)]
+      })
+    })
+  }, [connected, subscribe])
+
+  const stoppingRef = useRef(false)
+  const abortReply = useCallback(async () => {
+    const turnId = activeTurnRef.current
+    if (!turnId || stoppingRef.current) return
+    stoppingRef.current = true
+    setStopping(true)
+    try {
+      const session = activeSessionRef.current
+      const result = await send('chat.abort', { session_id: session, sessionId: session, turn_id: turnId })
+      if (result.ok === false) throw new Error(textOf(result.error) || 'chat.abort rejected')
+      // 主进程取消进行中的回合时会先发 chat.interrupted；回执到了回合还在，说明没有事件可等，本地收口。
+      if (activeTurnRef.current === turnId) {
+        interruptedTurnsRef.current.add(turnId)
+        setActiveTurn('')
+        streamingTextRef.current = ''
+        setStreaming(false)
+        setMessages(previous => previous.map(message => (
+          message.role === 'assistant' && message.turnId === turnId && message.streaming
+            ? { ...message, streaming: false }
+            : message
+        )))
+      }
+    } catch (error) {
+      setOperationError(t('scene.stop_failed', undefined, { error: error instanceof Error ? error.message : String(error) }))
+    } finally {
+      stoppingRef.current = false
+      setStopping(false)
+    }
+  }, [send, setActiveTurn, t])
+
+  const renameSession = useCallback(async (id: string, title: string): Promise<boolean> => {
+    const next = title.trim()
+    if (!next) return false
+    try {
+      const result = await send('session.rename', { session_id: id, sessionId: id, title: next })
+      if (result.ok === false) throw new Error(textOf(result.error) || 'session.rename rejected')
+      setSessions(previous => previous.map(item => item.id === id ? { ...item, title: next } : item))
+      return true
+    } catch (error) {
+      setOperationError(t('scene.session_rename_failed', undefined, { error: error instanceof Error ? error.message : String(error) }))
+      return false
+    }
+  }, [send, t])
+
+  const deleteSession = useCallback(async (id: string): Promise<boolean> => {
+    try {
+      const result = await send('session.delete', { session_id: id, sessionId: id })
+      if (result.ok === false) throw new Error(textOf(result.error) || 'session.delete rejected')
+    } catch (error) {
+      setOperationError(t('scene.session_delete_failed', undefined, { error: error instanceof Error ? error.message : String(error) }))
+      return false
+    }
+    forgetSessionTasks(id)
+    let remaining: SceneSession[] | null = null
+    let suggested = ''
+    try {
+      const listed = await send('session.list', {})
+      if (listed.ok !== false && Array.isArray(listed.sessions)) {
+        remaining = normalizeSessions(listed.sessions).filter(item => item.id !== id)
+        suggested = String(listed.current_session_id || '')
+      }
+    } catch {
+      // 删除已经成功；列表拿不到时按本地状态收缩。
+    }
+    setSessions(previous => remaining ?? previous.filter(item => item.id !== id))
+    // 主进程删掉当前会话时会自己换会话并先发 session.changed，回执到达时界面通常已经切走了；还停在原处才需要自己换。
+    if (activeSessionRef.current === id) {
+      const pool = remaining ?? sessionsRef.current.filter(item => item.id !== id)
+      // 优先主进程建议的会话，其次最近的可续写会话，最后才落到只读的旧会话。
+      const next = pool.find(item => item.id === suggested) ?? pool.find(item => !item.readonly) ?? pool[0]
+      if (next) await loadSession(next.id)
+      else await createSession()
+    }
+    return true
+  }, [send, t, forgetSessionTasks, loadSession, createSession])
 
   return {
     messages,
@@ -749,5 +936,20 @@ export function useSceneSession({
     sendText,
     reportProblem,
     toggleMic,
+    readonly,
+    replying,
+    stopping,
+    abortReply,
+    renameSession,
+    deleteSession,
+    refreshSessions,
+    tasks: tasksApi.tasks,
+    approvals: tasksApi.approvals,
+    approvalsNow: tasksApi.now,
+    pendingApprovalCount: tasksApi.pendingApprovalCount,
+    cancellingTasks: tasksApi.cancelling,
+    decidingApprovals: tasksApi.deciding,
+    cancelTask: tasksApi.cancelTask,
+    decideApproval: tasksApi.decideApproval,
   }
 }

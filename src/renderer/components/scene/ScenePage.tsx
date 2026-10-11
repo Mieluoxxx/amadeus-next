@@ -15,6 +15,7 @@ import {
   MessageSquare,
   Plus,
   RotateCw,
+  ShieldAlert,
   SlidersHorizontal,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -34,8 +35,11 @@ import {
 } from './visualAttachment'
 import { useSceneBridge } from './useSceneBridge'
 import { useSceneTransition } from './useSceneTransition'
-import { useSceneSession } from './useSceneSession'
+import { useSceneSession, type SceneMessage } from './useSceneSession'
+import type { SceneTask, TaskApproval } from './taskTypes'
 import SceneDock from './SceneDock'
+import SessionPicker from './SessionPicker'
+import { TaskCard, TaskTray } from './TaskCard'
 
 type SendFn = (method: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
 type SubscribeFn = (method: string, fn: (params: Record<string, unknown>) => void) => () => void
@@ -130,6 +134,10 @@ export default function ScenePage({
       onToggleMic={session.toggleMic}
       asrListening={session.asrListening}
       streaming={session.streaming}
+      replying={session.replying}
+      stopping={session.stopping}
+      onStop={() => { void session.abortReply() }}
+      readonly={session.readonly}
       sessionTitle={session.activeSession?.title || ''}
       model={session.model}
       models={session.models}
@@ -226,6 +234,7 @@ export default function ScenePage({
           icon={<MessageSquare className="w-3.5 h-3.5" />}
           label={t('scene.transcript')}
           testId="scene-open-transcript"
+          attention={session.pendingApprovalCount > 0 && panel !== 'transcript'}
           onClick={() => togglePanel('transcript')}
         />
         <SceneToolbarButton
@@ -242,6 +251,18 @@ export default function ScenePage({
         style={overlayStyle(layout.status.region)}
         data-testid="scene-event-tray"
       >
+        {/* 确认请求不抢焦点也不打断语音，但面板收起时得有个看得见的入口，否则 10 分钟后就静悄悄过期了。 */}
+        {session.pendingApprovalCount > 0 && panel !== 'transcript' ? (
+          <button
+            onClick={() => setPanel('transcript')}
+            data-testid="scene-approval-chip"
+            className="flex shrink-0 items-center gap-1.5 self-start rounded-xl border border-amber-500/30 bg-[#1c1a12]/95 px-3 py-1.5 text-[11px] text-amber-200 backdrop-blur-xl"
+          >
+            <ShieldAlert className="w-3 h-3" />
+            <span>{t('task.approval.waiting', undefined, { count: session.pendingApprovalCount })}</span>
+            <ArrowRight className="w-3 h-3" />
+          </button>
+        ) : null}
         <SceneNotices
           notices={visibleNotices}
           unresolvedCount={notices.length}
@@ -383,22 +404,14 @@ function ScenePanelFrame({
           {kind === 'transcript' ? t('scene.transcript') : t('scene.settings')}
         </span>
         {kind === 'transcript' && (
-          <select
-            value={session.sessionId}
-            onChange={event => { void session.loadSession(event.target.value) }}
-            aria-label={t('scene.current_task')}
-            data-testid="scene-session-select"
-            className="scene-transcript-session"
-          >
-            <option value={session.sessionId}>
-              {session.activeSession?.title || session.sessionId || t('scene.current_task')}
-            </option>
-            {session.sessions
-              .filter(item => item.id !== session.sessionId)
-              .map(item => (
-                <option key={item.id} value={item.id}>{item.title || item.id}</option>
-              ))}
-          </select>
+          <SessionPicker
+            sessions={session.sessions}
+            currentId={session.sessionId}
+            onSelect={id => { void session.loadSession(id) }}
+            onOpen={() => { void session.refreshSessions() }}
+            onRename={session.renameSession}
+            onDelete={session.deleteSession}
+          />
         )}
         {kind === 'transcript' && (
           <button
@@ -423,6 +436,13 @@ function ScenePanelFrame({
             <SceneTranscript
               messages={session.messages}
               streaming={session.streaming}
+              tasks={session.tasks}
+              approvals={session.approvals}
+              now={session.approvalsNow}
+              cancelling={session.cancellingTasks}
+              deciding={session.decidingApprovals}
+              onCancel={taskId => { void session.cancelTask(taskId) }}
+              onDecide={(approval, allow) => { void session.decideApproval(approval, allow) }}
             />
         )}
         {kind === 'more' && (
@@ -441,12 +461,14 @@ function SceneToolbarButton({
   icon,
   label,
   testId,
+  attention = false,
   onClick,
 }: {
   active: boolean
   icon: ReactNode
   label: string
   testId: string
+  attention?: boolean
   onClick: () => void
 }) {
   return (
@@ -455,10 +477,12 @@ function SceneToolbarButton({
       data-testid={testId}
       title={label}
       data-active={active ? 'true' : 'false'}
+      data-attention={attention ? 'true' : undefined}
       className="scene-toolbar-button"
     >
       {icon}
       <span>{label}</span>
+      {attention ? <i className="scene-toolbar-dot" aria-hidden="true" /> : null}
     </button>
   )
 }
@@ -518,18 +542,40 @@ function ScenePlaceholder({
 function SceneTranscript({
   messages,
   streaming,
+  tasks,
+  approvals,
+  now,
+  cancelling,
+  deciding,
+  onCancel,
+  onDecide,
 }: {
-  messages: Array<{ role: 'user' | 'assistant' | 'system'; text: string; turnId?: string; streaming?: boolean; delivery?: string; id?: string }>
+  messages: SceneMessage[]
   streaming: boolean
+  tasks: SceneTask[]
+  approvals: TaskApproval[]
+  now: number
+  cancelling: ReadonlySet<string>
+  deciding: ReadonlySet<string>
+  onCancel: (taskId: string) => void
+  onDecide: (approval: TaskApproval, allow: boolean) => void
 }) {
   const { t } = useI18n()
   const endRef = useRef<HTMLDivElement>(null)
+  // 已经以卡片形式出现在记录里的任务不再进托盘，免得同一个任务出现两次。
+  const inlineTaskIds = useMemo(
+    () => new Set(messages.flatMap(message => message.card?.taskId ? [message.card.taskId] : [])),
+    [messages],
+  )
+  const trayTasks = useMemo(() => tasks.filter(task => !inlineTaskIds.has(task.taskId)), [tasks, inlineTaskIds])
+  const waiting = approvals.filter(approval => approval.state === 'pending').length
   useEffect(() => {
     const scroller = endRef.current?.closest<HTMLElement>('.scene-transcript-scroll')
     if (scroller) scroller.scrollTop = scroller.scrollHeight
-  }, [messages, streaming])
+    // 托盘增减或新的确认到达时也要滚到底，否则等待确认的卡片会落在视野外。
+  }, [messages, streaming, trayTasks.length, waiting])
 
-  if (messages.length === 0) {
+  if (messages.length === 0 && trayTasks.length === 0) {
     return (
       <div className="scene-transcript-empty" data-testid="scene-transcript">
         {t('scene.empty_transcript')}
@@ -538,25 +584,61 @@ function SceneTranscript({
   }
   return (
     <div className="scene-transcript-messages" data-testid="scene-transcript">
-      {messages.map((message, index) => (
-        <div
-          key={`${message.turnId || 'msg'}-${index}`}
-          data-message-id={message.id}
-          data-turn-id={message.turnId}
-          data-delivery={message.delivery}
-          data-role={message.role}
-          data-streaming={message.streaming ? 'true' : 'false'}
-          className="scene-transcript-message"
-        >
-          <div className="scene-transcript-speaker">
-            {message.role === 'user'
-              ? t('scene.role_user')
-              : message.role === 'system' ? t('scene.role_system') : t('scene.role_assistant')}
-            {message.streaming ? ` · ${t('scene.streaming')}` : ''}
+      {messages.map((message, index) => {
+        if (message.role === 'card' && message.card) {
+          const live = tasks.find(task => task.taskId === message.card?.taskId)
+          return (
+            <TaskCard
+              key={`${message.id}-${index}`}
+              task={{
+                taskId: message.card.taskId,
+                kind: live?.kind || 'research',
+                title: live?.title || message.card.title,
+                status: live?.status || message.card.status || 'done',
+                round: live?.round ?? message.card.round,
+                progress: live?.progress,
+                question: live?.question ?? message.card.question,
+              }}
+              summary={message.card.summary}
+              live={Boolean(live)}
+              approvals={approvals}
+              now={now}
+              cancelling={cancelling.has(message.card.taskId)}
+              deciding={deciding}
+              onCancel={onCancel}
+              onDecide={onDecide}
+            />
+          )
+        }
+        return (
+          <div
+            key={`${message.turnId || 'msg'}-${index}`}
+            data-message-id={message.id}
+            data-turn-id={message.turnId}
+            data-delivery={message.delivery}
+            data-role={message.role}
+            data-streaming={message.streaming ? 'true' : 'false'}
+            className="scene-transcript-message"
+          >
+            <div className="scene-transcript-speaker">
+              {message.role === 'user'
+                ? t('scene.role_user')
+                : message.role === 'system' ? t('scene.role_system') : t('scene.role_assistant')}
+              {message.streaming ? ` · ${t('scene.streaming')}` : ''}
+            </div>
+            <div className="scene-transcript-text">{message.text}</div>
           </div>
-          <div className="scene-transcript-text">{message.text}</div>
-        </div>
-      ))}
+        )
+      })}
+      <TaskTray
+        tasks={trayTasks}
+        approvals={approvals}
+        now={now}
+        cancelling={cancelling}
+        deciding={deciding}
+        onCancel={onCancel}
+        onDecide={onDecide}
+      />
       <div ref={endRef} />
     </div>
   )

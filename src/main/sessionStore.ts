@@ -1,30 +1,19 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import path from 'node:path'
+import { readFileSync } from 'node:fs'
 
-type StoredMessage ={ role: 'user' | 'assistant'; text: string; turn_id?: string }
+type StoredMessage = { role: 'user' | 'assistant'; text: string; turn_id?: string }
 export type StoredSession = { id: string; title: string; messages: StoredMessage[] }
 
+/** 迁移前的会话历史。durable 接手后只读：可看不可续，也不再写回（architecture §12 #2）。 */
 export class SessionStore {
-  private readonly file: string
-  sessions: StoredSession[] = []
-  currentId = ''
+  readonly sessions: StoredSession[] = []
 
   constructor(file: string) {
-    this.file = file
     try {
       const value = JSON.parse(readFileSync(file, 'utf8'))
-      if (Array.isArray(value)) this.sessions = value as StoredSession[]
-      else if (Array.isArray(value?.sessions)) {
-        this.sessions = value.sessions
-        this.currentId = typeof value.currentId === 'string' ? value.currentId : ''
-      }
+      const sessions = Array.isArray(value) ? value : value?.sessions
+      if (Array.isArray(sessions)) this.sessions = sessions as StoredSession[]
     } catch {
-      this.sessions = []
+      // 没有旧历史或文件损坏都按空处理，不影响启动。
     }
-  }
-
-  save(): void {
-    mkdirSync(path.dirname(this.file), { recursive: true })
-    writeFileSync(this.file, JSON.stringify({ currentId: this.currentId, sessions: this.sessions }, null, 2), 'utf8')
   }
 }

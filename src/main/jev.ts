@@ -1,5 +1,5 @@
-export const DEFAULT_JEV_URL = 'https://opencode.ai/zen/v1/systemone'
-export const DEFAULT_JEV_MODEL = 'jev-1.13-free'
+export const DEFAULT_JEV_URL = 'https://api.typesafe.ai/v1/systemone'
+export const DEFAULT_JEV_MODEL = 'jev-latest'
 
 export type JevQuestion =
   | { type: 'noul'; instructions: unknown; criteria?: { true: string; false: string } }

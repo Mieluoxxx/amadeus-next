@@ -1,8 +1,12 @@
+import type { CardData } from './taskTypes'
+
 export type SceneMessage = {
   id: string
   identity?: 'authoritative' | 'derived'
-  role: 'user' | 'assistant' | 'system'
+  role: 'user' | 'assistant' | 'system' | 'card'
   text: string
+  /** 仅 `card`：汇报输入渲染成任务卡片而不是用户气泡。 */
+  card?: CardData
   sessionId?: string
   turnId?: string
   streaming?: boolean
@@ -17,6 +21,8 @@ function messageKey(message: SceneMessage): string {
 }
 
 function sameMessage(left: SceneMessage, right: SceneMessage): boolean {
+  // 历史里的卡片不带 turnId，实时卡片靠任务 id 对上，否则重载历史后同一张卡会出现两次。
+  if (left.role === 'card' && right.role === 'card' && left.card?.taskId && left.card.taskId === right.card?.taskId) return true
   return (left.identity === 'authoritative'
       && right.identity === 'authoritative'
       && left.id === right.id)
