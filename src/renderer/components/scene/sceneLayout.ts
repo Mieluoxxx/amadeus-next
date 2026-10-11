@@ -17,17 +17,21 @@ const SCENE_CABINET = { x: 470, y: 100, width: 780, height: 645 } as const
 // 侧边栏与底部输入框尺寸边界，保证在极小窗口下依然具备可用交互空间。
 const MIN_PANEL_WIDTH = 320
 const MIN_DOCK_HEIGHT = 128
-const MAX_DOCK_HEIGHT = 184
+const MAX_DOCK_HEIGHT = 156
+// 输入框宽度跟随监视器机身，像摆在显示器前的键盘；保底宽度保证工具栏不被挤压。
+const DOCK_CABINET_RATIO = 1.12
+const MIN_DOCK_WIDTH = 520
+const MAX_DOCK_WIDTH = 880
 // 顶部保留区高度，避免窗口控制按钮和状态通知侵入 CRT 监视器构图。
 const CHROME_BAND_HEIGHT = 112
 const MIN_CHROME_BAND_HEIGHT = 112
 // 超矮窗口下的极端保底高度，确保多行控件收折后不遮挡角色头顶。
 const COMPACT_CHROME_BAND_HEIGHT = 52
-const TOOLBAR_RESERVED_WIDTH = 236
+const TOOLBAR_RESERVED_WIDTH = 336
 const STATUS_TRAY_MAX_WIDTH = 420
 const PANEL_MARGIN = 12
 /** Keep at least this share of the window for the scene when the sidebar is open. */
-export type ScenePanelKind = 'transcript' | 'more'
+export type ScenePanelKind = 'transcript' | 'more' | 'work'
 
 export type SceneRegion = { x: number; y: number; width: number; height: number }
 
@@ -338,11 +342,17 @@ export function resolveSceneLayout(
   const { fit, cabinet } = arrangement
   const panelOverlay = overlays.find(overlay => overlay.kind === panel) || null
   const dockOverlay = overlays.find(overlay => overlay.kind === 'dock') || null
-  if (panelOverlay && dockOverlay) {
-    // 侧边栏开启时将输入框居中于剩余可用列，保持视觉轴线对齐。
-    const column = remaining(scene, [panelOverlay])
-    const width = Math.min(dockOverlay.region.width, Math.max(1, column.width - PANEL_MARGIN * 2))
-    dockOverlay.region = { ...dockOverlay.region, x: column.x + (column.width - width) / 2, width }
+  if (dockOverlay) {
+    // 宽度只影响水平方向，不改变监视器避让结果，因此可在定版后按机身宽度回填；侧边栏开启时居中于剩余列。
+    const column = panelOverlay ? remaining(scene, [panelOverlay]) : scene
+    const width = Math.min(
+      dockOverlay.region.width,
+      Math.max(1, column.width - PANEL_MARGIN * 2),
+      clamp(Math.round(cabinet.width * DOCK_CABINET_RATIO), MIN_DOCK_WIDTH, MAX_DOCK_WIDTH),
+    )
+    const center = panelOverlay ? column.x + column.width / 2 : cabinet.x + cabinet.width / 2
+    const x = clamp(center - width / 2, column.x + PANEL_MARGIN, column.x + column.width - PANEL_MARGIN - width)
+    dockOverlay.region = { ...dockOverlay.region, x, width }
   }
   return {
     scene,

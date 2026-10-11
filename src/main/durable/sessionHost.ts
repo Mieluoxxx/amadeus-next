@@ -7,6 +7,8 @@ import {
   Harness,
   ROOT_CONVERSATION_ID,
   StorageRejected,
+  watchEvents,
+  type AgentEventStream,
   type Conversation,
   type ConversationId,
   type Extension,
@@ -16,6 +18,7 @@ import {
   type Tx,
 } from '@earendil-works/pi-durable'
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node'
+import { ActivityLog } from './childActivity.ts'
 import { EventBridge, type SettledTurn } from './eventBridge.ts'
 import { countUserTurns } from './history.ts'
 import { CommandError } from './lanes.ts'
@@ -30,6 +33,7 @@ import {
   cleanLostHandoffs,
   expireApprovalsOnOpen,
   initHandoffDocs,
+  isActive,
   reconcileHandoffs,
   summaryOf,
   watchApprovals,
@@ -38,11 +42,17 @@ import {
   type TaskSummary,
 } from './handoff/index.ts'
 import type { MemoryService } from './memory/index.ts'
+import type { WorkLedger } from './workLedger.ts'
 
 type Json = Record<string, unknown>
 
 const ctx = BACKGROUND_CONTEXT
 const DELETE_ABORT_MS = 10_000
+/** 子代理动作推给界面的合并间隔：流式输出每 30ms 就提交一次，逐条推会淹没 IPC。 */
+const ACTIVITY_INTERVAL_MS = 250
+
+/** 一个委托子对话的事件监视；只在条目 queued / running 时挂着。 */
+type ChildWatch = { stream?: AgentEventStream; stopped: boolean; timer?: ReturnType<typeof setTimeout> }
 
 export type OpenSession = {
   id: string
@@ -66,6 +76,9 @@ export type OpenSession = {
   /** 清理器的串行链；`cleaningQueued` 为真表示已有一次排在后面、尚未开始，新的触发不必再排。 */
   cleaning: Promise<void>
   cleaningQueued: boolean
+  /** taskId → 子对话监视；动作记录单独留着，任务停下后列表仍能显示它最后几步。 */
+  children: Map<string, ChildWatch>
+  activity: Map<string, ActivityLog>
 }
 
 type Slot = { state: 'opening' | 'open' | 'closing'; promise: Promise<unknown>; open?: OpenSession }
@@ -77,11 +90,14 @@ export type HostDeps = {
   registry: Registry
   settings: HarnessSettings
   index: SessionIndex
+  ledger: WorkLedger
   /** 主对话固定的扩展选择；记忆服务重建后会变，所以每次打开时现取。 */
   agentExtensions: () => readonly Extension[]
   openStorage: (file: string) => Promise<Storage>
   post: (message: Json) => void
   memory: () => MemoryService | undefined
+  /** 用户回合落定后的会话级后台工作（自动命名）；不等它，失败自己处理。 */
+  afterUserTurn?: (open: OpenSession) => void
   idleCloseMs: number
   maxOpen: number
   /** report_progress 推送到界面的最小间隔（handoff limits.progressIntervalMs）。 */
@@ -205,6 +221,7 @@ export class SessionHost {
         id, harness, root, bridge: undefined as unknown as EventBridge, stops, announced: new Set<string>(),
         graph: '', graphShape: '', graphLatest: [], graphProgressAt: 0, graphTimer: undefined,
         turns: 0, lastUsed: this.deps.now(), refreshing: Promise.resolve(), cleaning: Promise.resolve(), cleaningQueued: false,
+        children: new Map(), activity: new Map(),
       }
       const attached = await EventBridge.attach(harness, root.id, {
         emit: (name, payload) => this.emit(id, name, payload),
@@ -265,12 +282,18 @@ export class SessionHost {
       await this.outbox(open, watch.value as Outbox | null)
       watch.start(async value => { await this.outbox(open, value as Outbox | null) })
     })
+    open.stops.push(() => this.stopChildren(open))
     await soft('handoffs', async () => {
       const watch = await harness.watchDoc(HandoffsDoc, root.id, ctx)
       if (!watch) return
       open.stops.push(() => watch.stop())
       this.graph(open, watch.value as Handoffs | null, false)
-      watch.start(async value => { this.graph(open, value as Handoffs | null, true); void this.refresh(open) })
+      this.work(open, watch.value as Handoffs | null)
+      watch.start(async value => {
+        this.graph(open, value as Handoffs | null, true)
+        this.work(open, value as Handoffs | null)
+        void this.refresh(open)
+      })
     })
     await soft('approvals', async () => {
       const stop = await watchApprovals(harness, root, ctx, {
@@ -333,11 +356,72 @@ export class SessionHost {
     this.emit(open.id, 'task.graph', { tasks })
   }
 
+  /** 同步工作账本，并让子对话监视跟着条目状态挂上或摘下（handoff_send 续接时同一个子对话会再次变为 queued）。 */
+  private work(open: OpenSession, value: Handoffs | null): void {
+    const items = value?.items ?? []
+    this.deps.ledger.sync(open.id, items.map(summaryOf))
+    for (const item of items) {
+      const watched = open.children.has(item.taskId)
+      if (isActive(item.status) && !watched) void this.attachChild(open, item.taskId, item.child as ConversationId)
+      else if (!isActive(item.status) && watched) this.detachChild(open, item.taskId)
+    }
+  }
+
+  private async attachChild(open: OpenSession, taskId: string, child: ConversationId): Promise<void> {
+    const watch: ChildWatch = { stopped: false }
+    open.children.set(taskId, watch)
+    let stream: AgentEventStream
+    try { stream = await watchEvents(open.harness, child, ctx) } catch (error) {
+      if (open.children.get(taskId) === watch) open.children.delete(taskId)
+      this.deps.log(`activity watch of ${open.id}/${taskId} failed`, error)
+      return
+    }
+    if (watch.stopped) { await stream.stop().catch(() => {}); return }
+    watch.stream = stream
+    const log = open.activity.get(taskId) ?? new ActivityLog()
+    open.activity.set(taskId, log)
+    log.apply([stream.snapshot])
+    this.pushActivity(open, taskId)
+    stream.start(async events => {
+      log.apply(events)
+      if (watch.timer || watch.stopped) return
+      watch.timer = setTimeout(() => { watch.timer = undefined; this.pushActivity(open, taskId) }, ACTIVITY_INTERVAL_MS)
+      watch.timer.unref?.()
+    })
+  }
+
+  private detachChild(open: OpenSession, taskId: string): void {
+    const watch = open.children.get(taskId)
+    if (!watch) return
+    open.children.delete(taskId)
+    if (watch.timer) clearTimeout(watch.timer)
+    watch.stopped = true
+    // 结果条目与终态常在同一次提交里到达，摘下前把已收到的动作推完。
+    this.pushActivity(open, taskId)
+    void watch.stream?.stop().catch(() => {})
+  }
+
+  private async stopChildren(open: OpenSession): Promise<void> {
+    const watches = [...open.children.values()]
+    open.children.clear()
+    for (const watch of watches) { if (watch.timer) clearTimeout(watch.timer); watch.stopped = true }
+    await Promise.allSettled(watches.map(watch => watch.stream?.stop()))
+  }
+
+  private pushActivity(open: OpenSession, taskId: string): void {
+    const log = open.activity.get(taskId)
+    if (!log?.pending) return
+    const actions = log.take()
+    this.emit(open.id, 'task.activity', { taskId, actions, toolUses: log.toolUses, tokens: log.tokens })
+    this.deps.ledger.count(open.id, taskId, { toolUses: log.toolUses, tokens: log.tokens })
+  }
+
   /** 回合落定：刷新索引，并对用户回合触发回合后抽取（汇报回合跳过，architecture §4.4）。 */
   private settled(open: OpenSession, turn: SettledTurn): void {
     this.touch(open.id)
     void this.refresh(open)
     if (turn.kind !== 'user') return
+    this.deps.afterUserTurn?.(open)
     const memory = this.deps.memory()
     if (!memory) return
     // 在事件批的处理里不能等它：抽取只是后台增强，失败不影响对话。
@@ -522,6 +606,7 @@ export class SessionHost {
     }
     const wasCurrent = index.currentId === id
     index.remove(id)
+    this.deps.ledger.remove(id)
     if (wasCurrent) index.setCurrent(index.latest()?.id ?? '')
     if (trashed) rmSync(trashed, { recursive: true, force: true })
   }

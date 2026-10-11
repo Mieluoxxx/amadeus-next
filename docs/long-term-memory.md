@@ -453,7 +453,12 @@ Write in the user's language. Be concise.
 1. **只追加**：在两次重新冻结（或压缩）之间，第 N+1 次请求的前 K 条消息与第 N 次逐字节相同。测试用 `hook(GenerationTask, { beforeRequest })` 记录每次请求的 `messages`（返回 `undefined` 即不改写）。
 2. **确定性**：渲染只依赖已存文本和 `today`；排序固定；已写入的条目永不重新渲染。`plan()` 与 `render()` 是纯函数，表驱动测试覆盖 §4.3 的七行。
 3. **不出现在用户可见的记录里**：记忆条目存在 durable 存储中，界面对话记录按 kind 过滤 `amadeus.*` 条目；事件桥不把它们当作 `turn.text`。
-4. **输出清洗**：worker 事件桥里有一个有状态清洗器（`src/main/durable/scrub.ts`），跨 delta 拦截 `amadeus_*` 标签，防止进入字幕与 TTS。**它放在"按 contentIndex 记已转发长度做差量"之后、发 `turn.text` 之前**，于是所有文本路径（`message_start.message`、`text_start.block`、`text_delta`、`block` / `message` 整块补发，见评估 §2.5、`architecture.md` §4.4）都经过它；`turn.done.text` 的全文用同一套规则无状态地清洗一遍。规则：遇到 `<` 先缓冲，最多向前看 16 个字符；确认是 `<amadeus_` 或 `</amadeus_` 开头则丢弃该标签；开标签之后的内容丢弃到对应的闭标签，最多 4096 字符，超出则放行后续输出；不是该前缀则原样放行。
+4. **输出清洗**：worker 事件桥里有一个有状态清洗器（`src/main/durable/scrub.ts`），跨 delta 拦截 `amadeus_*` 标签和写成文本的工具调用（`TOOL_TEXT_TAGS`，工具约束 §2.3），防止进入字幕与 TTS；重新加载历史时 `history.ts` 也让 assistant 文本先过它。**它放在"按 contentIndex 记已转发长度做差量"之后、发 `turn.text` 之前**，于是所有文本路径（`message_start.message`、`text_start.block`、`text_delta`、`block` / `message` 整块补发，见评估 §2.5、`architecture.md` §4.4）都经过它；`turn.done.text` 的全文用同一套规则无状态地清洗一遍。规则：
+   - 分片末尾疑似标签前缀的部分（`<`、`</`、`<amad…`、`<hand…`）先扣住，等下一个分片或消息结束再判断；
+   - 确认是 `<amadeus_*`，或是工具名后面紧跟空白、`/` 或 `>`，就进入标签。标签名匹配不分大小写，只折叠 ASCII；`<handoffs>`、`<handoff2>` 这类不算；
+   - 标签头超过 512 字符还没遇到 `>`，就当作普通文本放行；
+   - 开标签之后的内容一直丢弃到对应的闭标签；游离的闭标签和自闭合标签只丢标签本身；
+   - 消息结束时还没闭合的围栏，丢弃到结尾，不让内部内容漏出去。
 5. **可重启**：注入记录与基线都在 durable 存储中，worker 重启后无需重放。
 6. **只在空闲时写**：记忆条目只在没有进行中回合时追加，不会落在某次工具回合中间。
 7. **基线与条目一致**：条目与基线文档在同一次 commit 中写入，不存在"有条目没基线"或反过来的状态。

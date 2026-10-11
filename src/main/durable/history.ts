@@ -4,6 +4,8 @@ import type { Conversation, Cursor, EntryRecord } from '@earendil-works/pi-durab
 import { PresentationText } from '../../shared/presentation.ts'
 import { CARD_MAX_CHARS, roundOf, type DeliveredReport, type HandoffItem } from './handoff/index.ts'
 import { isMemoryEntry, isMemoryMessage } from './memory/index.ts'
+import { TagScrubber } from './scrub.ts'
+import { isToolTextNotice } from './toolText.ts'
 
 /**
  * 任务卡片。round 从 1 开始；progress 只在任务进行中出现；question 只在 needs_input 时出现（summary 此时也是这个问题）。
@@ -91,15 +93,21 @@ const reportEntries = (delivered: Readonly<Record<string, DeliveredReport>>): Ma
   return map
 }
 
-/** 主人发言的次数（不含汇报输入）；记忆重新冻结按它触发，durable 不记轮次。 */
-export async function countUserTurns(root: Conversation, delivered: Readonly<Record<string, DeliveredReport>>): Promise<number> {
+/** 主人的发言，按时间顺序（不含汇报输入、记忆条目和宿主补的纠正）。 */
+export async function userTexts(root: Conversation, delivered: Readonly<Record<string, DeliveredReport>>): Promise<string[]> {
   const reports = reportEntries(delivered)
-  let count = 0
+  const texts: string[] = []
   for await (const entry of entriesOf(root)) {
-    if (entry.kind !== 'pi.user' || isMemoryEntry(entry) || reports.has(entry.id)) continue
-    if (!textOf(entry.model?.[0]).startsWith(REPORT_FENCE)) count += 1
+    if (entry.kind !== 'pi.user' || isMemoryEntry(entry) || reports.has(entry.id) || isToolTextNotice(entry.model?.[0])) continue
+    const text = textOf(entry.model?.[0])
+    if (!text.startsWith(REPORT_FENCE)) texts.push(text)
   }
-  return count
+  return texts
+}
+
+/** 主人发言的次数；记忆重新冻结和会话自动命名按它触发，durable 不记轮次。 */
+export async function countUserTurns(root: Conversation, delivered: Readonly<Record<string, DeliveredReport>>): Promise<number> {
+  return (await userTexts(root, delivered)).length
 }
 
 export type HistoryInput = {
@@ -118,12 +126,12 @@ export type HistoryInput = {
 export async function readHistory(root: Conversation, input: HistoryInput): Promise<HistoryMessage[]> {
   const reports = reportEntries(input.delivered)
   const messages: HistoryMessage[] = []
-  let run: { first: number; presenter: PresentationText; display: string; turnId: string | undefined } | undefined
+  let run: { first: number; scrubber: TagScrubber; presenter: PresentationText; display: string; turnId: string | undefined } | undefined
   let turnId: string | undefined
 
   const close = () => {
     if (!run) return
-    const text = (run.display + run.presenter.finish().display).trim()
+    const text = (run.display + run.presenter.push(run.scrubber.push('', true), true).display).trim()
     if (text) messages.push({ id: String(run.first), role: 'assistant', text, ...(run.turnId ? { turnId: run.turnId } : {}) })
     run = undefined
   }
@@ -132,7 +140,8 @@ export async function readHistory(root: Conversation, input: HistoryInput): Prom
     if (isMemoryEntry(entry)) continue
     const message = entry.model?.[0]
     if (entry.kind === 'pi.user') {
-      if (isMemoryMessage(message)) continue
+      // 纠正消息之后的回答和之前的属于同一次输入，接着合并进同一个气泡。
+      if (isMemoryMessage(message) || isToolTextNotice(message)) continue
       close()
       const text = textOf(message)
       const delivered = reports.get(entry.id)
@@ -150,8 +159,9 @@ export async function readHistory(root: Conversation, input: HistoryInput): Prom
       messages.push({ id: String(entry.id), role: 'user', text, ...(turnId ? { turnId } : {}) })
     } else if (entry.kind === 'pi.assistant' && message?.role === 'assistant') {
       if (message.stopReason === 'aborted' || message.stopReason === 'error') continue
-      run ??= { first: entry.id, presenter: new PresentationText(), display: '', turnId }
-      run.display += run.presenter.push(assistantText(message)).display
+      run ??= { first: entry.id, scrubber: new TagScrubber(), presenter: new PresentationText(), display: '', turnId }
+      // 和实时链路一样先经清洗器：写成文本的工具调用、复述的内部围栏都不该在重新加载后冒出来。
+      run.display += run.presenter.push(run.scrubber.push(assistantText(message))).display
     }
   }
   close()

@@ -2,13 +2,16 @@ import { existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import type { Models } from '@earendil-works/pi-ai'
-import { ConversationBusy, createRegistry, type Extension, type HarnessSettings, type Storage } from '@earendil-works/pi-durable'
+import { ConversationBusy, UsageDoc, createRegistry, type ConversationId, type Extension, type HarnessSettings, type Storage } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
-import { cardOf, readHistory } from './history.ts'
+import { ActivityLog } from './childActivity.ts'
+import { cardOf, entriesOf, readHistory } from './history.ts'
 import { CommandError, KeyedLanes, Lane } from './lanes.ts'
 import { readSelection, resolveSelection, thinkingLevels, writeSelection } from './modelSelection.ts'
 import { ProcessLock } from './processLock.ts'
 import { createRoleExtension } from './role.ts'
+import { composeTitle, generateTopic, isNamingDue, titleSourceOf, type TitleSource } from './sessionName.ts'
+import { userTexts } from './history.ts'
 import { SESSION_ID, SessionDoc, SessionIndex, summarize, type SessionEntry } from './sessionIndex.ts'
 import { SessionHost, type OpenSession } from './sessionHost.ts'
 import {
@@ -21,10 +24,12 @@ import {
   delegationModelFromEnv,
   listHandoffs,
   resolveLimits,
+  summaryOf,
   type HandoffOptions,
 } from './handoff/index.ts'
 import { createMemoryService, type MemoryService, type MemoryServiceOptions, type PrepareOptions } from './memory/index.ts'
 import { isRecallMode } from './memory/types.ts'
+import { WorkLedger } from './workLedger.ts'
 
 type Json = Record<string, unknown>
 export type Post = (message: Json) => void
@@ -50,6 +55,8 @@ export type DurableRuntimeOptions = {
   settings?: Partial<HarnessSettings>
   handoff?: HandoffOptions
   extraExtensions?: readonly Extension[]
+  /** 会话自动命名（默认开）；测试关掉它，免得命名请求吃掉 faux 的脚本响应。 */
+  autoName?: boolean
   /** 以下三项是测试接缝。 */
   openStorage?: (file: string) => Promise<Storage>
   createMemory?: typeof createMemoryService
@@ -61,7 +68,9 @@ const ctx = BACKGROUND_CONTEXT
 const ABORTED = Symbol('aborted')
 const TITLE_MAX = 200
 
-const SESSION_COMMANDS = new Set(['chat.submit', 'report.deliver', 'session.load', 'session.rename', 'session.delete', 'task.cancel', 'task.approve'])
+const SESSION_COMMANDS = new Set(['chat.submit', 'report.deliver', 'session.load', 'session.rename', 'session.delete', 'task.cancel', 'task.approve', 'task.trace'])
+/** 工作面板列表里，运行中的任务附带最近几步。 */
+const RECENT_ACTIONS = 3
 const GLOBAL_COMMANDS = new Set(['session.list', 'session.create', 'model.list', 'model.set', 'reload', 'checkpoint', 'resume'])
 
 const text = (value: unknown): string => typeof value === 'string' ? value : ''
@@ -93,6 +102,7 @@ export class DurableRuntime {
   private readonly registry = createRegistry()
   private readonly lock: ProcessLock
   private readonly index: SessionIndex
+  private readonly ledger: WorkLedger
   /** 公开给测试与基准脚本取已打开的会话；命令一律走 handle()。 */
   readonly host: SessionHost
   private readonly role: Extension
@@ -119,6 +129,7 @@ export class DurableRuntime {
     this.log = options.log ?? ((message, error) => console.error(`[amadeus-next] durable: ${message}`, error ?? ''))
     this.lock = new ProcessLock(options.sessionsDir)
     this.index = new SessionIndex(options.sessionsDir, error => this.log('session index write failed', error))
+    this.ledger = new WorkLedger(options.sessionsDir, error => this.log('work ledger write failed', error))
     this.role = createRoleExtension(options.agentDir)
     this.memoryDir = options.memoryDir ?? path.join(path.dirname(options.sessionsDir), 'memory')
     // 拒绝根由宿主显式给出，不靠守卫去读 process.env：环境变量名一旦与主进程设置的对不上，userData 就悄悄失去保护。
@@ -145,10 +156,12 @@ export class DurableRuntime {
       registry: this.registry,
       settings,
       index: this.index,
+      ledger: this.ledger,
       agentExtensions: () => [this.role, ...(this.memory ? [this.memory.mainExtension] : []), this.handoff[0]],
       openStorage: options.openStorage ?? (file => openNodeSqliteStorage(file)),
       post: message => options.post(message),
       memory: () => this.memory,
+      ...(options.autoName === false ? {} : { afterUserTurn: (open: OpenSession) => this.autoName(open) }),
       idleCloseMs: options.idleCloseMs ?? 600_000,
       maxOpen: options.maxOpen ?? 16,
       progressIntervalMs: resolveLimits(options.handoff?.limits).progressIntervalMs,
@@ -166,6 +179,7 @@ export class DurableRuntime {
     try {
       mkdirSync(this.options.sessionsDir, { recursive: true, mode: 0o700 })
       this.host.emptyTrash()
+      this.ledger.load()
       // 先起记忆服务：重建索引要打开各库，registry 里的扩展得是全的。
       this.startMemory()
       const rebuilding = this.checkIndex()
@@ -248,6 +262,8 @@ export class DurableRuntime {
     else if (command !== 'checkpoint' && command !== 'resume' && this.state !== 'running') return fail('closed', 'Pi runtime is checkpointed; resume or restart it first')
 
     if (command.startsWith('memory.')) return reply(() => this.forwardMemory(command, params))
+    // 只读、跨会话：不进全局道，免得排在 model.list（可能十几秒）后面。
+    if (command === 'task.all') return reply(() => this.allTasks())
     if (GLOBAL_COMMANDS.has(command)) return this.globalLane.run(() => reply(() => this.global(command, params)))
     if (!SESSION_COMMANDS.has(command)) return fail('invalid', `unsupported Pi worker command: ${command}`)
     if (!SESSION_ID.test(sessionId)) return fail('invalid', 'Invalid session id')
@@ -372,6 +388,7 @@ export class DurableRuntime {
     await this.memory?.close().catch(error => this.log('memory close failed', error))
     this.memory = undefined
     this.index.close()
+    this.ledger.close()
     this.lock.release()
     this.state = 'closed'
     return {}
@@ -383,8 +400,9 @@ export class DurableRuntime {
     await this.lock.acquire({ waitMs: this.options.lockWaitMs })
     try {
       this.startMemory()
-      // 替换进程可能已经改过索引，以磁盘为准。
+      // 替换进程可能已经改过索引与账本，以磁盘为准。
       await this.checkIndex()
+      this.ledger.load()
     } catch (error) {
       await this.memory?.close().catch(() => {})
       this.memory = undefined
@@ -429,6 +447,7 @@ export class DurableRuntime {
       case 'session.delete': return this.remove(sessionId)
       case 'task.cancel': return this.cancel(sessionId, params)
       case 'task.approve': return this.approve(sessionId, params)
+      case 'task.trace': return this.trace(sessionId, params)
     }
     throw new CommandError('invalid', `unsupported Pi worker command: ${command}`)
   }
@@ -568,15 +587,59 @@ export class DurableRuntime {
   private async rename(sessionId: string, params: Json): Promise<Json> {
     const title = text(params.title).trim()
     if (!title || title.length > TITLE_MAX) throw new CommandError('invalid', 'Invalid title')
+    // 界面上的重命名是 manual；宿主首条消息时补的时间戳占位是 default。
+    const source: TitleSource = params.source === 'default' ? 'default' : 'manual'
     const entry = this.index.get(sessionId)
     if (!entry) throw new CommandError('not_found', 'Session not found')
     // app.session 是索引丢失时重建标题的依据；未建库的会话只改索引。
     if (!entry.empty) {
       const open = await this.host.open(sessionId)
-      await open.root.commit(async tx => { (await tx.doc(SessionDoc)).title = title }, ctx)
+      const applied = await open.root.commit(async tx => {
+        const doc = await tx.doc(SessionDoc)
+        // 占位标题可能晚于自动命名才到（首个回合很快时），不能把模型起好的名字盖回去。
+        if (source === 'default' && titleSourceOf(doc) !== 'default') return false
+        doc.title = title
+        doc.titleSource = source
+        return true
+      }, ctx)
+      if (!applied) return {}
     }
     this.host.patch(sessionId, { title }, true)
     return {}
+  }
+
+  private readonly naming = new Set<string>()
+
+  /**
+   * 主人发言达到首次 / 刷新的次数时，用会话模型起个话题，标题写成 `MMDD｜话题`。
+   * 主人手动改过的标题不碰；起名期间主人又改了名，提交时再看一次，以主人为准。只是锦上添花，失败只记日志。
+   */
+  private autoName(open: OpenSession): void {
+    // open.turns 是同一口径的计数，先用它挡掉不到点的回合，免得每轮都把整段历史扫一遍。
+    if (this.naming.has(open.id) || !isNamingDue(open.turns)) return
+    this.naming.add(open.id)
+    void (async () => {
+      const doc = await open.harness.snapshot(SessionDoc, ctx)
+      if (doc && titleSourceOf(doc) === 'manual') return
+      const outbox = await open.harness.snapshot(OutboxDoc, open.root.id, ctx)
+      const texts = await userTexts(open.root, outbox?.delivered ?? {})
+      if (!isNamingDue(texts.length)) return
+      const agent = await open.root.agent(ctx)
+      const model = agent.model ? this.options.models.getModel(agent.model.provider, agent.model.modelId) : undefined
+      if (!model) return
+      const topic = await generateTopic(this.options.models, model, texts)
+      const entry = this.index.get(open.id)
+      if (!entry || entry.empty) return
+      const title = composeTitle(doc?.createdAt || entry.createdAt, topic)
+      const applied = await open.root.commit(async tx => {
+        const current = await tx.doc(SessionDoc)
+        if (titleSourceOf(current) === 'manual') return false
+        current.title = title
+        current.titleSource = 'auto'
+        return true
+      }, ctx)
+      if (applied) this.host.patch(open.id, { title }, true)
+    })().catch(error => this.log(`auto-name of ${open.id} failed`, error)).finally(() => this.naming.delete(open.id))
   }
 
   private async remove(sessionId: string): Promise<Json> {
@@ -592,6 +655,54 @@ export class DurableRuntime {
     if (!taskId) throw new CommandError('invalid', 'taskId is required')
     const open = await this.existing(sessionId)
     return { ...(await cancelHandoff(open.harness, open.root, taskId, ctx)) }
+  }
+
+  /**
+   * 工作面板的列表：已打开的会话读库里的最新状态（附带子代理最近几步），其余读账本，不为了列表去打开会话库。
+   * 运行中的委托所在的会话一定是打开的（SessionHost.keepOpen），所以账本里只会是已经停下的任务。
+   */
+  private async allTasks(): Promise<Json> {
+    await this.indexing
+    const sessions: Json[] = []
+    for (const entry of this.index.summaries()) {
+      const open = this.host.peek(entry.id)
+      const recorded = new Map(this.ledger.get(entry.id).map(record => [record.taskId, record]))
+      let tasks: Json[] = [...recorded.values()]
+      if (open) {
+        try {
+          const handoffs = await open.harness.snapshot(HandoffsDoc, open.root.id, ctx)
+          tasks = (handoffs?.items ?? []).map(item => {
+            const log = open.activity.get(item.taskId)
+            const known = recorded.get(item.taskId)
+            return {
+              ...summaryOf(item),
+              toolUses: log?.toolUses ?? known?.toolUses ?? 0,
+              tokens: log?.tokens ?? known?.tokens ?? 0,
+              ...(log ? { recent: log.recent(RECENT_ACTIONS) } : {}),
+            }
+          })
+        } catch (error) { this.log(`task list of ${entry.id} fell back to the ledger`, error) }
+      }
+      if (tasks.length) sessions.push({ sessionId: entry.id, title: entry.title, tasks })
+    }
+    return { sessions }
+  }
+
+  /** 一个委托子对话的完整动作历史；打开会话库读取（与 session.load 一样）。顺带校正账本里的计数。 */
+  private async trace(sessionId: string, params: Json): Promise<Json> {
+    const taskId = text(params.taskId)
+    if (!taskId) throw new CommandError('invalid', 'taskId is required')
+    const open = await this.existing(sessionId)
+    const handoffs = await open.harness.snapshot(HandoffsDoc, open.root.id, ctx)
+    const item = handoffs?.items.find(each => each.taskId === taskId)
+    if (!item) throw new CommandError('not_found', 'Task not found')
+    const childId = item.child as ConversationId
+    const child = await open.harness.conversation(childId, ctx)
+    const log = new ActivityLog(Number.POSITIVE_INFINITY)
+    if (child) for await (const entry of entriesOf(child)) log.entry(entry)
+    log.usage(await open.harness.snapshot(UsageDoc, childId, ctx).catch(() => undefined) ?? undefined)
+    this.ledger.count(sessionId, taskId, { toolUses: log.toolUses, tokens: log.tokens })
+    return { task: { ...summaryOf(item), toolUses: log.toolUses, tokens: log.tokens }, actions: log.actions() }
   }
 
   private async approve(sessionId: string, params: Json): Promise<Json> {

@@ -1,11 +1,12 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { defineDoc } from '@earendil-works/pi-durable'
+import type { TitleSource } from './sessionName.ts'
 
 export const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/
 
 /** 会话库里的 `app.session`：索引丢失时，靠它从各库重建（architecture §2.1）。 */
-export const SessionDoc = defineDoc<{ title: string; createdAt: number }>({
+export const SessionDoc = defineDoc<{ title: string; createdAt: number; titleSource?: TitleSource }>({
   kind: 'app.session',
   version: 1,
   scope: 'session',

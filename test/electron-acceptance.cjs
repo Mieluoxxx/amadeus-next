@@ -21,10 +21,6 @@ delete process.env.FISH_API_KEY
 const deadline = setTimeout(() => { console.error('Electron acceptance timed out'); app.exit(1) }, 120000)
 const requests = []
 let releaseHeld
-// 旧版 SessionStore 的历史：只读，应在会话列表里单独出现。
-writeFileSync(path.join(app.getPath('userData'), 'amadeus-next-sessions.json'), JSON.stringify({ currentId: '', sessions: [
-  { id: 'legacy-1', title: '旧对话', messages: [{ role: 'user', text: 'old question', turn_id: 'a' }, { role: 'assistant', text: 'old answer', turn_id: 'a' }] },
-] }))
 // 记忆抽取等后台任务也会请求模型；验收只数主对话的请求（带 handoff 工具的那些）。
 const mainRequests = () => requests.filter(value => value.tools?.some(tool => tool.function?.name === 'handoff'))
 const modelServer = createServer(async (request, response) => {
@@ -39,6 +35,11 @@ const modelServer = createServer(async (request, response) => {
   response.writeHead(200, { 'Content-Type': 'text/event-stream' })
   const frame = (delta, finish_reason = null) => `data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', model: value.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`
   const isSubagent = value.tools?.some(tool => tool.function?.name === 'web_search')
+  // 子代理先查一次再给结论，工作面板才有真实的工具步骤可看。
+  if (isSubagent && !value.messages.some(message => message.role === 'tool')) {
+    const call = { index: 0, id: 'call_search', type: 'function', function: { name: 'web_search', arguments: JSON.stringify({ query: 'fixture findings' }) } }
+    return response.end(frame({ role: 'assistant', content: '' }) + frame({ tool_calls: [call] }) + frame({}, 'tool_calls') + 'data: [DONE]\n\n')
+  }
   if (isSubagent) return response.end(frame({ role: 'assistant', content: 'subagent-findings' }) + frame({}, 'stop') + 'data: [DONE]\n\n')
   if (userText.includes('delegate-research') && !value.messages.some(message => message.role === 'tool')) {
     const call = { index: 0, id: 'call_handoff', type: 'function', function: { name: 'handoff', arguments: JSON.stringify({ kind: 'research', title: '查资料', brief: 'Find the fixture findings and report them back plainly.' }) } }
@@ -181,17 +182,17 @@ app.on('browser-window-created', (_event, window) => {
       console.log('PASS: full-body white-coat B hides unused sleeves while preserving the head/body')
       const ui = script => window.webContents.executeJavaScript(script)
       await ui('document.querySelector(\'[data-testid="scene-open-more"]\').click()')
-      await wait(() => ui('document.querySelectorAll(".settings-main section[data-section]").length === 5'), 'Settings did not open')
+      await wait(() => ui('document.querySelectorAll(".settings-main section[data-section]").length === 4'), 'Settings did not open')
       assert.equal(await ui('!!document.querySelector(\'[data-testid="runtime-reload"]\')'), false, 'Runtime maintenance must not be exposed in settings')
       assert.doesNotMatch(await ui('document.querySelector(".settings-page-shell").textContent'), /运行时热重载|重新加载资源|恢复 Pi 进程|恢复语音助手/)
-      await wait(() => ui('!!document.querySelector("[data-section=tts] .settings-field-row input[type=password]")'), 'Fish settings missing')
+      await wait(() => ui('!!document.querySelector("[data-subsection=tts] .settings-field-row input[type=password]")'), 'Fish settings missing')
       await ui(`(() => {
-        const input = document.querySelector('[data-section=tts] .settings-field-row input[type=password]')
+        const input = document.querySelector('[data-subsection=tts] .settings-field-row input[type=password]')
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'acceptance-fixture-key')
         input.dispatchEvent(new Event('input', { bubbles: true }))
       })()`)
-      await wait(() => ui('!!document.querySelector("[data-section=tts] .settings-field-row button:not(:disabled)")'), 'Save action missing')
-      await ui('document.querySelector("[data-section=tts] .settings-field-row button:not(:disabled)").click()')
+      await wait(() => ui('!!document.querySelector("[data-subsection=tts] .settings-field-row button:not(:disabled)")'), 'Save action missing')
+      await ui('document.querySelector("[data-subsection=tts] .settings-field-row button:not(:disabled)").click()')
       await wait(() => ui(`window.amadeusNext.request('system.get_config').then(result =>
         result.values.voice_configuration.find(group => group.id === 'speech_synthesis').configured)`), 'Fish key was not applied live')
       // The old UI schedules a backend restart one second after every save.
@@ -200,17 +201,17 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(await ui('document.querySelector(".settings-main .settings-feedback")?.textContent || ""'), '')
       assert.equal(await ui('window.amadeusNext.request("system.get_config").then(result => "FISH_API_KEY" in result.values)'), false, 'Public config must not expose the API key')
       for (const model of ['s1', 's2.1-pro-free']) {
-        assert.ok(await ui(`Array.from(document.querySelector('[data-section=tts] select').options).some(option => option.value === ${JSON.stringify(model)})`), `Fish model option missing: ${model}`)
-        await ui(`document.querySelector('[data-section=tts] select').value = ${JSON.stringify(model)}; document.querySelector('[data-section=tts] select').dispatchEvent(new Event('change', { bubbles: true }))`)
+        assert.ok(await ui(`Array.from(document.querySelector('[data-subsection=tts] select').options).some(option => option.value === ${JSON.stringify(model)})`), `Fish model option missing: ${model}`)
+        await ui(`document.querySelector('[data-subsection=tts] select').value = ${JSON.stringify(model)}; document.querySelector('[data-subsection=tts] select').dispatchEvent(new Event('change', { bubbles: true }))`)
         await wait(() => ui(`window.amadeusNext.request('system.get_config').then(result => result.values.FISH_API_MODEL === ${JSON.stringify(model)})`), 'Fish model was not applied live')
       }
-      await wait(() => ui('!!document.querySelector("[data-section=asr] .settings-field-row select")'), 'Recognition language missing')
-      await ui('const el = document.querySelector("[data-section=asr] .settings-field-row select"); el.value = "en-US"; el.dispatchEvent(new Event("change", { bubbles: true }))')
+      await wait(() => ui('!!document.querySelector("[data-subsection=asr] .settings-field-row select")'), 'Recognition language missing')
+      await ui('const el = document.querySelector("[data-subsection=asr] .settings-field-row select"); el.value = "en-US"; el.dispatchEvent(new Event("change", { bubbles: true }))')
       await wait(() => ui(`window.amadeusNext.request('system.get_config').then(result =>
         result.values.voice_configuration.find(group => group.id === 'asr_local').fields[0].value === 'en-US')`), 'Recognition language snapshot did not update')
-      await wait(() => ui('!!document.querySelector("[data-section=tts] .settings-field-row input[type=password]")'), 'Fish settings did not reopen')
-      assert.equal(await ui('document.querySelector("[data-section=tts] select").value'), 's2.1-pro-free', 'The free model selection must survive reopening settings')
-      await ui('document.querySelector("[data-section=tts] .settings-field-row button").click()')
+      await wait(() => ui('!!document.querySelector("[data-subsection=tts] .settings-field-row input[type=password]")'), 'Fish settings did not reopen')
+      assert.equal(await ui('document.querySelector("[data-subsection=tts] select").value'), 's2.1-pro-free', 'The free model selection must survive reopening settings')
+      await ui('document.querySelector("[data-subsection=tts] .settings-field-row button").click()')
       await wait(() => ui(`window.amadeusNext.request('system.get_config').then(result =>
         !result.values.voice_configuration.find(group => group.id === 'speech_synthesis').configured)`), 'Clearing the key was not applied live')
       await ui('document.querySelector(\'[data-testid="scene-open-more"]\').click()')
@@ -227,17 +228,10 @@ app.on('browser-window-created', (_event, window) => {
         return (await ui(`window.amadeusNext.request("session.load", {session_id:${JSON.stringify(current)}})`)).messages
       }
       assert.equal(await chat('remember this', 'persist-first'), 'saved-marker')
-      const listed = await ui('window.amadeusNext.request("session.list")')
-      const legacy = listed.sessions.find(item => item.id === 'legacy-1')
-      assert.equal(legacy?.readonly, true, 'pre-migration history is listed as read-only')
-      const durableSession = listed.current_session_id
-      assert.notEqual(durableSession, 'legacy-1')
-      const old = await ui('window.amadeusNext.request("session.load", {session_id:"legacy-1"})')
-      assert.deepEqual(old.messages.map(message => message.text), ['old question', 'old answer'])
-      assert.deepEqual(await ui('window.amadeusNext.request("chat.send", {text:"continue the old chat"})'), { ok: false, error: 'legacy session is read-only' })
+      const durableSession = (await ui('window.amadeusNext.request("session.list")')).current_session_id
       assert.equal((await ui(`window.amadeusNext.request("session.load", {session_id:${JSON.stringify(durableSession)}})`)).ok, true)
       assert.deepEqual((await history()).map(message => [message.role, message.text]), [['user', 'remember this'], ['assistant', 'saved-marker']], 'the first turn is read back from the durable store')
-      console.log('PASS: legacy sessions stay readable and read-only; new turns persist in durable and read back as subtitles text')
+      console.log('PASS: new turns persist in durable and read back as subtitles text')
       const models = await ui('window.amadeusNext.request("pi.models")')
       assert.equal(models.current, 'fixture/fixture-model')
       assert.equal((await ui('window.amadeusNext.request("pi.model.set", {model:"fixture/fixture-alternate"})')).current, 'fixture/fixture-alternate')
@@ -275,10 +269,10 @@ app.on('browser-window-created', (_event, window) => {
       await wait(() => ui('document.querySelector(\'[data-testid="scene-provider"]\')?.textContent === "fixture-alternate"'), 'A model changed elsewhere must update the composer')
       await ui('window.amadeusNext.request("pi.model.set", {model:"fixture/fixture-alternate",thinkingLevel:"high"})')
       await ui('document.querySelector(\'[data-testid="scene-open-more"]\').click()')
-      await wait(() => ui('document.querySelectorAll(".settings-main section[data-section]").length === 5'), 'Settings did not reopen')
-      await wait(() => ui('document.querySelectorAll("[data-section=models] select").length === 2'), 'Model and thinking controls must remain available')
+      await wait(() => ui('document.querySelectorAll(".settings-main section[data-section]").length === 4'), 'Settings did not reopen')
+      await wait(() => ui('document.querySelectorAll("[data-section=models] select").length === 4'), 'Model, thinking and subagent controls must remain available')
       assert.doesNotMatch(await ui('document.querySelector("[data-section=models]").textContent'), /当前模型连接|其他模型连接|高级模型角色|当前没有选中的活动连接|没有用户管理的连接设置/)
-      assert.deepEqual(await ui('Array.from(document.querySelectorAll("[data-section=models] select"), select => select.value)'), ['fixture/fixture-alternate', 'high'])
+      assert.deepEqual(await ui('Array.from(document.querySelectorAll("[data-section=models] select"), select => select.value)'), ['fixture/fixture-alternate', 'high', '', 'true'])
       await ui('document.querySelector(\'[data-testid="scene-open-more"]\').click()')
       const workerPids = () => app.getAppMetrics().filter(metric => metric.name === 'Amadeus Pi Runtime').map(metric => metric.pid)
       const before = workerPids()
@@ -340,6 +334,18 @@ app.on('browser-window-created', (_event, window) => {
       for (const tokens of await events('chat.token')) assert.doesNotMatch(tokens.token, /amadeus_/, 'internal tags never reach the subtitles')
       assert.equal(mainRequests().length, 6, 'one request for the delegating turn and one for the report; nothing is replayed')
       console.log('PASS: delegation runs in the background and the report is spoken as its own turn, shown as a card')
+      // 工作面板：列出这次委托，点进去能看到子代理的每一步。
+      await ui('document.querySelector(\'[data-testid="scene-open-work"]\').click()')
+      const row = `[data-testid="work-row"][data-task-id="${task.taskId}"]`
+      await wait(() => ui(`document.querySelector('${row}')?.dataset.status === 'done'`), 'The work panel does not list the finished delegation')
+      assert.match(await ui(`document.querySelector('${row}').textContent`), /查资料.*1 次工具调用/s)
+      await ui(`document.querySelector('${row}').click()`)
+      await wait(() => ui('[...document.querySelectorAll(\'[data-testid="work-event"][data-type="tool"]\')].some(item => /web_search.*fixture findings/.test(item.textContent))'), 'The trace does not show the subagent\'s search')
+      assert.match(await ui('document.querySelector(\'[data-testid="work-timeline"]\').textContent'), /subagent-findings/)
+      await ui('document.querySelector(\'[data-testid="work-back"]\').click()')
+      await wait(() => ui('!!document.querySelector(\'[data-testid="work-list"]\')'), 'Back did not return to the list')
+      await ui('document.querySelector(\'[data-testid="scene-open-work"]\').click()')
+      console.log('PASS: the work panel lists the delegation and replays every subagent step')
       // worker 被强杀：主动退避重拉，对话和已投递的汇报都还在，也不会重放请求。
       const victim = workerPids()[0]
       process.kill(victim, 'SIGKILL')

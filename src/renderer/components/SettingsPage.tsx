@@ -20,8 +20,10 @@ const WEB_SEARCH_GROUP_IDS = ['web_search']
 const WEB_SEARCH_LABELS: Record<string, string> = { brave: 'Brave Search', tavily: 'Tavily' }
 
 const DELEGATION_MODEL_KEY = 'delegation_model'
+// 子代理相关的字段在界面上归到模型配置页，按此顺序展示。
+const SUBAGENT_KEYS = [DELEGATION_MODEL_KEY, 'report_proactive']
 
-const SECTIONS = ['general', 'models', 'asr', 'tts', 'memory'] as const
+const SECTIONS = ['general', 'models', 'voice', 'memory'] as const
 type SectionId = typeof SECTIONS[number]
 // 面板每次打开都会重新挂载；记住上次的标签，避免主人每次都被送回“通用”。
 let lastSection: SectionId = 'general'
@@ -334,14 +336,16 @@ export default function SettingsPage({ send, subscribe }: Props) {
     if (current && !piModels.some(option => (typeof option === 'string' ? option : option.value) === current)) options.push({ value: current, label: current })
     return options
   }
+  // 主进程把子代理设置放在通用分组里下发；界面上归到模型配置页的子代理卡片。
+  const generalFields = generalConfiguration.flatMap(group => group.fields)
+  const subagentFields = SUBAGENT_KEYS.flatMap(key => {
+    const field = generalFields.find(item => item.key === key)
+    if (!field) return []
+    return key === DELEGATION_MODEL_KEY ? [{ ...field, type: 'select' as const, options: delegationOptions(String(field.value ?? '')) }] : [field]
+  })
   const generalGroups = generalConfiguration
     .filter(group => group.id !== 'memory' && !WEB_SEARCH_GROUP_IDS.includes(group.id))
-    .map(group => ({
-      ...group,
-      fields: group.fields.map(field => field.key === DELEGATION_MODEL_KEY
-        ? { ...field, type: 'select' as const, options: delegationOptions(String(field.value ?? '')) }
-        : field),
-    }))
+    .map(group => ({ ...group, fields: group.fields.filter(field => !SUBAGENT_KEYS.includes(field.key)) }))
   const webSearchLabel = (value: string) => value === '' ? t('settings.web_search.none') : WEB_SEARCH_LABELS[value] ?? value
   const webSearchView: ConfigurationGroup | undefined = webSearchGroup && {
     ...webSearchGroup,
@@ -391,9 +395,9 @@ export default function SettingsPage({ send, subscribe }: Props) {
   const needsSetup: Record<SectionId, boolean> = {
     general: generalGroups.some(group => !groupOk(group)),
     models: false,
-    asr: [...activeAsrGroups, ...captureGroups, ...wakeGroups].some(group => !groupOk(group)),
-    tts: activeOutputGroups.some(group => !groupOk(group)),
-    memory: memoryGroups.some(group => !groupOk(group)),
+    voice: [...activeAsrGroups, ...captureGroups, ...wakeGroups, ...activeOutputGroups].some(group => !groupOk(group)),
+    // Jev 缺省时记忆判定静默跳过，属于可选增强，不在标签上提示需要设置。
+    memory: false,
   }
 
   const select = (id: SectionId) => { lastSection = id; setActiveSection(id) }
@@ -456,6 +460,7 @@ export default function SettingsPage({ send, subscribe }: Props) {
         ))}
 
         {section('models', (
+          <>
           <Card>
             <Row label={t('settings.label.current_model')}>
               {piModels.length
@@ -468,10 +473,19 @@ export default function SettingsPage({ send, subscribe }: Props) {
               </Row>
             ) : null}
           </Card>
+          {subagentFields.length ? (
+            <Card title={t('settings.subagent.title')}>
+              <p className="settings-card-note">{t('settings.subagent.note')}</p>
+              {subagentFields.map(field => <StartupFieldRow key={field.key} field={field} desktop={desktop} onSave={handleStartupSave} />)}
+            </Card>
+          ) : null}
+          </>
         ))}
 
-        {section('asr', (
+        {section('voice', (
           <>
+          <div className="settings-subsection" data-subsection="asr">
+            <h3 className="settings-subheading">{t('settings.section.asr')}</h3>
             {/* A one-entry backend list is not a choice; the active recognizer's card already names it. */}
             {asrBackendOptions.length > 1 ? (
               <Card>
@@ -481,11 +495,9 @@ export default function SettingsPage({ send, subscribe }: Props) {
               </Card>
             ) : null}
             <GroupCards groups={[...activeAsrGroups, ...captureGroups, ...wakeGroups]} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-          </>
-        ))}
-
-        {section('tts', (
-          <>
+          </div>
+          <div className="settings-subsection" data-subsection="tts">
+            <h3 className="settings-subheading">{t('settings.section.tts')}</h3>
             <GroupCards groups={activeOutputGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_active_connection')} />
             {otherOutputGroups.length ? (
               <details className="settings-advanced settings-card">
@@ -493,13 +505,22 @@ export default function SettingsPage({ send, subscribe }: Props) {
                 <GroupCards groups={otherOutputGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
               </details>
             ) : null}
+          </div>
           </>
         ))}
 
         {section('memory', (
           <>
-            <MemorySettings send={send} subscribe={subscribe} />
-            <GroupCards groups={memoryGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
+            <MemorySettings
+              send={send}
+              subscribe={subscribe}
+              optional={memoryGroups.length ? (
+                <details className="settings-advanced settings-card">
+                  <summary>{t('memory.optional')}</summary>
+                  <GroupCards groups={memoryGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
+                </details>
+              ) : null}
+            />
           </>
         ))}
 

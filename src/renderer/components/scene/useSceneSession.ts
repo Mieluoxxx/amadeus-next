@@ -27,8 +27,6 @@ type SubscribeFn = (method: string, fn: (params: Record<string, unknown>) => voi
 export type SceneSession = {
   id: string
   title: string
-  /** 旧会话分组：只能看，不能续。 */
-  readonly: boolean
   pendingReports: number
   pendingApprovals: number
 }
@@ -109,7 +107,6 @@ function normalizeSessions(items: unknown): SceneSession[] {
       return {
         id: String(value.id || ''),
         title: String(value.title || ''),
-        readonly: value.readonly === true,
         pendingReports: counter(value.pendingReports ?? value.pending_reports),
         pendingApprovals: counter(value.pendingApprovals ?? value.pending_approvals),
       }
@@ -219,9 +216,6 @@ export function useSceneSession({
       : undefined
     const nextId = String(payload.current_session_id || session?.id || '')
     const switched = Boolean(nextId) && activeSessionRef.current !== nextId
-    if (nextId && session?.readonly === true) {
-      setSessions(previous => previous.map(item => item.id === nextId ? { ...item, readonly: true } : item))
-    }
     if (nextId) applyLoadedTasks(nextId, payload.tasks)
     if (nextId) {
       activeSessionRef.current = nextId
@@ -628,8 +622,6 @@ export function useSceneSession({
   }, [subscribe, upsertAssistantMessage, upsertCardMessage, applySessionPayload, updateDraft, setActiveTurn])
 
   const sendText = useCallback(async (rawText: string, attachment: VisualAttachment | null = null) => {
-    // 旧会话是只读的，输入框已禁用；这里兜住快捷键等绕过输入框的入口。
-    if (readonlyRef.current) return false
     const typed = rawText.trim()
     // 允许仅发送图片附件，自动填充占位文本以触发视觉理解流程。
     const text = typed || (attachment ? ATTACHMENT_ONLY_TEXT : '')
@@ -807,9 +799,6 @@ export function useSceneSession({
     () => sessions.find(session => session.id === sessionId) || null,
     [sessions, sessionId],
   )
-  const readonly = activeSession?.readonly === true
-  const readonlyRef = useRef(false)
-  useEffect(() => { readonlyRef.current = readonly }, [readonly])
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -830,12 +819,10 @@ export function useSceneSession({
         const index = previous.findIndex(item => item.id === entry.id)
         if (index >= 0) {
           const next = [...previous]
-          next[index] = { ...entry, readonly: previous[index].readonly || entry.readonly, title: entry.title || previous[index].title }
+          next[index] = { ...entry, title: entry.title || previous[index].title }
           return next
         }
-        // 新会话排在可续写的会话之后、旧会话分组之前。
-        const firstLegacy = previous.findIndex(item => item.readonly)
-        return firstLegacy < 0 ? [...previous, entry] : [...previous.slice(0, firstLegacy), entry, ...previous.slice(firstLegacy)]
+        return [...previous, entry]
       })
     })
   }, [connected, subscribe])
@@ -908,8 +895,8 @@ export function useSceneSession({
     // 主进程删掉当前会话时会自己换会话并先发 session.changed，回执到达时界面通常已经切走了；还停在原处才需要自己换。
     if (activeSessionRef.current === id) {
       const pool = remaining ?? sessionsRef.current.filter(item => item.id !== id)
-      // 优先主进程建议的会话，其次最近的可续写会话，最后才落到只读的旧会话。
-      const next = pool.find(item => item.id === suggested) ?? pool.find(item => !item.readonly) ?? pool[0]
+      // 优先主进程建议的会话，其次列表里最近的一个。
+      const next = pool.find(item => item.id === suggested) ?? pool[0]
       if (next) await loadSession(next.id)
       else await createSession()
     }
@@ -936,7 +923,6 @@ export function useSceneSession({
     sendText,
     reportProblem,
     toggleMic,
-    readonly,
     replying,
     stopping,
     abortReply,

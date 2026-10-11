@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import {
+  Activity,
   AlertTriangle,
   ArrowRight,
   Loader2,
@@ -40,6 +41,8 @@ import type { SceneTask, TaskApproval } from './taskTypes'
 import SceneDock from './SceneDock'
 import SessionPicker from './SessionPicker'
 import { TaskCard, TaskTray } from './TaskCard'
+import WorkPanel from './WorkPanel'
+import { useWorkPanel } from './useWorkPanel'
 
 type SendFn = (method: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
 type SubscribeFn = (method: string, fn: (params: Record<string, unknown>) => void) => () => void
@@ -61,6 +64,8 @@ export default function ScenePage({
   const session = useSceneSession({ send, subscribe, connected })
   const bridge = useSceneBridge({ send, subscribe, connected })
   const [panel, setPanel] = useState<ScenePanelKind | null>(null)
+  const work = useWorkPanel({ send, subscribe, connected, active: panel === 'work' })
+  const workAsking = work.tasks.some(task => task.status === 'needs_input')
   const [acknowledgedNotices, setAcknowledgedNotices] = useState<string[]>([])
   const [pendingAttachment, setPendingAttachment] = useState<VisualAttachment | null>(null)
   const [viewport, setViewport] = useState(() => ({
@@ -137,7 +142,6 @@ export default function ScenePage({
       replying={session.replying}
       stopping={session.stopping}
       onStop={() => { void session.abortReply() }}
-      readonly={session.readonly}
       sessionTitle={session.activeSession?.title || ''}
       model={session.model}
       models={session.models}
@@ -238,6 +242,14 @@ export default function ScenePage({
           onClick={() => togglePanel('transcript')}
         />
         <SceneToolbarButton
+          active={panel === 'work'}
+          icon={<Activity className="w-3.5 h-3.5" />}
+          label={t('scene.work')}
+          testId="scene-open-work"
+          attention={workAsking && panel !== 'work'}
+          onClick={() => togglePanel('work')}
+        />
+        <SceneToolbarButton
           active={panel === 'more'}
           icon={<SlidersHorizontal className="w-3.5 h-3.5" />}
           label={t('scene.settings')}
@@ -290,6 +302,8 @@ export default function ScenePage({
           panelRef={transition.panelRef}
           exiting={!layout.panel}
           session={session}
+          work={work}
+          onJump={id => { setPanel('transcript'); void session.loadSession(id) }}
           send={send}
           subscribe={subscribe}
         />
@@ -372,6 +386,8 @@ function ScenePanelFrame({
   panelRef,
   exiting,
   session,
+  work,
+  onJump,
   send,
   subscribe,
 }: {
@@ -379,11 +395,15 @@ function ScenePanelFrame({
   panelRef: RefObject<HTMLDivElement | null>
   exiting: boolean
   session: ReturnType<typeof useSceneSession>
+  work: ReturnType<typeof useWorkPanel>
+  onJump: (sessionId: string) => void
   send: SendFn
   subscribe: SubscribeFn
 }) {
   const { t } = useI18n()
   const kind = panel.kind
+  const title = t(kind === 'transcript' ? 'scene.transcript' : kind === 'work' ? 'scene.work' : 'scene.settings')
+  const bodyClass = kind === 'transcript' ? 'scene-transcript-scroll' : kind === 'work' ? 'scene-work-body' : 'scene-settings-body'
   return (
     <div
       ref={panelRef}
@@ -391,18 +411,16 @@ function ScenePanelFrame({
       aria-hidden={exiting}
       className={cn(
         'scene-crt-panel absolute z-20 flex flex-col overflow-hidden',
-        kind === 'transcript' ? 'scene-transcript-panel' : 'scene-settings-panel',
+        kind === 'transcript' ? 'scene-transcript-panel' : kind === 'work' ? 'scene-work-panel' : 'scene-settings-panel',
       )}
       data-testid="scene-panel"
       role="region"
-      aria-label={kind === 'transcript' ? t('scene.transcript') : t('scene.settings')}
+      aria-label={title}
       data-placement={panel.placement}
       style={overlayStyle(panel.region)}
     >
       <div className={kind === 'transcript' ? 'scene-transcript-header' : 'scene-settings-header'}>
-        <span className="scene-crt-title">
-          {kind === 'transcript' ? t('scene.transcript') : t('scene.settings')}
-        </span>
+        <span className="scene-crt-title">{title}</span>
         {kind === 'transcript' && (
           <SessionPicker
             sessions={session.sessions}
@@ -428,9 +446,9 @@ function ScenePanelFrame({
       </div>
 
       <div
-        className={cn('flex flex-1 min-h-0 flex-col overflow-y-auto select-text focus-visible:outline-2 focus-visible:outline-[var(--accent)]', kind === 'transcript' ? 'scene-transcript-scroll' : 'scene-settings-body')}
+        className={cn('flex flex-1 min-h-0 flex-col overflow-y-auto select-text focus-visible:outline-2 focus-visible:outline-[var(--accent)]', bodyClass)}
         tabIndex={0}
-        aria-label={kind === 'transcript' ? t('scene.transcript') : t('scene.settings')}
+        aria-label={title}
       >
         {kind === 'transcript' && (
             <SceneTranscript
@@ -445,6 +463,7 @@ function ScenePanelFrame({
               onDecide={(approval, allow) => { void session.decideApproval(approval, allow) }}
             />
         )}
+        {kind === 'work' && <WorkPanel work={work} sessions={session.sessions} onJump={onJump} />}
         {kind === 'more' && (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="scene-aux">
             <SettingsPage send={send} subscribe={subscribe} />

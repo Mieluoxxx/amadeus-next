@@ -23,6 +23,8 @@ const COMMAND_TIMEOUTS: Record<string, number> = {
   checkpoint: 30_000,
   'model.list': 20_000,
   'model.set': 20_000,
+  'task.all': 15_000,
+  'task.trace': 20_000,
 }
 const STARTUP_TIMEOUT_MS = 20_000
 const RESPAWN_BACKOFF_MS = [1000, 2000, 4000, 8000, 16000, 30000]

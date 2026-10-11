@@ -22,7 +22,7 @@ const STATUS_TEXT: Record<HandoffStatus, string> = {
 }
 
 /** 失败原因已由 Reporter 清洗后写在 result.text 的 `Reason:` 行里；没有时退回原始 reason。 */
-const reasonOf = (item: HandoffItem): string => /^Reason: (.*)$/m.exec(item.result?.text ?? '')?.[1] ?? item.failure?.reason ?? 'unknown'
+export const reasonOf = (item: Pick<HandoffItem, 'result' | 'failure'>): string => /^Reason: (.*)$/m.exec(item.result?.text ?? '')?.[1] ?? item.failure?.reason ?? 'unknown'
 
 function describe(item: HandoffItem, now: number): string {
   const lines = [`${item.taskId} "${item.title}" (${item.kind})`, `Status: ${STATUS_TEXT[item.status]}`, `Round: ${roundOf(item)}`]

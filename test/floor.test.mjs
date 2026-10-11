@@ -11,7 +11,7 @@ function harness(overrides = {}) {
   const delivered = []
   const world = {
     turn: null,
-    gates: { blocked: false, sceneReady: true, proactive: true, sessionId: 's1', readonly: false },
+    gates: { blocked: false, sceneReady: true, proactive: true, sessionId: 's1' },
     micOk: true,
     ...overrides,
   }
@@ -48,7 +48,7 @@ function harness(overrides = {}) {
 }
 
 test('row 1: asr.start opens the mic when gates pass, otherwise only records the intent', () => {
-  const t = harness({ gates: { blocked: false, sceneReady: false, proactive: true, sessionId: 's1', readonly: false } })
+  const t = harness({ gates: { blocked: false, sceneReady: false, proactive: true, sessionId: 's1' } })
   assert.deepEqual(t.floor.asrStart(), { ok: true })
   assert.equal(t.floor.state(), 'idle')
   assert.equal(t.count('start'), 0, 'a scene that is not ready keeps the mic closed')
@@ -84,11 +84,10 @@ test('rows 2 to 4: partial text means hearing; an automatic final starts a turn,
   assert.equal(manual.floor.state(), 'idle')
 })
 
-test('a final is dropped while a reply is running, a reload is pending, or the session is read-only', () => {
+test('a final is dropped while a reply is running or a reload is pending', () => {
   for (const setup of [
     t => t.userTurn(),
     t => { t.world.gates = { ...t.world.gates, blocked: true } },
-    t => { t.world.gates = { ...t.world.gates, readonly: true } },
   ]) {
     const t = harness()
     t.floor.asrStart()
@@ -210,7 +209,6 @@ test('row 17: every gate holds a report back and releasing it lets the report th
     ['scene', t => { t.world.gates = { ...t.world.gates, sceneReady: false } }, t => { t.world.gates = { ...t.world.gates, sceneReady: true } }],
     ['blocked', t => { t.world.gates = { ...t.world.gates, blocked: true } }, t => { t.world.gates = { ...t.world.gates, blocked: false } }],
     ['proactive off', t => { t.world.gates = { ...t.world.gates, proactive: false } }, t => { t.world.gates = { ...t.world.gates, proactive: true } }],
-    ['read-only', t => { t.world.gates = { ...t.world.gates, readonly: true } }, t => { t.world.gates = { ...t.world.gates, readonly: false } }],
     ['draft', t => t.floor.setComposing(true), t => t.floor.setComposing(false)],
     ['worker down', t => t.floor.workerDown(), t => t.floor.workerUp()],
   ]
@@ -431,7 +429,7 @@ test('row 22: a queued reload is flushed on every pump except while the owner is
 })
 
 test('priority: a blocked floor neither opens the mic nor speaks a report', () => {
-  const t = harness({ gates: { blocked: true, sceneReady: true, proactive: true, sessionId: 's1', readonly: false } })
+  const t = harness({ gates: { blocked: true, sceneReady: true, proactive: true, sessionId: 's1' } })
   t.floor.asrStart()
   t.floor.reportReady(t.report('r1'))
   assert.equal(t.count('start'), 0)

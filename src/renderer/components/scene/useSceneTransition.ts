@@ -103,7 +103,7 @@ export function useSceneTransition(
       // 仅对面板外框补间位移与尺寸，避免文本在缩放过渡中发生字体模糊。
       animate(panelRef.current, [surfaceKeyframe(from), surfaceKeyframe(end)])
       if (step.kind && layout.panel && step.kind !== layout.panel.kind) {
-        const body = panelRef.current.querySelector('.scene-transcript-scroll, .scene-settings-body')
+        const body = panelRef.current.querySelector('.scene-transcript-scroll, .scene-settings-body, .scene-work-body')
         if (body) animate(body, [{ opacity: 0 }, { opacity: 1 }], 160)
       }
     }

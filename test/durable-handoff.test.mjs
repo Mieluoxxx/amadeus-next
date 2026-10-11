@@ -34,6 +34,14 @@ const textOfContent = content => (typeof content === 'string' ? content : (conte
 const lastUserText = context => textOfContent(context.messages.findLast(each => each.role === 'user')?.content)
 const hasToolResult = context => context.messages.some(message => message.role === 'toolResult')
 
+// handoff / handoff_send / handoff_cancel 不再 terminate：成功后还有一次"拿到结果再开口"的请求。
+// 它单独记在 calls.after，不经过各测试的主对话脚本，calls.main 仍是一次用户输入（或汇报）一次请求。
+const ACK_TOOLS = new Set(['handoff', 'handoff_send', 'handoff_cancel'])
+const isAck = context => {
+  const last = context.messages.at(-1)
+  return last?.role === 'toolResult' && ACK_TOOLS.has(last.toolName) && !last.isError
+}
+
 function gate() {
   let release
   const promise = new Promise(resolve => (release = resolve))
@@ -56,9 +64,10 @@ async function until(check, label, timeout = 8000) {
  */
 function scripted(handlers) {
   const faux = fauxProvider()
-  const calls = { main: [], child: [] }
+  const calls = { main: [], child: [], after: [] }
   const router = (context, options, state, model) => {
     const side = toolNames(context).includes('web_search') ? 'child' : 'main'
+    if (side === 'main' && isAck(context)) { calls.after.push(context); return fauxAssistantMessage('<zh>交给他们了。</zh><jp>頼んだわ。</jp>') }
     calls[side].push(context)
     return handlers[side](context, options, state, model)
   }
@@ -144,7 +153,7 @@ const directTool = (extensions, root, name) => {
     tool.execute(args, { taskId, callId, conversationId: root.id, commit: (change, context) => root.commit(change, context) }, ctx)
 }
 
-test('P4: handoff terminates the main turn, the main conversation keeps talking, and the report is delivered exactly once', async () => {
+test('P4: handoff is called first and the model speaks after it returns; the main conversation keeps talking, and the report is delivered exactly once', async () => {
   const childGate = gate()
   const { harness, root, calls, reports, close } = await open({
     handlers: { child: held(childGate, '结论：明天东京晴。\n来源：\n- 气象厅 https://example.com/jma') },
@@ -152,9 +161,10 @@ test('P4: handoff terminates the main turn, the main conversation keeps talking,
   try {
     harness.resume()
     assert.equal((await say(root, '帮我查一下明天东京的天气')).status, 'done')
-    assert.equal(calls.main.length, 1, 'terminate must end the run without a second request after the tool result')
+    assert.equal(calls.main.length, 1)
+    assert.equal(calls.after.length, 1, 'Like read or bash: the tool result comes back and the model answers after it')
     assert.deepEqual(toolNames(calls.main[0]).sort(), ['handoff', 'handoff_cancel', 'handoff_send', 'handoff_status'])
-    assert.deepEqual(await toolResultTexts(root), ['Accepted as t_01. The result will come back to the conversation automatically; do not wait for it and do not submit it again.'])
+    assert.deepEqual(await toolResultTexts(root), ['Accepted as t_01. The result will come back to the conversation automatically; do not wait for it and do not submit it again. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.'])
 
     // 子代理仍在运行时主对话照常聊天；子代理没有委托工具，也就不能递归委托。
     assert.equal((await say(root, '你在吗')).status, 'done')
@@ -229,7 +239,7 @@ test('P6: aborting the main conversation leaves the child running; handoff_cance
     assert.equal((await itemOf(harness)).status, 'running')
 
     assert.equal((await say(root, '算了，不用查了')).status, 'done')
-    assert.deepEqual((await toolResultTexts(root)).at(-1), 'Cancellation of t_01 requested; it will stop shortly and will not report back.')
+    assert.deepEqual((await toolResultTexts(root)).at(-1), 'Cancellation of t_01 requested; it will stop shortly and will not report back. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.')
     await until(async () => (await itemOf(harness)).status === 'cancelled', 'cancelled')
     const submission = await submissionByRequest(harness, item.child, 'handoff:t_01')
     assert.equal(submission.status, 'unanswered')
@@ -237,11 +247,11 @@ test('P6: aborting the main conversation leaves the child running; handoff_cance
     await until(async () => (await harness.getTask(item.reporter, ctx)).state.status === 'terminal', 'Reporter terminal')
     const outbox = await outboxOf(harness)
     assert.deepEqual(outbox, { pending: [], delivered: {} }, 'a cancelled task never reaches the outbox')
-    assert.equal(calls.main.length, 2, 'one request per user turn; terminate keeps cancelling from costing a third request')
+    assert.equal(calls.main.length, 2, 'one scripted request per user turn; the answers after each tool result are counted in calls.after')
     assert.deepEqual(reports, [])
 
     const cancel = directTool(extensions, root, 'handoff_cancel')
-    assert.match((await cancel({ task_id: 't_01' })).content[0].text, /^t_01 has already finished; nothing to cancel\.$/)
+    assert.match((await cancel({ task_id: 't_01' })).content[0].text, /^t_01 has already finished; nothing to cancel\. /)
     const missing = await cancel({ task_id: 't_42' })
     assert.equal(missing.isError, true)
     assert.equal(missing.content[0].text, 'There is no task t_42. No tasks are in progress.')
@@ -335,7 +345,7 @@ test('P5b: killing the process right after the handoff commit and restarting cre
       assert.deepEqual(await toolResultTexts(second.root), [], 'the tool result was never written')
       second.harness.resume()
       assert.equal((await (await second.harness.submission(turn.id, ctx)).wait(ctx)).status, 'done')
-      assert.deepEqual(await toolResultTexts(second.root), ['Accepted as t_01. The result will come back to the conversation automatically; do not wait for it and do not submit it again.'])
+      assert.deepEqual(await toolResultTexts(second.root), ['Accepted as t_01. The result will come back to the conversation automatically; do not wait for it and do not submit it again. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.'])
       await until(async () => (await pendingReports(second.harness, second.root.id, ctx)).length === 1, 'report after restart')
       await sleep(100)
       const handoffs = await handoffsOf(second.harness)
@@ -679,9 +689,9 @@ test('concurrency: the third task queues until a slot frees; cancelling a queued
     harness.resume()
     for (const name of ['甲', '乙', '丙']) await say(root, `查${name}`)
     assert.deepEqual((await toolResultTexts(root)).slice(0, 3), [
-      'Accepted as t_01. The result will come back to the conversation automatically; do not wait for it and do not submit it again.',
-      'Accepted as t_02. The result will come back to the conversation automatically; do not wait for it and do not submit it again.',
-      'Accepted as t_03; 2 task(s) are ahead of it, so it will start shortly. The result will come back to the conversation automatically.',
+      'Accepted as t_01. The result will come back to the conversation automatically; do not wait for it and do not submit it again. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.',
+      'Accepted as t_02. The result will come back to the conversation automatically; do not wait for it and do not submit it again. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.',
+      'Accepted as t_03; 2 task(s) are ahead of it, so it will start shortly. The result will come back to the conversation automatically. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.',
     ])
     await until(() => calls.child.length === 2, 'two children running')
     await sleep(150)
@@ -736,14 +746,14 @@ test('handoff validation, replay by callId, and brief deduplication', async () =
 
     const first = await handoff(ok, 'call-A', 1)
     assert.equal(first.isError, undefined)
-    assert.deepEqual(first.control, { terminate: true })
+    assert.equal(first.control, undefined, 'No terminate: the model answers after the result')
     assert.match(text(first), /^Accepted as t_01\./)
     // 同一个工具任务重跑（崩溃恢复）：callId 已登记，返回同一个 task_id。
     assert.match(text(await handoff(ok, 'call-A', 1)), /^Accepted as t_01\./)
     // 不同调用、同 kind 与 brief：查重。provider 的 callId 在别的回合里重复时，工具任务 id 不同，不会被当成重放。
     const duplicate = await handoff({ ...ok, title: '换个标题', brief: `\n  ${ok.brief.replace(' ', ' \n  ')}  ` }, 'call-A', 2)
-    assert.equal(text(duplicate), 'The same task is already in progress (t_01); it was not submitted again.')
-    assert.deepEqual(duplicate.control, { terminate: true })
+    assert.equal(text(duplicate), 'The same task is already in progress (t_01); it was not submitted again. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.')
+    assert.equal(duplicate.control, undefined)
     assert.equal((await handoffsOf(harness)).items.length, 1)
     assert.equal((await handoffsOf(harness)).seq, 1)
 

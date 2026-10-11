@@ -10,7 +10,16 @@ export function Row({ label, children }: { label: ReactNode; children: ReactNode
   )
 }
 
-export function Card({ title, status, children }: { title?: ReactNode; status?: ReactNode; children: ReactNode }) {
+/** `collapsible` cards start open unless `defaultOpen` is false; the header doubles as the toggle. */
+export function Card({ title, status, collapsible, defaultOpen = true, children }: { title?: ReactNode; status?: ReactNode; collapsible?: boolean; defaultOpen?: boolean; children: ReactNode }) {
+  if (collapsible && title) {
+    return (
+      <details className="settings-card" data-collapsible="true" open={defaultOpen}>
+        <summary className="settings-card-header"><span className="settings-card-title">{title}</span>{status}</summary>
+        {children}
+      </details>
+    )
+  }
   return (
     <div className="settings-card">
       {title ? <div className="settings-card-header"><span className="settings-card-title">{title}</span>{status}</div> : null}

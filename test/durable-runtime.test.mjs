@@ -8,14 +8,20 @@ import { createModels } from '@earendil-works/pi-ai/models'
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { defineExtension } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
-import { ApprovalsDoc, HandoffsDoc, OutboxDoc, renderReport } from '../src/main/durable/handoff/index.ts'
+import { AmadeusHandoff, ApprovalsDoc, HandoffsDoc, OutboxDoc, renderReport } from '../src/main/durable/handoff/index.ts'
 import { AnchorTask } from '../src/main/durable/handoff/reporter.ts'
 import { ProcessLock, processStartTime } from '../src/main/durable/processLock.ts'
 import { DurableRuntime } from '../src/main/durable/runtime.ts'
-import { TagScrubber } from '../src/main/durable/scrub.ts'
+import { TOOL_TEXT_TAGS, TagScrubber, toolTextIn } from '../src/main/durable/scrub.ts'
+import { TOOL_TEXT_NOTICE } from '../src/main/durable/toolText.ts'
 import { SessionIndex } from '../src/main/durable/sessionIndex.ts'
+import { NAMING_SYSTEM_PROMPT, composeTitle, extractTopic, isNamingDue, namingInput, titleSourceOf } from '../src/main/durable/sessionName.ts'
 
+/** 任务摘要去掉每次运行都不同的时间戳，便于整体比较。 */
+const unstamped = ({ createdAt: _createdAt, startedAt: _startedAt, endedAt: _endedAt, ...rest }) => rest
 const ctx = BACKGROUND_CONTEXT
+const ACK_TOOLS = new Set(['handoff', 'handoff_send', 'handoff_cancel'])
+const ACK = '<zh>交给他们了。</zh><jp>頼んだわ。</jp>'
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 const deferred = () => { let resolve; const promise = new Promise(done => (resolve = done)); return { promise, resolve } }
 
@@ -45,6 +51,15 @@ function fakeMemory(log, behavior = {}) {
 function fixture(options = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'amadeus-durable-'))
   const faux = fauxProvider({ tokensPerSecond: options.tokensPerSecond ?? 0, ...(options.fauxModels ? { models: options.fauxModels } : {}) })
+  // handoff / handoff_send / handoff_cancel 不再 terminate：成功后模型还要"拿到结果再开口"一次。
+  // 各测试的路由按最后一条用户消息出招，会把同一个调用再发一遍，所以这次请求统一在这里答一句，记在 acks 里。
+  const acks = []
+  const setResponses = faux.setResponses.bind(faux)
+  faux.setResponses = responses => setResponses(responses.map(response => typeof response !== 'function' ? response : (context, ...rest) => {
+    const last = context.messages.at(-1)
+    if (last?.role === 'toolResult' && ACK_TOOLS.has(last.toolName) && !last.isError) { acks.push(context); return fauxAssistantMessage(ACK) }
+    return response(context, ...rest)
+  }))
   const models = createModels()
   models.setProvider(faux.provider)
   const agentDir = path.join(root, 'agent')
@@ -54,7 +69,7 @@ function fixture(options = {}) {
   const runtimes = []
   let sequence = 0
   const f = {
-    root, faux, models, agentDir, sessionsDir, messages, memoryLog,
+    root, faux, models, agentDir, sessionsDir, messages, memoryLog, acks,
     async create(overrides = {}) {
       const runtime = new DurableRuntime({
         models, agentDir, sessionsDir,
@@ -64,6 +79,7 @@ function fixture(options = {}) {
         log: () => {},
         lockWaitMs: 0,
         checkpointGraceMs: 50,
+        autoName: options.autoName ?? false,
         ...options.runtime,
         ...overrides,
       })
@@ -117,6 +133,8 @@ const hang = calls => (_context, options) => new Promise((_resolve, reject) => {
   calls.push(Date.now())
   options?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
 })
+
+const textOfUser = message => (typeof message?.content === 'string' ? message.content : (message?.content ?? []).map(block => block.text ?? '').join(''))
 
 const indexOf = f => JSON.parse(readFileSync(path.join(f.sessionsDir, 'index.json'), 'utf8'))
 
@@ -178,6 +196,67 @@ test('the scrubber handles tags split across chunks and unterminated fences', ()
   assert.equal(run(['a </AMADEUS_x> b']), 'a  b')
   assert.equal(run(['1 < 2 and <AM']), '1 < 2 and <AM', 'An upper-case held prefix that never becomes a tag is released at the end')
   assert.equal(run(['x <ÅMADEUS_y>keep</ÅMADEUS_y>']), 'x <ÅMADEUS_y>keep</ÅMADEUS_y>', 'Only ASCII case folding: look-alike letters are not the fence')
+})
+
+test('session naming helpers: when it is due, how the topic is read, and which titles count as the user\'s', () => {
+  assert.deepEqual([0, 1, 2, 5, 6, 7, 11, 16].map(turns => isNamingDue(turns)), [false, true, false, false, true, false, true, true])
+  assert.equal(isNamingDue(3, 0, 5), false, 'after=0 turns naming off')
+  assert.equal(isNamingDue(9, 1, 0), false, 'every=0 names once')
+  assert.equal(extractTopic('<topic> 查 Amadeus 仓库更新。</topic>'), '查 Amadeus 仓库更新')
+  assert.equal(extractTopic('好的：<TOPIC>「东京天气」</TOPIC>'), '东京天气')
+  assert.equal(extractTopic('东京天气'), undefined, 'No tag, no topic')
+  assert.equal(extractTopic('<topic>  </topic>'), undefined)
+  assert.equal(Array.from(extractTopic(`<topic>${'长'.repeat(40)}</topic>`)).length, 24)
+  assert.equal(composeTitle(new Date(2026, 9, 11, 23, 0).getTime(), '东京天气'), '1011｜东京天气')
+  assert.equal(titleSourceOf({ title: '新对话-2026-10-11-19-27' }), 'default')
+  assert.equal(titleSourceOf({ title: '' }), 'default')
+  assert.equal(titleSourceOf({ title: '我的会话' }), 'manual', 'An old title the user typed is protected')
+  assert.equal(titleSourceOf({ title: '1011｜东京天气', titleSource: 'auto' }), 'auto')
+  assert.equal(namingInput(['你好', '  ', '查天气']), 'User: 你好\n\nUser: 查天气')
+  assert.match(namingInput(['x'.repeat(9000)]), /^\[Earlier messages omitted\]\n/)
+})
+
+test('a session is named after the first turn and refreshed every five, but never over a manual name', async () => {
+  const f = fixture({ autoName: true })
+  const runtime = await f.create()
+  const naming = []
+  let topic = '东京天气'
+  const router = async context => {
+    // completeSimple 的 systemPrompt 在 faux 这里是第一条 system 消息。
+    if (context.messages[0]?.role === 'system' && context.messages[0].content === NAMING_SYSTEM_PROMPT) {
+      naming.push(textOfUser(context.messages[1]))
+      return fauxAssistantMessage(`<topic>${topic}</topic>`)
+    }
+    return fauxAssistantMessage('<zh>嗯。</zh><jp>うん。</jp>')
+  }
+  f.faux.setResponses(Array.from({ length: 40 }, () => router))
+  const titleOf = () => indexOf(f).sessions.find(session => session.id === 'one')?.title
+  try {
+    await f.call(runtime, 'session.create', { sessionId: 'one', title: '新对话' })
+    await f.chat(runtime, 'one', 't1', '明天东京天气怎么样')
+    // 宿主在首条消息时补的占位标题可能晚到，不能盖掉起好的名字。
+    await f.until(() => naming.length === 1 && titleOf()?.endsWith('｜东京天气'))
+    assert.match(titleOf(), /^\d{4}｜东京天气$/)
+    assert.equal((await f.call(runtime, 'session.rename', { sessionId: 'one', title: '新对话-2026-10-11-23-00', source: 'default' })).type, 'done')
+    assert.match(titleOf(), /^\d{4}｜东京天气$/, 'A late placeholder does not replace the generated name')
+    assert.match(naming[0], /User: 明天东京天气怎么样/)
+    assert.doesNotMatch(naming[0], /うん/, 'Only the user side goes to the naming model')
+
+    topic = '东京周末出行'
+    for (const n of [2, 3, 4, 5]) await f.chat(runtime, 'one', `t${n}`, `第 ${n} 句`)
+    await sleep(50)
+    assert.equal(naming.length, 1, 'Not due between refreshes')
+    await f.chat(runtime, 'one', 't6', '那周末去哪玩')
+    await f.until(() => titleOf()?.endsWith('｜东京周末出行'))
+    assert.equal(naming.length, 2)
+
+    assert.equal((await f.call(runtime, 'session.rename', { sessionId: 'one', title: '我的东京计划' })).type, 'done')
+    topic = '不该出现'
+    for (const n of [7, 8, 9, 10, 11]) await f.chat(runtime, 'one', `t${n}`, `第 ${n} 句`)
+    await sleep(50)
+    assert.equal(titleOf(), '我的东京计划', 'A manual name is never replaced')
+    assert.equal(naming.length, 2, 'No naming request once the user owns the title')
+  } finally { await f.cleanup() }
 })
 
 test('chat.abort ends the turn as aborted and leaves the conversation usable', async () => {
@@ -337,7 +416,94 @@ test('session.rename updates the index and the stored title, for open and closed
   } finally { await f.cleanup() }
 })
 
-test('a handoff ends the turn at once, then its report is announced and delivered as its own turn', async () => {
+test('the scrubber hides tool calls written as text, without touching look-alike tags', () => {
+  const run = chunks => { const scrubber = new TagScrubber(); return chunks.map(chunk => scrubber.push(chunk)).join('') + scrubber.push('', true) }
+  const leaked = '我让人去查。\n\n<handoff>\n<brief>任务：查看仓库</brief>\n<kind>research</kind>\n<title>查仓库</title>\n</handoff>'
+  assert.equal(run([leaked]), '我让人去查。\n\n')
+  assert.equal(run(['a <hand', 'off>\n<brief>x</brief></hand', 'off> b']), 'a  b', 'Split across chunks')
+  assert.equal(run(['a <handoff_send task_id="t_01">x</handoff_send> b']), 'a  b')
+  assert.equal(run(['a <function_calls><invoke name="handoff">x</invoke></function_calls> b']), 'a  b')
+  assert.equal(run(['a <HANDOFF>x</HANDOFF> b']), 'a  b')
+  assert.equal(run(['a <handoff>never closed']), 'a ')
+  assert.equal(run(['a <handoffs>keep</handoffs> <handoff2> <remembered>']), 'a <handoffs>keep</handoffs> <handoff2> <remembered>', 'Only exact tool names count')
+  assert.equal(run(['ends with <hand']), 'ends with <hand', 'A held prefix that never becomes a tag is released at the end')
+  assert.equal(toolTextIn(leaked), 'handoff')
+  assert.equal(toolTextIn('<zh>说到 handoff 工具</zh>'), undefined)
+  for (const tool of AmadeusHandoff.tools) assert.ok(TOOL_TEXT_TAGS.includes(tool.name), `${tool.name} must be scrubbed when written as text`)
+})
+
+test('a tool call written as text is hidden and corrected once, so the model makes the native call', async () => {
+  const f = fixture()
+  const runtime = await f.create()
+  const leak = '<zh>我让人去查。</zh><jp>調べてもらうわ。</jp>\n<handoff>\n<brief>查一下东京明天的天气，给出一句结论。</brief>\n<kind>research</kind>\n<title>东京天气</title>\n</handoff>'
+  const lastUser = context => JSON.stringify(context.messages.filter(message => message.role === 'user').at(-1)?.content ?? '')
+  const requests = []
+  const router = async context => {
+    if (context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_search'))) return new Promise(() => {})
+    requests.push(lastUser(context))
+    if (lastUser(context).includes('[System note: tool call written as text]')) {
+      return fauxAssistantMessage([fauxToolCall('handoff', { kind: 'research', title: '东京天气', brief: '查一下东京明天的天气，给出一句结论。' })], { stopReason: 'toolUse' })
+    }
+    return fauxAssistantMessage(leak)
+  }
+  f.faux.setResponses(Array.from({ length: 10 }, () => router))
+  try {
+    await f.call(runtime, 'session.create', { sessionId: 'one', title: '' })
+    const events = await f.chat(runtime, 'one', 't1', '帮我查一下东京明天的天气')
+    assert.equal(events.at(-1).name, 'turn.done')
+    const streamed = events.filter(event => event.name === 'turn.text').map(event => event.delta).join('')
+    assert.doesNotMatch(streamed, /handoff|brief|东京天气/, 'The text-form call never reaches subtitles or speech')
+    assert.equal(requests.filter(text => text.includes(TOOL_TEXT_NOTICE)).length, 1, 'One correction, in the same run')
+    assert.deepEqual(f.events('task.graph').at(-1).tasks.map(task => [task.kind, task.title]), [['research', '东京天气']], 'The retry made the native call')
+
+    const loaded = await f.call(runtime, 'session.load', { sessionId: 'one' })
+    assert.deepEqual(loaded.messages.map(message => [message.role, message.text]), [
+      ['user', '帮我查一下东京明天的天气'],
+      ['assistant', '我让人去查。\n交给他们了。'],
+    ], 'The correction is not a user bubble, and the leaked block stays hidden after a reload')
+  } finally { await f.cleanup() }
+})
+
+test('tool calls written as text in earlier answers are not replayed to the model', async () => {
+  const f = fixture()
+  const runtime = await f.create()
+  const seen = []
+  let first = true
+  const router = async context => {
+    seen.push(JSON.stringify(context.messages.filter(message => message.role === 'assistant')))
+    if (first) { first = false; return fauxAssistantMessage('<zh>记下了。</zh><jp>覚えたわ。</jp><remember><type>feedback</type></remember>') }
+    return fauxAssistantMessage('<zh>嗯。</zh><jp>うん。</jp>')
+  }
+  f.faux.setResponses(Array.from({ length: 10 }, () => router))
+  try {
+    await f.call(runtime, 'session.create', { sessionId: 'one', title: '' })
+    await f.chat(runtime, 'one', 't1', '记住我喜欢咖啡')
+    assert.match(seen[1], /<remember>/, 'The retry right after the correction still sees what it wrote')
+    await f.chat(runtime, 'one', 't2', '你好')
+    assert.doesNotMatch(seen.at(-1), /<remember>/, 'Later requests no longer carry the text-form call')
+    assert.match(seen.at(-1), /记下了/, 'The rest of that answer stays')
+  } finally { await f.cleanup() }
+})
+
+test('a model that keeps writing tool calls as text is corrected only once per run', async () => {
+  const f = fixture()
+  const runtime = await f.create()
+  const requests = []
+  const router = async context => {
+    requests.push(context)
+    return fauxAssistantMessage('<zh>好。</zh><jp>うん。</jp><handoff><brief>x</brief></handoff>')
+  }
+  f.faux.setResponses(Array.from({ length: 10 }, () => router))
+  try {
+    await f.call(runtime, 'session.create', { sessionId: 'one', title: '' })
+    assert.equal((await f.chat(runtime, 'one', 't1', '查一下')).at(-1).name, 'turn.done')
+    assert.equal(requests.length, 2)
+    assert.equal((await f.chat(runtime, 'one', 't2', '再查一下')).at(-1).name, 'turn.done')
+    assert.equal(requests.length, 4, 'The next user turn gets its own single correction')
+  } finally { await f.cleanup() }
+})
+
+test('a handoff returns at once and the model speaks after it, then its report is announced and delivered as its own turn', async () => {
   const f = fixture()
   const runtime = await f.create()
   const isChild = context => context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_search'))
@@ -389,7 +555,7 @@ test('a handoff ends the turn at once, then its report is announced and delivere
     const loaded = await f.call(runtime, 'session.load', { sessionId: 'one' })
     assert.deepEqual(loaded.messages.map(message => [message.role, message.text]), [
       ['user', '帮我查一下东京明天的天气'],
-      ['assistant', '我让人去查。'],
+      ['assistant', '我让人去查。交给他们了。'],
       ['user', '谢谢'],
       ['assistant', '嗯。'],
       ['card', loaded.messages[4].text],
@@ -1414,7 +1580,7 @@ test('v2 through the runtime: progress, a question, an answer and a second round
     const notes = f.events('task.graph').map(event => event.tasks[0].progress?.text).filter(Boolean)
     assert.deepEqual(notes, ['读第一个来源', '汇总'], 'the middle note is coalesced away')
     const shape = f.events('task.graph').at(-1).tasks[0]
-    assert.deepEqual(Object.keys(shape).sort(), ['kind', 'progress', 'round', 'status', 'taskId', 'title'])
+    assert.deepEqual(Object.keys(shape).sort(), ['createdAt', 'kind', 'progress', 'round', 'startedAt', 'status', 'taskId', 'title'])
     assert.deepEqual([shape.round, shape.status, typeof shape.progress.at], [1, 'running', 'number'])
     const midway = await f.call(runtime, 'session.load', { sessionId: 'one' })
     assert.equal(midway.tasks[0].progress.text, '汇总', 'session.load always reads the newest note, throttled or not')
@@ -1424,7 +1590,8 @@ test('v2 through the runtime: progress, a question, an answer and a second round
     const asked = f.events('task.report-ready')[0]
     assert.deepEqual([asked.id, asked.status, asked.round], ['t_01', 'needs_input', 1])
     const waiting = f.events('task.graph').at(-1).tasks[0]
-    assert.deepEqual(waiting, { taskId: 't_01', kind: 'research', title: '东京天气', status: 'needs_input', round: 1, question: '你说的东京是哪个区？' })
+    assert.ok(waiting.createdAt <= waiting.startedAt && waiting.startedAt <= waiting.endedAt, 'the round carries its own start and end')
+    assert.deepEqual(unstamped(waiting), { taskId: 't_01', kind: 'research', title: '东京天气', status: 'needs_input', round: 1, question: '你说的东京是哪个区？' })
     assert.equal((await f.call(runtime, 'report.deliver', { sessionId: 'one', id: asked.id, turnId: 'r1' })).card.question, '你说的东京是哪个区？')
     await f.settled('r1')
 
@@ -1432,14 +1599,14 @@ test('v2 through the runtime: progress, a question, an answer and a second round
     await f.until(() => f.events('task.report-ready').length === 2)
     const second = f.events('task.report-ready')[1]
     assert.deepEqual([second.id, second.status, second.round], ['t_01.2', 'done', 2])
-    assert.deepEqual(f.events('task.graph').at(-1).tasks[0], { taskId: 't_01', kind: 'research', title: '东京天气', status: 'done', round: 2 })
+    assert.deepEqual(unstamped(f.events('task.graph').at(-1).tasks[0]), { taskId: 't_01', kind: 'research', title: '东京天气', status: 'done', round: 2 })
     const delivered = await f.call(runtime, 'report.deliver', { sessionId: 'one', id: second.id, turnId: 'r2' })
     assert.equal(delivered.status, 'started')
     assert.deepEqual([delivered.card.round, delivered.card.status], [2, 'done'])
     await f.settled('r2')
 
     const loaded = await f.call(runtime, 'session.load', { sessionId: 'one' })
-    assert.deepEqual(loaded.tasks, [{ taskId: 't_01', kind: 'research', title: '东京天气', status: 'done', round: 2 }])
+    assert.deepEqual(loaded.tasks.map(unstamped), [{ taskId: 't_01', kind: 'research', title: '东京天气', status: 'done', round: 2 }])
     const cards = loaded.messages.filter(message => message.role === 'card').map(message => message.card)
     assert.equal(cards.length, 2, 'every round has its own card in the history')
     assert.deepEqual(cards.map(card => [card.taskId, card.round, card.status]), [['t_01', 1, 'needs_input'], ['t_01', 2, 'done']])
@@ -1484,5 +1651,64 @@ test('the delegation model comes from AMADEUS_DELEGATION_MODEL; without it the c
   } finally {
     if (saved === undefined) delete process.env.AMADEUS_DELEGATION_MODEL
     else process.env.AMADEUS_DELEGATION_MODEL = saved
+  }
+})
+
+test('the work panel sees every delegation: live child actions, the full trace, and the ledger once the session closes', async () => {
+  const f = fixture({ runtime: { handoff: { limits: { tickMs: 50 } } } })
+  const runtime = await f.create()
+  const release = deferred()
+  let step = 0
+  const router = async context => {
+    const last = lastText(context)
+    if (isChildContext(context)) {
+      step++
+      if (step === 1) return fauxAssistantMessage([fauxText('先搜一下。'), fauxToolCall('web_search', { query: '东京 明天 天气' })], { stopReason: 'toolUse' })
+      if (step === 2) return fauxAssistantMessage([fauxToolCall('report_progress', { note: '整理结果' })], { stopReason: 'toolUse' })
+      await release.promise
+      return fauxAssistantMessage('结论：明天晴。')
+    }
+    if (last.includes('amadeus_handoff_result')) return fauxAssistantMessage('<zh>查到了。</zh><jp>分かったわ。</jp>')
+    if (last.includes('天气')) return fauxAssistantMessage([fauxToolCall('handoff', { kind: 'research', title: '东京天气', brief: '查一下东京明天的天气，给出一句结论。' })], { stopReason: 'toolUse' })
+    return fauxAssistantMessage('<zh>嗯。</zh><jp>うん。</jp>')
+  }
+  f.faux.setResponses(Array.from({ length: 40 }, () => router))
+  try {
+    await f.call(runtime, 'session.create', { sessionId: 'one', title: '天气' })
+    await f.chat(runtime, 'one', 't1', '帮我查一下东京明天的天气')
+    await f.until(() => step >= 3)
+    const tool = () => f.events('task.activity').flatMap(event => event.actions).filter(action => action.type === 'tool').at(-1)
+    // 没配搜索后端时 web_search 回的是错误结果，正好也验证了失败的一步会如实显示。
+    await f.until(() => tool()?.status === 'error')
+    assert.deepEqual([tool().tool, tool().label, tool().output], ['web_search', '东京 明天 天气', 'No search backend is configured yet.'])
+    assert.equal(f.events('task.activity').at(-1).taskId, 't_01')
+    assert.equal(f.events('task.activity').at(-1).toolUses, 1, 'report_progress is not counted as a tool use')
+
+    const live = (await f.call(runtime, 'task.all', {})).sessions
+    assert.deepEqual(live.map(session => [session.sessionId, session.title]), [['one', '天气']])
+    const running = live[0].tasks[0]
+    assert.deepEqual([running.taskId, running.status, running.toolUses], ['t_01', 'running', 1])
+    assert.deepEqual(running.recent.map(action => action.type === 'tool' ? action.tool : action.text), ['web_search', '整理结果'])
+
+    release.resolve()
+    await f.until(() => f.events('task.report-ready').length > 0)
+    const trace = await f.call(runtime, 'task.trace', { sessionId: 'one', taskId: 't_01' })
+    assert.deepEqual(trace.actions.map(action => action.type), ['brief', 'text', 'tool', 'progress', 'text'])
+    assert.equal(trace.actions[0].text.includes('查一下东京明天的天气'), true)
+    assert.equal(trace.actions.at(-1).text, '结论：明天晴。')
+    assert.deepEqual([trace.task.status, trace.task.toolUses], ['done', 1])
+    assert.deepEqual(trace.actions.filter(action => action.type === 'tool').map(action => [action.tool, action.status]), [['web_search', 'error']])
+    assert.deepEqual(await f.call(runtime, 'task.trace', { sessionId: 'one', taskId: 't_09' }).then(reply => [reply.type, reply.code]), ['error', 'not_found'])
+
+    await runtime.host.close('one')
+    const closed = (await f.call(runtime, 'task.all', {})).sessions[0].tasks[0]
+    assert.deepEqual([closed.taskId, closed.status, closed.toolUses, 'recent' in closed], ['t_01', 'done', 1, false], 'a closed session is listed from the ledger')
+    assert.ok(existsSync(path.join(f.sessionsDir, 'work.json')))
+
+    await f.call(runtime, 'session.delete', { sessionId: 'one' })
+    assert.deepEqual((await f.call(runtime, 'task.all', {})).sessions, [], 'deleting the session drops its records')
+  } finally {
+    release.resolve()
+    await f.cleanup()
   }
 })

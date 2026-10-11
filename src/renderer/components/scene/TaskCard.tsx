@@ -25,7 +25,7 @@ const PROGRESS_TICK_MS = 5000
 
 type Decide = (approval: TaskApproval, allow: boolean) => void
 
-function StatusIcon({ status }: { status: string }) {
+export function StatusIcon({ status }: { status: string }) {
   if (status === 'running') return <Loader2 className="animate-spin" aria-hidden="true" />
   if (status === 'done') return <Check aria-hidden="true" />
   if (status === 'failed' || status === 'timeout') return <TriangleAlert aria-hidden="true" />

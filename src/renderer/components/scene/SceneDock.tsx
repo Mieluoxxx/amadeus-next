@@ -8,7 +8,7 @@ import type { VisualAttachment } from './visualAttachment'
  * opening and closing panels cannot lose an edit. */
 export default function SceneDock({
   connected, draft, onDraftChange, onSubmit, onToggleMic, asrListening, streaming,
-  replying, stopping, onStop, readonly,
+  replying, stopping, onStop,
   sessionTitle, model, models, onSelectModel,
   attachment, onClearAttachment, onPickAttachment, canAttach,
 }: {
@@ -23,8 +23,6 @@ export default function SceneDock({
   replying: boolean
   stopping: boolean
   onStop: () => void
-  /** An earlier (legacy) conversation: the composer is disabled. */
-  readonly: boolean
   sessionTitle: string
   /** `provider/id` of the model in use; empty until it is known. */
   model: string
@@ -61,15 +59,13 @@ export default function SceneDock({
   }, [menu])
   // A reply in flight owns the model; the runtime refuses a switch until it ends.
   const canSwitchModel = connected && !streaming && !replying && models.length > 1
-  const canSend = connected && !readonly && Boolean(draft.trim() || attachment)
+  const canSend = connected && Boolean(draft.trim() || attachment)
   const micLabel = asrListening ? t('scene.mic_stop') : t('scene.mic_start')
-  const placeholder = readonly
-    ? t('scene.readonly_placeholder')
-    : connected ? t('scene.placeholder') : t('scene.placeholder_offline')
+  const placeholder = connected ? t('scene.placeholder') : t('scene.placeholder_offline')
   const attachmentLabel = canAttach ? t('scene.attach_image') : t('scene.attach_needs_visual_provider')
 
   return (
-    <div className="scene-conversation" data-state={!connected ? 'offline' : readonly ? 'readonly' : asrListening ? 'listening' : streaming ? 'streaming' : 'ready'}>
+    <div className="scene-conversation" data-state={!connected ? 'offline' : asrListening ? 'listening' : streaming ? 'streaming' : 'ready'}>
       <form className="scene-composer" onSubmit={event => {
         event.preventDefault()
         if (canSend) onSubmit()
@@ -83,24 +79,26 @@ export default function SceneDock({
             </div>
           </div>
         )}
-        <textarea
-          rows={2}
-          value={draft}
-          onChange={event => onDraftChange(event.target.value)}
-          onKeyDown={event => {
-            // Keep native multiline editing and IME confirmation. Every actual
-            // submission uses the form's connected/empty guard, including Enter.
-            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
-              event.preventDefault()
-              if (!event.repeat) event.currentTarget.form?.requestSubmit()
-            }
-          }}
-          aria-label={t('scene.placeholder')}
-          placeholder={placeholder}
-          disabled={readonly}
-          className="scene-composer-input"
-          data-testid="scene-input"
-        />
+        <div className="scene-composer-line">
+          <span className="scene-composer-prompt" aria-hidden="true">&gt;</span>
+          <textarea
+            rows={2}
+            value={draft}
+            onChange={event => onDraftChange(event.target.value)}
+            onKeyDown={event => {
+              // Keep native multiline editing and IME confirmation. Every actual
+              // submission uses the form's connected/empty guard, including Enter.
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+                event.preventDefault()
+                if (!event.repeat) event.currentTarget.form?.requestSubmit()
+              }
+            }}
+            aria-label={t('scene.placeholder')}
+            placeholder={placeholder}
+            className="scene-composer-input"
+            data-testid="scene-input"
+          />
+        </div>
         <input
           ref={imageInputRef}
           type="file"
@@ -117,7 +115,7 @@ export default function SceneDock({
           <button
             type="button"
             onClick={() => imageInputRef.current?.click()}
-            disabled={!connected || readonly || !canAttach}
+            disabled={!connected || !canAttach}
             data-testid="scene-attach-image"
             aria-label={attachmentLabel}
             title={attachmentLabel}
@@ -157,7 +155,6 @@ export default function SceneDock({
               )}
             </div>
           )}
-          {readonly && <span className="scene-readonly-chip" data-testid="scene-readonly">{t('scene.readonly_badge')}</span>}
           {sessionTitle && <span className="scene-session-title" title={sessionTitle}>{sessionTitle}</span>}
           <span className="scene-composer-spacer" />
           <span className="scene-listening-label" role="status">{asrListening ? t('scene.listening') : ''}</span>
@@ -177,7 +174,7 @@ export default function SceneDock({
           <button
             type="button"
             onClick={onToggleMic}
-            disabled={!connected || readonly}
+            disabled={!connected}
             aria-pressed={asrListening}
             aria-label={micLabel}
             title={micLabel}

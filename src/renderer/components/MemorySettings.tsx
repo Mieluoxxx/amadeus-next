@@ -3,7 +3,7 @@
  * 数据全部来自 memory.*（long-term-memory §8.1），记忆服务没就绪时只显示提示，不影响设置页其余部分。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useI18n, type MessageKey } from '../i18n'
 import ConfirmDialog from './ui/ConfirmDialog'
 import { Card, ComboSelect, Row } from './settings/parts'
@@ -137,7 +137,8 @@ function MemoryEditor({ initialBody, initialDate, withDate, saveLabel, busy, onS
   )
 }
 
-export default function MemorySettings({ send, subscribe }: { send: SendFn; subscribe: SubscribeFn }) {
+/** `optional` sits above the pending card; the collapsed core memory card always comes last. */
+export default function MemorySettings({ send, subscribe, optional }: { send: SendFn; subscribe: SubscribeFn; optional?: ReactNode }) {
   const { t } = useI18n()
   const [phase, setPhase] = useState<'loading' | 'ready' | 'unavailable'>('loading')
   const [items, setItems] = useState<MemoryItem[]>([])
@@ -338,16 +339,19 @@ export default function MemorySettings({ send, subscribe }: { send: SendFn; subs
 
   if (phase !== 'ready') {
     return (
-      <Card title={t('memory.title')}>
-        <p className="settings-card-note" data-testid="memory-unavailable">
-          {phase === 'loading' ? t('memory.loading') : t('memory.unavailable')}
-        </p>
-        {phase === 'unavailable' ? (
-          <div className="memory-toolbar">
-            <button type="button" className="crt-button" onClick={() => { setPhase('loading'); void refresh() }}>{t('common.refresh')}</button>
-          </div>
-        ) : null}
-      </Card>
+      <>
+        <Card title={t('memory.title')}>
+          <p className="settings-card-note" data-testid="memory-unavailable">
+            {phase === 'loading' ? t('memory.loading') : t('memory.unavailable')}
+          </p>
+          {phase === 'unavailable' ? (
+            <div className="memory-toolbar">
+              <button type="button" className="crt-button" onClick={() => { setPhase('loading'); void refresh() }}>{t('common.refresh')}</button>
+            </div>
+          ) : null}
+        </Card>
+        {optional}
+      </>
     )
   }
 
@@ -392,7 +396,40 @@ export default function MemorySettings({ send, subscribe }: { send: SendFn; subs
         </Card>
       ) : null}
 
-      <Card title={t('memory.core')}>
+      {optional}
+
+      {groups.archived.length > 0 ? (
+        <details className="settings-advanced settings-card">
+          <summary>{t('memory.archived', undefined, { count: groups.archived.length })}</summary>
+          {groups.archived.map(item => (
+            <div className="memory-item" key={item.id} data-memory-id={item.id}>
+              <div className="memory-body">{item.body}</div>
+              <div className="memory-meta">
+                <span className="memory-spacer" />
+                <button type="button" className="crt-button" data-variant="danger" disabled={busy === item.id} onClick={() => { void mutate(item.id, 'memory.delete', { id: item.id }) }}>{t('common.delete')}</button>
+              </div>
+            </div>
+          ))}
+        </details>
+      ) : null}
+
+      {invalid.length > 0 ? (
+        <details className="settings-advanced settings-card" data-testid="memory-invalid">
+          <summary>{t('memory.invalid', undefined, { count: invalid.length })}</summary>
+          {invalid.map(file => (
+            <div className="memory-item" key={file.file}>
+              <div className="memory-body memory-file">{file.file}</div>
+              <div className="memory-quote">{file.error}</div>
+            </div>
+          ))}
+        </details>
+      ) : null}
+
+      <Card title={t('memory.pending')}>
+        {groups.pending.length === 0 ? <p className="settings-card-note">{t('memory.pending_empty')}</p> : groups.pending.map(renderPending)}
+      </Card>
+
+      <Card title={t('memory.core')} collapsible defaultOpen={false} status={groups.coreCount ? <span className="memory-source">{groups.coreCount}</span> : null}>
         {groups.core.length === 0 && groups.due.length === 0 ? <p className="settings-card-note">{t('memory.core_empty')}</p> : null}
         {groups.core.map(group => (
           <section className="memory-group" key={group.type} data-memory-type={group.type}>
@@ -427,37 +464,6 @@ export default function MemorySettings({ send, subscribe }: { send: SendFn; subs
           </div>
         )}
       </Card>
-
-      <Card title={t('memory.pending')}>
-        {groups.pending.length === 0 ? <p className="settings-card-note">{t('memory.pending_empty')}</p> : groups.pending.map(renderPending)}
-      </Card>
-
-      {groups.archived.length > 0 ? (
-        <details className="settings-advanced settings-card">
-          <summary>{t('memory.archived', undefined, { count: groups.archived.length })}</summary>
-          {groups.archived.map(item => (
-            <div className="memory-item" key={item.id} data-memory-id={item.id}>
-              <div className="memory-body">{item.body}</div>
-              <div className="memory-meta">
-                <span className="memory-spacer" />
-                <button type="button" className="crt-button" data-variant="danger" disabled={busy === item.id} onClick={() => { void mutate(item.id, 'memory.delete', { id: item.id }) }}>{t('common.delete')}</button>
-              </div>
-            </div>
-          ))}
-        </details>
-      ) : null}
-
-      {invalid.length > 0 ? (
-        <details className="settings-advanced settings-card" data-testid="memory-invalid">
-          <summary>{t('memory.invalid', undefined, { count: invalid.length })}</summary>
-          {invalid.map(file => (
-            <div className="memory-item" key={file.file}>
-              <div className="memory-body memory-file">{file.file}</div>
-              <div className="memory-quote">{file.error}</div>
-            </div>
-          ))}
-        </details>
-      ) : null}
 
       {error ? <div className="settings-feedback" data-tone="error" role="alert">{error}</div> : null}
 

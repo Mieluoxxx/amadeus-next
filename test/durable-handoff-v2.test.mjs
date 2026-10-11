@@ -40,6 +40,14 @@ const userTexts = context => context.messages.filter(each => each.role === 'user
 const assistantTexts = context => context.messages.filter(each => each.role === 'assistant').map(each => textOfContent(each.content))
 const lastIsToolResult = context => context.messages.at(-1)?.role === 'toolResult'
 
+// handoff / handoff_send / handoff_cancel 不再 terminate：成功后还有一次"拿到结果再开口"的请求。
+// 它单独记在 calls.after，不经过各测试的主对话脚本，calls.main 仍是一次用户输入（或汇报）一次请求。
+const ACK_TOOLS = new Set(['handoff', 'handoff_send', 'handoff_cancel'])
+const isAck = context => {
+  const last = context.messages.at(-1)
+  return last?.role === 'toolResult' && ACK_TOOLS.has(last.toolName) && !last.isError
+}
+
 function gate() {
   let release
   const promise = new Promise(resolve => (release = resolve))
@@ -95,9 +103,10 @@ const mainScript = context => {
  */
 function scripted(handlers, fauxModels) {
   const faux = fauxProvider(fauxModels ? { models: fauxModels } : {})
-  const calls = { main: [], child: [] }
+  const calls = { main: [], child: [], after: [] }
   const router = (context, options, state, model) => {
     const side = toolNames(context).includes('web_search') ? 'child' : 'main'
+    if (side === 'main' && isAck(context)) { calls.after.push({ context, model: model.id }); return answer('<zh>交给他们了。</zh><jp>頼んだわ。</jp>') }
     calls[side].push({ context, model: model.id })
     return handlers[side](context, options, state, model)
   }
@@ -161,15 +170,15 @@ async function firstRound(t, text = '帮我查一下东京明天的天气') {
   await deliverAndSettle(t, 't_01')
 }
 
-const SENT_NEW_ROUND = 'Message sent to t_01; it continues as round 2. The result will come back to the conversation automatically; do not wait for it.'
-const SENT_STEER = 'Message sent to t_01; the subagent will take it into its current work. The result will come back to the conversation automatically.'
+const SENT_NEW_ROUND = 'Message sent to t_01; it continues as round 2. The result will come back to the conversation automatically; do not wait for it. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.'
+const SENT_STEER = 'Message sent to t_01; the subagent will take it into its current work. The result will come back to the conversation automatically. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.'
 
 test('handoff_send continues a finished task: round 2 reports again and the subagent still sees round 1', async () => {
   const t = await open({ handlers: { child: context => answer(userTexts(context).length === 1 ? '结论：晴。' : '补充：各区差异不大。') } })
   try {
     await firstRound(t)
     assert.equal((await say(t.root, '发给t_01：请补充东京各区的差异')).status, 'done')
-    assert.equal(t.calls.main.length, 3, 'terminate keeps the send from costing another request')
+    assert.equal(t.calls.main.length, 3, 'one scripted request per user turn; the answers after each tool result are counted in calls.after')
     assert.deepEqual((await toolTexts(t.root)).slice(-1), [SENT_NEW_ROUND])
 
     const second = await reportFor(t.harness, t.root, 't_01.2', 'second report')
@@ -258,7 +267,7 @@ test('handoff_send to a queued task reaches the subagent after its brief, once t
     await say(t.root, '查乙')
     await until(async () => (await itemOf(t.harness, 't_02'))?.status === 'queued', 't_02 queued behind t_01')
     assert.equal((await say(t.root, '发给t_02：别忘了价格')).status, 'done')
-    assert.deepEqual((await toolTexts(t.root)).slice(-1), ['Message sent to t_02; the subagent will take it into its current work. The result will come back to the conversation automatically.'])
+    assert.deepEqual((await toolTexts(t.root)).slice(-1), ['Message sent to t_02; the subagent will take it into its current work. The result will come back to the conversation automatically. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.'])
     assert.equal(t.calls.child.length, 1, 'the queued task has not started')
     assert.equal((await itemOf(t.harness, 't_02')).messages.length, 1)
 
@@ -331,7 +340,7 @@ test('handoff_send is replay safe: the same call registers one steer or opens on
     const again = await send.execute({ task_id: 't_01', message: '加一句补充' }, api(9200, 'call-a'), ctx)
     assert.deepEqual(again, first)
     assert.equal(first.content[0].text, SENT_STEER)
-    assert.equal(first.control.terminate, true)
+    assert.equal(first.control, undefined)
     assert.equal((await itemOf(t.harness)).messages.length, 1)
     // 不同的工具任务里 provider 给出同一个 callId 是另一次调用。
     await send.execute({ task_id: 't_01', message: '再加一句' }, api(9201, 'call-a'), ctx)
@@ -475,7 +484,7 @@ test('a question can be cancelled: the task becomes cancelled and its unsent que
     await say(t.root, '帮我查一下东京明天的天气')
     await reportFor(t.harness, t.root, 't_01', 'needs_input report')
     assert.equal((await say(t.root, '取消t_01')).status, 'done')
-    assert.deepEqual((await toolResults(t.root)).at(-1), { text: 't_01 was waiting for an answer and is now cancelled; it will not report back.', isError: false })
+    assert.deepEqual((await toolResults(t.root)).at(-1), { text: 't_01 was waiting for an answer and is now cancelled; it will not report back. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.', isError: false })
     const item = await itemOf(t.harness)
     assert.deepEqual([item.status, item.question], ['cancelled', undefined])
     assert.deepEqual((await outboxOf(t.harness)).pending, [], 'the report asking for input is withdrawn')
@@ -651,9 +660,9 @@ test('the new tool descriptions, in full', () => {
   assert.equal(
     HANDOFF_SEND_DESCRIPTION,
     `Send a message to a task you delegated earlier: to correct or extend one that is still running, to ask for more after its result arrived (another angle, more detail, a fix), or to answer a question it asked (status needs_input).
-The subagent keeps everything it has seen, so the message only needs what is new. Write it as plain text, at most 1500 characters, without <zh> / <jp> tags, expression tags or interjections.
+The subagent keeps everything it has seen, so the message only needs what is new. Write it as plain prose, at most 1500 characters, with no subtitle or speech formatting, expression cues or interjections.
 A running task takes the message into its current work. A finished task starts a new round and its new result comes back to the conversation automatically. A cancelled task cannot be continued; delegate it again with handoff.
-Before calling, tell the user in a sentence what you are doing. After calling, do not repeat that and do not guess the result.`,
+Call it before writing any reply; once it returns, tell the user in a line or two.`,
   )
   assert.equal(
     HANDOFF_STATUS_DESCRIPTION,

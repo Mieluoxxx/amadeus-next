@@ -3,6 +3,7 @@ import type { Conversation, ConversationId, Harness, Tx, WatchHandle } from '@ea
 import { ApprovalsDoc, HandoffsDoc, OutboxDoc, isActive, type Approval, type ApprovalDetail, type Approvals, type HandoffItem, type HandoffStatus } from './docs.ts'
 import { outboxIdOf, roundOf } from './rounds.ts'
 import { expireApprovals } from './settle.ts'
+import { reasonOf } from './status.ts'
 
 // 本文件是主进程命令（task.cancel / task.approve / session.load 等）的 worker 侧入口，错误一律用 Error('not_found') 表达，
 // 由调用方映射成应答码（architecture §7.2）。
@@ -70,9 +71,15 @@ export type TaskSummary = {
   round: number
   progress?: { text: string; at: number }
   question?: string
+  createdAt: number
+  /** 本轮的起止；新一轮开始时清空。 */
+  startedAt?: number
+  endedAt?: number
+  /** 仅 failed / timeout。 */
+  reason?: string
 }
 
-export function summaryOf(item: Pick<HandoffItem, 'taskId' | 'kind' | 'title' | 'status' | 'round' | 'progress' | 'question'>): TaskSummary {
+export function summaryOf(item: Pick<HandoffItem, 'taskId' | 'kind' | 'title' | 'status' | 'round' | 'progress' | 'question' | 'createdAt' | 'startedAt' | 'endedAt' | 'result' | 'failure'>): TaskSummary {
   return {
     taskId: item.taskId,
     kind: item.kind,
@@ -81,6 +88,10 @@ export function summaryOf(item: Pick<HandoffItem, 'taskId' | 'kind' | 'title' | 
     round: roundOf(item),
     ...(item.progress ? { progress: { text: item.progress.text, at: item.progress.at } } : {}),
     ...(item.question ? { question: item.question } : {}),
+    createdAt: item.createdAt,
+    ...(item.startedAt !== undefined ? { startedAt: item.startedAt } : {}),
+    ...(item.endedAt !== undefined ? { endedAt: item.endedAt } : {}),
+    ...(item.status === 'failed' || item.status === 'timeout' ? { reason: reasonOf(item) } : {}),
   }
 }
 

@@ -14,8 +14,6 @@ export type FloorGates = {
   /** `report_proactive`。 */
   proactive: boolean
   sessionId: string
-  /** 当前会话是旧会话（只读）。 */
-  readonly: boolean
 }
 
 export type FloorHost = {
@@ -117,7 +115,7 @@ export class Floor {
     const gates = this.host.gates()
     if (gates.blocked || this.busy()) return 'drop'
     if (manual) { this.listeningEnabled = false; return 'forward' }
-    if (!this.listeningEnabled || gates.readonly || !text.trim()) return 'drop'
+    if (!this.listeningEnabled || !text.trim()) return 'drop'
     return 'turn'
   }
 
@@ -276,7 +274,7 @@ export class Floor {
   }
 
   private nextReport(gates: FloorGates): Entry | undefined {
-    if (!this.workerReady || !gates.sceneReady || !gates.proactive || gates.readonly || this.composing) return undefined
+    if (!this.workerReady || !gates.sceneReady || !gates.proactive || this.composing) return undefined
     if (this.inFlight || this.retryTimer !== null || this.deferTimer !== null) return undefined
     return this.reports.find(item => item.sessionId === gates.sessionId && !item.parked)
   }

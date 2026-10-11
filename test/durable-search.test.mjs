@@ -283,6 +283,8 @@ test('end to end: a research subagent searches through the configured backend an
   faux.setResponses(
     Array.from({ length: 50 }, () => (context) => {
       if (toolNames(context).includes('handoff')) {
+        // handoff 不 terminate：拿到受理结果后主对话再答一句。
+        if (context.messages.at(-1)?.role === 'toolResult') return fauxAssistantMessage('交给他们了。')
         const last = context.messages.findLast(message => message.role === 'user')
         const content = typeof last?.content === 'string' ? last.content : (last?.content ?? []).map(block => block.text ?? '').join('')
         return content.startsWith('GO')

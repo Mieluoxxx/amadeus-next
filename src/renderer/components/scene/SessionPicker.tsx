@@ -87,7 +87,7 @@ export default function SessionPicker({
           const edit = renaming?.id === item.id ? renaming : null
           const active = item.id === currentId
           return (
-            <li key={item.id} role="option" aria-selected={active} className="session-row" data-active={active} data-readonly={item.readonly || undefined} data-session-id={item.id}>
+            <li key={item.id} role="option" aria-selected={active} className="session-row" data-active={active} data-session-id={item.id}>
               {edit ? (
                 <form className="session-rename" onSubmit={event => { event.preventDefault(); void commitRename() }}>
                   <input
@@ -107,7 +107,6 @@ export default function SessionPicker({
                 <>
                   <button type="button" className="session-pick" onClick={() => { setOpen(false); if (!active) onSelect(item.id) }}>
                     <span className="session-title">{titleOf(item)}</span>
-                    {item.readonly ? <span className="session-badge" data-kind="readonly">{t('scene.readonly_badge')}</span> : null}
                     {!active && item.pendingReports > 0 ? (
                       <span className="session-badge" data-kind="report" title={t('scene.session_reports', undefined, { count: item.pendingReports })} aria-label={t('scene.session_reports', undefined, { count: item.pendingReports })}>{item.pendingReports}</span>
                     ) : null}
@@ -115,12 +114,10 @@ export default function SessionPicker({
                       <span className="session-badge" data-kind="approval" title={t('scene.session_approvals', undefined, { count: item.pendingApprovals })} aria-label={t('scene.session_approvals', undefined, { count: item.pendingApprovals })}>{item.pendingApprovals}</span>
                     ) : null}
                   </button>
-                  {item.readonly ? null : (
-                    <span className="session-actions">
-                      <button type="button" className="session-icon" title={t('scene.session_rename')} aria-label={`${t('scene.session_rename')} ${titleOf(item)}`} data-testid="session-rename" onClick={() => setRenaming({ id: item.id, title: item.title })}><Pencil /></button>
-                      <button type="button" className="session-icon" data-danger="true" title={t('scene.session_delete')} aria-label={`${t('scene.session_delete')} ${titleOf(item)}`} data-testid="session-delete" onClick={() => setDeleting(item)}><Trash2 /></button>
-                    </span>
-                  )}
+                  <span className="session-actions">
+                    <button type="button" className="session-icon" title={t('scene.session_rename')} aria-label={`${t('scene.session_rename')} ${titleOf(item)}`} data-testid="session-rename" onClick={() => setRenaming({ id: item.id, title: item.title })}><Pencil /></button>
+                    <button type="button" className="session-icon" data-danger="true" title={t('scene.session_delete')} aria-label={`${t('scene.session_delete')} ${titleOf(item)}`} data-testid="session-delete" onClick={() => setDeleting(item)}><Trash2 /></button>
+                  </span>
                 </>
               )}
             </li>
@@ -143,14 +140,12 @@ export default function SessionPicker({
           onClick={toggle}
         >
           <span className="session-title">{current ? titleOf(current) : currentId || t('scene.current_task')}</span>
-          {current?.readonly ? <span className="session-badge" data-kind="readonly">{t('scene.readonly_badge')}</span> : null}
           {elsewhere > 0 ? <span className="session-dot" data-attention={elsewhereApprovals > 0 || undefined} aria-label={String(elsewhere)} /> : null}
           <ChevronDown className="session-chevron" aria-hidden="true" />
         </button>
         {open ? (
           <ul className="session-list" role="listbox" aria-label={t('scene.sessions')} data-testid="session-list">
-            {renderGroup(t('scene.session_group_current'), sessions.filter(item => !item.readonly), 'session-group-current')}
-            {renderGroup(t('scene.session_group_legacy'), sessions.filter(item => item.readonly), 'session-group-legacy')}
+            {renderGroup(t('scene.session_group_current'), sessions, 'session-group-current')}
           </ul>
         ) : null}
       </div>

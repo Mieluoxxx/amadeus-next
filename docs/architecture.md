@@ -88,9 +88,11 @@ src/main/
     ├── lanes.ts            # Lane / KeyedLanes / CommandError
     ├── sessionHost.ts      # 一会话一 Harness 的打开 / 关闭 / 删除 / 回收 / 中毒恢复 / 扫描重建
     ├── sessionIndex.ts     # sessions/index.json 的原子读写；SessionDoc（app.session）
+    ├── sessionName.ts      # 会话自动命名：触发时机、命名提示词、MMDD｜话题、titleSource（§2.3）
     ├── processLock.ts      # sessions/.lock
     ├── eventBridge.ts      # watchEvents → turn.* 事件；requestId → turn 映射
-    ├── scrub.ts            # TagScrubber：流式剔除 <amadeus_*> 标签
+    ├── scrub.ts            # TagScrubber：流式剔除 <amadeus_*> 围栏与写成文本的工具调用；TOOL_TEXT_TAGS
+    ├── toolText.ts         # 写成文本的工具调用：onYield 纠正一次、beforeRequest 从回放历史剔除（挂在 amadeus-role 上）
     ├── history.ts          # entries() → 界面消息（PresentationText 取 display）；cardOf
     ├── modelSelection.ts   # ~/.amadeus/pi/settings.json 三键的读写；thinkingLevels
     ├── role.ts             # amadeus-role 扩展
@@ -151,7 +153,7 @@ src/main/
 
 | 文档 | 作用域 | 内容 |
 | :--- | :--- | :--- |
-| `app.session` | session | 标题、创建时间；用于重建 `index.json` |
+| `app.session` | session | 标题、创建时间、`titleSource`（`default` / `auto` / `manual`，§2.3）；用于重建 `index.json` |
 | `app.handoffs` | 主对话 conversation | 子代理登记表（任务卡片的数据源）：taskId、kind、title、子对话 id、状态（含 `needs_input`）、`round`（轮次，从 1 开始）、`messages`（`handoff_send` 的幂等记录与 steer 正文）、`progress`（`report_progress` 的最近一条）、`question`、`result` 摘要、`failure`；排队顺序即数组顺序。字段见工具约束 §3.6、§3.7 |
 | `app.outbox` | 主对话 conversation | `pending[]`：`{ id, taskId, round, status, text, at }`（`status` 含 `needs_input`）；`delivered{}`：`id → { submissionId, entryId \| null, taskId, round?, at }`（`entryId` 为空表示提交还在排队，事件桥看到 `placed` 后补上；第 1 轮的记录没有 `round`）。每一轮各有一份汇报：第 1 轮的 `id` 与 `taskId` 同值，之后是 `<taskId>.<n>` |
 | `app.approvals` | 每个子对话 conversation（由 `handoff` 的 commit 建好） | `task` 类型子代理的待确认写操作；键是 `approvalId`（= 工具任务的 TaskId，会话内唯一；`callId` 在不同对话里可能重复，不能当键），值含 `tool`、`summary`、`detail`、`state`、`expiresAt`。放子对话是为了工具直接 `api.watchDoc` 本对话、Reporter 按子对话计数；代价是事件桥要为每个未终态任务的子对话挂监视（工具约束 §4.3） |
@@ -237,15 +239,30 @@ src/main/
 
 ---
 
+### 2.3 会话自动命名
+
+代码在 `sessionName.ts`（纯函数和命名请求）和 `runtime.ts` 的 `autoName`。思路参考 pi-ext 的 `pi-session-rename`，按陪伴对话做了调整。
+
+- **触发**：`SessionHost.settled` 在用户回合落定后调用 `afterUserTurn`（汇报回合不触发），和 `memory.afterTurn` 是同一个挂点。主人第 1 次发言后命名，之后每 5 次刷新一次（第 6、11、16… 次）。先用 `open.turns` 判断是否到点，到点了才扫历史取发言。同一会话同一时刻最多一个命名在跑。
+- **输入**：只取主人的发言（`history.userTexts`：不含汇报输入、记忆条目和宿主补的纠正），超过 8000 字时保留最近的部分。助手的台词和标签只会干扰命名。
+- **请求**：用会话自己的模型调一次 `completeSimple`，不开 thinking，`cacheRetention: 'none'`，超时 60 秒。模型只回 `<topic>…</topic>`，话题最多 24 字。
+- **标题**：`MMDD｜话题`，日期是会话创建日（本机时区），由宿主拼接，格式不会被模型带偏。
+- **归属**：`app.session.titleSource` 记标题的来历：`default` 是"新对话-时间戳"占位，`auto` 是自动命名，`manual` 是主人改的。
+  - `manual` 的标题永远不改，也不再发命名请求。
+  - 命名进行期间主人改了名，写回时在同一个 commit 里再检查一次，以主人为准。
+  - 占位请求（`source: 'default'`）比自动命名晚到时会被忽略。
+  - 旧库没有这个字段：标题还是占位的当作 `default`，其它的当作主人起的名字保护起来。
+- **失败**：只记日志，下一个到点的回合再试。测试夹具默认关闭自动命名（`DurableRuntimeOptions.autoName: false`），免得命名请求消耗掉 faux 的脚本响应。
+
 ## 3. Agent 层
 
 ### 3.1 扩展清单
 
 | 扩展 | 内容 | 主对话 | 子代理 |
 | :--- | :--- | :--- | :--- |
-| `amadeus-role` | section：ROLE + PRESENTATION + protocol，`tag: false`（渲染结果与现状 system prompt 同形，不套 `<role>` 标签） | ✓ | ✗ |
+| `amadeus-role` | section：ROLE + PRESENTATION + protocol，`tag: false`（渲染结果与现状 system prompt 同形，不套 `<role>` 标签）；`GenerationTask` 钩子 `beforeRequest` / `onYield`：处理写成文本的工具调用（工具约束 §2.3）。钩子挂在这里而不是新扩展，因为已有会话按名字选扩展，新扩展名进不了旧会话 | ✓ | ✗ |
 | `amadeus-memory` | 工具 `remember` / `forget`；任务定义 `MemoryExtract`（M2）；条目 kind `amadeus.memory-*`、`amadeus.episode`；`beforeCompact` 钩子（A4 起）：摘要源里剔除记忆块，并自带陪伴向的压缩提示词（默认提示词面向编码任务）；文档 `app.memory-baseline`、`app.memory-extract` | ✓ | ✗ |
-| `amadeus-handoff` | 工具 `handoff` / `handoff_send` / `handoff_status` / `handoff_cancel`（除只读的 `handoff_status` 外，成功时返回 `control: { terminate: true }`）；任务定义 Anchor、Reporter；文档 `app.handoffs`、`app.outbox` | ✓ | ✗（禁止递归） |
+| `amadeus-handoff` | 工具 `handoff` / `handoff_send` / `handoff_status` / `handoff_cancel`（都不 `terminate`：先调用，拿到结果再开口）；任务定义 Anchor、Reporter；文档 `app.handoffs`、`app.outbox` | ✓ | ✗（禁止递归） |
 | `amadeus-research` | 只读 web 搜索 / 抓取工具（`web_search`、`web_fetch`）、`report_progress` | ✗ | `research` |
 | `amadeus-files` | 受限的 `read` 与 `list_dir`（只允许主人授权的路径）、`report_progress` | ✗ | `files` |
 | `amadeus-task` | `read`、`list_dir`、`bash` / `edit` / `write`（后三者经 `wrapTool` 包装为逐次确认，并受 `pathGuard` 与环境清理约束）、`report_progress`；写 `app.approvals`（挂子对话） | ✗ | `task` |
@@ -283,7 +300,7 @@ entry    pi.user（汇报回合：<amadeus_handoff_result>）          子代理
 ```
 
 - **模型与 thinking 级别**沿用现在的全局选择：读 `~/.amadeus/pi/settings.json` 的 `defaultProvider` / `defaultModel` / `defaultThinkingLevel`。durable 没有宿主默认模型，每个对话都必须 `configure`（缺省 `thinkingLevel` 为 `"off"`，没有 model 时回合以 `no_model` 失败）。所以每次 `chat.submit` / `report.deliver` 处理时，与根对话已解析的 agent 比较，不同就 `configure({ model, thinkingLevel })`（现有 `followSelection` 的同款逻辑）。`model.set` 写同一个文件。可选档位来自 `@earendil-works/pi-ai` 根导出的 `getSupportedThinkingLevels(model)`。子代理在 `handoff` 时复制根对话当前的 model；配置了委托专用模型（设置项 `delegation_model`）且可用时改用它（见 §3.3）。
-- **`handoff` / `handoff_send` / `handoff_cancel` 成功即 `terminate`**：这一轮所有工具结果都带 `terminate` 时，durable 不再发起下一次模型请求，run 以 `done` 结束。红莉栖说完前置那句话就收口，不会在工具返回后再重复一遍，也省一次 LLM 往返。代价：模型若没有前置文本就直接调用，主人什么也听不到，比例待原型统计（工具约束 §6）。`handoff_status` 只读、不 `terminate`，红莉栖接着用自己的话转述状态。
+- **`handoff` / `handoff_send` / `handoff_cancel` 先调用、再开口**（2026-10-11 起，取代原来的"先说再做 + `terminate`"）：和 read / bash 一样，模型一决定委托就直接发原生调用，不先写回复；工具返回后再用一两句双语告诉主人，成功结果的末尾带一句提示，提醒它这样接话。原因是：原设计要求先写一大段带标签的回复，再在同一条消息末尾切换成 tool call，实际会话里 deepseek-flash 在这个切换点把调用写成了正文 XML，委托悄悄丢了，标签还被念了出来。代价是多一次模型往返，开口要等受理完成。写成文本的调用另有兜底：字幕和语音剔除、同一 run 内纠正一次、回放历史时剔除（工具约束 §2.3）。
 - **委托是可续接、可查询、可提问的**（handoff v2，细节以工具约束 §3.7 为准，这里只定分工）：结果不满意或要追问，红莉栖用 `handoff_send` 对同一个子对话续接，开新一轮（`round + 1`，同一个 `task_id`，每轮各有自己的 Reporter 与汇报）；运行中补充则登记为 steer，由 Reporter 投递；主人问进展时用 `handoff_status`（只读 `app.handoffs`，不猜测）；子代理缺信息时以 `QUESTION:` 收尾，任务进入 `needs_input`（不占并发名额、没有 Reporter 在跑），汇报把问题带给红莉栖，由她问主人，再用 `handoff_send` 回传答案。
 - **汇报只有一种投递**（工具约束 §3.5）：`input` 提交，红莉栖开口。**取消不生成汇报**：`done` / `failed` / `timeout` / `needs_input` 才写 outbox，`cancelled` 只更新 `app.handoffs` 与任务卡片；红莉栖经 `handoff_cancel` 取消时已从工具结果知道，从卡片取消她不会主动提起。主动汇报关闭时汇报留在 `pending`、只显示卡片；"下次说话时一起说"用静默 `write` 条目承载，是否可行待 §12 V4，在此之前不假定。
 - 记忆条目写入与输入提交是两次提交：先 `conversation.commit(appendEntry + 基线文档)`，再 `submit(input)`；都只在对话空闲时做（记忆 §4.1）。
@@ -449,7 +466,7 @@ pi-worker 事件桥
 用户回合和汇报回合共用同一条管线：
 
 ```text
-watchEvents（worker） ─ 文本差量 ─► 清洗器（scrub 记忆和结果标签）─► 端口事件 turn.text
+watchEvents（worker） ─ 文本差量 ─► 清洗器（scrub 记忆和结果标签、写成文本的工具调用）─► 端口事件 turn.text
 主进程 ─► PresentationText ─► 字幕（chat.token）+ FishTts + 表情
 ```
 
@@ -556,7 +573,7 @@ watchEvents（worker） ─ 文本差量 ─► 清洗器（scrub 记忆和结�
 | `session.list` | — | `{ currentId, sessions: [{ id, title, createdAt, updatedAt, hasActive, pendingReports }] }` | 读索引，不打开会话 |
 | `session.create` | `{ sessionId, title }` | `{ session }` | 只登记索引（`empty`）；`sessionId` 由主进程生成，重复调用幂等 |
 | `session.load` | `{ sessionId }` | `{ session, messages, tasks, pendingReports }` | 打开并设为当前（写 `currentId`）。`messages[]` = `{ id, role: "user" \| "assistant" \| "card", text, turnId?, card? }`（规则见 §4.4）；`card`（仅 `role: "card"`）= `{ taskId, title, status, summary, round, progress?, question? }`，`status` 可为 `needs_input`（此时 `summary` 就是问题），`round` 从 1 开始，`progress` 只在任务进行中出现，`question` 只在 `needs_input` 时出现；`tasks` 来自 `app.handoffs`，形状同 `task.graph`（§7.3）；`pendingReports` = `[{ id, title }]`。`empty` 会话不开库，返回空。`not_found` |
-| `session.rename` | `{ sessionId, title }` | `{}` | 写 `app.session` 与索引；未建库的只改索引 |
+| `session.rename` | `{ sessionId, title, source? }` | `{}` | 写 `app.session` 与索引；未建库的只改索引。`source` 缺省为 `manual`（界面重命名，之后自动命名不再碰它）；主进程首条消息时补的时间戳占位传 `default`，如果自动命名已经起好名字，占位会被忽略（§2.3） |
 | `session.delete` | `{ sessionId }` | `{}` | 时序见 §2.2。`not_found` |
 | `chat.submit` | `{ sessionId, turnId, text }` | `{ requestId }`（受理即返回，回合进度走事件） | 步骤：`await stopping` → 打开会话（`empty` 的此时建库）→ 遗留 run 先 `abort` → 同步模型选择 → 写记忆条目 → 事件桥登记 `turn:<turnId>` → `submit({ type: "input", requestId, whenBusy: "reject" })`。`busy`（abort 之后仍忙）、`not_found`、`closed`。（§12 V4 通过后在"写记忆条目"之后增加挂起汇报的静默写入，届时加 `reportProactive` 参数） |
 | `chat.abort` | `{ sessionId }` | 应答 `aborted` | `conversation.abort()`；不影响后台子代理；幂等，会话未打开也成功 |
@@ -616,7 +633,7 @@ watchEvents（worker） ─ 文本差量 ─► 清洗器（scrub 记忆和结�
 | :--- | :--- | :--- |
 | `session.list` | 读 `SessionStore`，返回 `messages` | worker `session.list` 加旧会话分组；条目 `{ id, title, readonly?, pendingReports?, pendingApprovals? }`（后者来自主进程缓存，用于红点）；`messages` 来自 `session.load` |
 | `session.create` / `session.load` | 同步改 store | 转发；仍返回 `ok`、`client_request_id`、`source: "next"`，并发 `session.changed`（形状不变） |
-| `session.rename`、`session.delete` | 无 | **新增**，界面待做；首次发消息后的时间戳标题仍由主进程 `session.rename` 产生，并发 `session.titled` |
+| `session.rename`、`session.delete` | 无 | 会话选择器里可以重命名、删除；首次发消息后的时间戳占位仍由主进程 `session.rename`（`source: 'default'`）产生，并发 `session.titled`；之后 worker 的自动命名（§2.3）经 `session.updated` 改成 `MMDD｜话题` |
 | `chat.send` | `PiHost.prompt` | `chat.submit`；旧会话回 `{ ok: false, error: "legacy session is read-only" }` |
 | `chat.abort` | 渲染进程无调用方 | A2 加停止按钮 |
 | `pi.models` / `pi.model.set` | worker `models` / `set-model` | `model.list` / `model.set`；回合进行中与重载期间仍回 `Wait for the current reply or reload to finish` |
@@ -756,7 +773,7 @@ A2 和 A3 可以并行。
 | 20 | `checkpoint` 与 `resume` | `checkpoint` 才关库，只在重启或退出时发；`pi` 单独重载走 `reload` | 本文 §2.2 |
 | 21 | worker 崩溃 | PiHost 主动退避重拉，连续失败 5 次后回到惰性重拉 | 本文 §2.2 |
 | 22 | 单进程独占存储 | 应用层保证：`checkpoint` 先于拉起、失败则等旧进程 `exit`、`sessions/.lock` 进程锁。不靠 `busy_timeout` | 评估 §3.1 |
-| 23 | `handoff` / `handoff_send` / `handoff_cancel` 成功后 | 返回 `terminate`，红莉栖说完前置话就收口；`handoff_status` 只读，不 `terminate` | 工具约束 §2.3 |
+| 23 | `handoff` / `handoff_send` / `handoff_cancel` 的时机 | 先调用、拿到结果再开口，都不 `terminate`（2026-10-11 改，原为"先说再做 + `terminate`"） | 工具约束 §2.3 |
 | 24 | 子代理并发 | 每会话 2（一会话一库，没有跨库计数） | 工具约束 §3.2 |
 | 25 | 执行环境 | `cwd` 不是沙箱：`pathGuard` + 拒绝列表 + `bash` 的 `inheritEnv = false`，P0 即做 | 工具约束 §4.1 |
 | 26 | `files` 的首次授权 | 不弹确认。`handoff.paths` 来自模型，靠拒绝列表强制、卡片展示授权路径；`files` 只读且结果只回主对话。主人要更谨慎时改为首次弹一次 | 工具约束 §6 |

@@ -8,7 +8,6 @@ import type { FishTts } from './fishTts.ts'
 import { Floor, type PendingReport, type ReportOutcome } from './floor.ts'
 import type { PiHost } from './piHost.ts'
 import type { SceneHost } from './sceneHost.ts'
-import type { SessionStore } from './sessionStore.ts'
 import type { SpeechBridge } from './speechBridge.ts'
 import { DEFAULT_JEV_MODEL, DEFAULT_JEV_URL } from './jev.ts'
 import { PresentationText } from '../shared/presentation.ts'
@@ -34,7 +33,6 @@ type ActiveTurn = TurnKey & {
 const SECRET_KEYS = ['FISH_API_KEY', 'JEV_API_KEY', 'web_search_api_key']
 const UNFOCUSED_FRAME_RATE: SceneFrameRate = 15
 const DEFAULT_SESSION_TITLE = '新对话'
-const LEGACY_READONLY = 'legacy session is read-only'
 const MEMORY_RECALL_MODES = ['off', 'log', 'on']
 const SEARCH_PROVIDERS = ['brave', 'tavily']
 // model.list 的取值是 `${provider}/${id}`：provider 不含斜杠，id 可以含（如 openrouter/anthropic/x）。
@@ -42,7 +40,7 @@ const DELEGATION_MODEL_PATTERN = /^[^\s/]+\/\S+$/
 // 进行中的回合这么久没有任何 turn.* 事件，就当它的终止事件丢了；没有它 Floor 会一直 responding，重载与汇报都排不上。
 const TURN_WATCHDOG_MS = 120_000
 // worker 被替换期间这些转发方法统一回绝，避免请求落到正在关库的进程上。
-const WORKER_METHODS = /^(session\.(list|create|load|rename|delete)|task\.(cancel|approve)|memory\.(list|write|delete|accept|reject|clear|status|configure))$/
+const WORKER_METHODS = /^(session\.(list|create|load|rename|delete)|task\.(cancel|approve)|work\.(list|trace)|memory\.(list|write|delete|accept|reject|clear|status|configure))$/
 
 // 窗口先于 runtime 就绪创建；这些只读本地状态，不必排在 Pi 启动后面。其余方法可能开麦、投递汇报或碰会话，必须等启动完成。
 const PRE_INIT_METHODS = /^(system\.get_config|desktop\.settings\.get|runtime\.status|voice\.playback)$/
@@ -59,9 +57,7 @@ export type RuntimeDeps = {
   /** 记忆目录；也是 worker 的 AMADEUS_MEMORY_DIR，主进程只用它打开文件夹。 */
   memoryDir: string
   clock: Clock
-  /** 旧会话，只读。 */
-  store: SessionStore
-  settings: { read(): Json; write(data: Json): void }
+  settings:{ read(): Json; write(data: Json): void }
   safeStorage: Pick<SafeStorage, 'isEncryptionAvailable' | 'encryptString' | 'decryptString'>
   dialog: Pick<Dialog, 'showOpenDialog'>
   shell: Pick<Shell, 'openPath'>
@@ -82,7 +78,6 @@ export class AppRuntime {
   private readonly deps: RuntimeDeps
   private readonly root: string
   private readonly scene: SceneHost
-  private readonly store: SessionStore
   private readonly pi: PiHost
   private readonly floor: Floor
   private readonly windows = new Set<BrowserWindow>()
@@ -157,7 +152,6 @@ export class AppRuntime {
         sceneReady: this.sceneReady,
         proactive: this.config.report_proactive !== false,
         sessionId: this.currentSessionId,
-        readonly: this.isLegacy(this.currentSessionId),
       }),
       turn: () => this.activeTurn,
       speechStart: () => this.speech.start(String(this.config.asr_language || 'zh-CN')),
@@ -173,7 +167,6 @@ export class AppRuntime {
     const bundled = path.join(this.root, 'character/emote')
     this.emoteRoot = existsSync(imported) ? imported : existsSync(bundled) ? bundled : path.join(this.root, 'emote')
     this.scene = deps.createScene(this.emoteCache)
-    this.store = deps.store
     this.loadPersistedSettings()
     this.speech = deps.createSpeech((method, params) => this.onSpeech(method, params))
     this.tts = deps.createTts(() => this.config, event => {
@@ -261,7 +254,7 @@ export class AppRuntime {
       case 'pi.model.set': {
         if (this.reloading || this.reloadTargets.size || this.floor.busy()) return { ok: false, error: 'Wait for the current reply or reload to finish' }
         if (method === 'pi.model.set' && typeof params.model !== 'string') return { ok: false, error: 'Invalid model' }
-        const sessionId = this.currentSessionId && !this.isLegacy(this.currentSessionId) ? this.currentSessionId : undefined
+        const sessionId = this.currentSessionId || undefined
         const result = await this.forward(method === 'pi.models' ? 'model.list' : 'model.set', method === 'pi.models' ? { sessionId } : { sessionId, model: params.model, thinkingLevel: params.thinkingLevel })
         // 同步当前模型切换事件至前端，保持界面状态实时一致。
         if (method === 'pi.model.set' && result.ok) this.emit('pi.model', { current: result.current })
@@ -291,6 +284,14 @@ export class AppRuntime {
           sessionId: this.sessionParam(params), taskId: String(params.taskId ?? params.task_id ?? ''),
           approvalId: String(params.approvalId ?? params.approval_id ?? ''), allow: params.allow === true,
         })
+      case 'work.list':
+        return this.forward('task.all', {})
+      case 'work.trace': {
+        // 工作面板跨会话查看，不能落回当前会话。
+        const sessionId = String(params.session_id ?? params.sessionId ?? '')
+        if (!sessionId) return { ok: false, error: 'session not found' }
+        return this.forward('task.trace', { sessionId, taskId: String(params.taskId ?? params.task_id ?? '') })
+      }
       case 'memory.open-folder': {
         try { mkdirSync(this.deps.memoryDir, { recursive: true, mode: 0o700 }) } catch (error) { return { ok: false, error: message(error) } }
         const error = await this.deps.shell.openPath(this.deps.memoryDir)
@@ -484,17 +485,13 @@ export class AppRuntime {
 
   // ---- 会话 ----
 
-  private isLegacy(id: string): boolean {
-    return !!id && !this.workerSessions.has(id) && this.store.sessions.some(item => item.id === id)
-  }
-
   /** 渲染进程对同一个参数两种拼写都发过（session_id / sessionId）。 */
   private sessionParam(params: Json, fallback = this.currentSessionId): string {
     return String(params.session_id || params.sessionId || fallback)
   }
 
   private sessionEntries(): Json[] {
-    const worker = [...this.workerSessions.values()].map(item => {
+    return [...this.workerSessions.values()].map(item => {
       const approvals = this.approvals.get(item.id)?.size ?? 0
       return {
         id: item.id, title: item.title, updatedAt: item.updatedAt, hasActive: item.hasActive,
@@ -502,22 +499,15 @@ export class AppRuntime {
         ...(approvals ? { pendingApprovals: approvals } : {}),
       }
     })
-    // 没有任何消息的旧会话只是历史上的空壳，列出来没有意义。
-    const legacy = this.store.sessions
-      .filter(item => item.messages.length && !this.workerSessions.has(item.id))
-      .map(item => ({ id: item.id, title: item.title, readonly: true }))
-    return [...worker, ...legacy]
   }
 
   private sessionPayload(): Json {
     const id = this.currentSessionId
-    const worker = this.workerSessions.get(id)
-    const legacy = worker ? undefined : this.store.sessions.find(item => item.id === id)
-    const title = worker?.title ?? legacy?.title ?? DEFAULT_SESSION_TITLE
+    const title = this.workerSessions.get(id)?.title ?? DEFAULT_SESSION_TITLE
     return {
       sessions: this.sessionEntries(),
       current_session_id: id,
-      session: id ? { id, title, ...(legacy ? { readonly: true } : {}) } : null,
+      session: id ? { id, title } : null,
     }
   }
 
@@ -558,7 +548,7 @@ export class AppRuntime {
       await this.refreshSessions()
       if (!this.currentSessionId) await this.ensureCurrent()
     } catch (error) {
-      // worker 暂时不可用时仍能看到旧会话；恢复后 worker.ready 会补发 session.changed。
+      // worker 暂时不可用时先回已知列表；恢复后 worker.ready 会补发 session.changed。
       return { ...this.sessionPayload(), ok: true, warning: message(error) }
     }
     return { ...this.sessionPayload(), ok: true }
@@ -590,17 +580,11 @@ export class AppRuntime {
 
   private async loadSession(id: string, params: Json = {}): Promise<Json> {
     if (!id) return { ok: false, error: 'session not found' }
-    if (!this.workerSessions.has(id) && !this.isLegacy(id)) {
+    if (!this.workerSessions.has(id)) {
       await this.refreshSessions().catch(() => {})
-      if (!this.workerSessions.has(id) && !this.isLegacy(id)) return { ok: false, error: 'session not found' }
+      if (!this.workerSessions.has(id)) return { ok: false, error: 'session not found' }
     }
     this.leaveSession()
-    if (this.isLegacy(id)) {
-      this.currentSessionId = id
-      const session = this.store.sessions.find(item => item.id === id)!
-      this.floor.wake()
-      return { ...this.sessionPayload(), messages: session.messages.map(item => ({ ...item, session_id: id })), tasks: [], ok: true, source: 'next' }
-    }
     try {
       const loaded = await this.pi.request('session.load', { sessionId: id })
       this.currentSessionId = id
@@ -626,7 +610,6 @@ export class AppRuntime {
   private async renameSession(id: string, title: string): Promise<Json> {
     const next = title.trim()
     if (!id || !next) return { ok: false, error: 'invalid session title' }
-    if (this.isLegacy(id)) return { ok: false, error: LEGACY_READONLY }
     const result = await this.forward('session.rename', { sessionId: id, title: next })
     if (result.ok) {
       this.pendingTitles.delete(id)
@@ -637,7 +620,6 @@ export class AppRuntime {
 
   private async deleteSession(id: string): Promise<Json> {
     if (!id) return { ok: false, error: 'session not found' }
-    if (this.isLegacy(id)) return { ok: false, error: LEGACY_READONLY }
     this.deleting.add(id)
     if (id === this.currentSessionId || this.activeTurn?.sessionId === id) this.leaveSession()
     this.floor.dropSession(id)
@@ -943,6 +925,9 @@ export class AppRuntime {
       case 'task.graph':
         this.emit('task.graph', { sessionId, tasks: Array.isArray(event.tasks) ? event.tasks : [] })
         return
+      case 'task.activity':
+        this.emit('task.activity', { ...this.payload(event), sessionId })
+        return
       case 'task.approval-request': {
         const approvalId = String(event.approvalId || '')
         if (sessionId && approvalId) this.approvals.set(sessionId, (this.approvals.get(sessionId) ?? new Set()).add(approvalId))
@@ -1052,7 +1037,6 @@ export class AppRuntime {
     const text = String(params.text || '').trim()
     const turnId = String(params.turn_id ?? params.turnId ?? '') || randomUUID()
     if (!sessionId) return { ok: false, error: 'session not found' }
-    if (this.isLegacy(sessionId)) return { ok: false, error: LEGACY_READONLY }
     if (this.deleting.has(sessionId) || (this.workerSessions.size && !this.workerSessions.has(sessionId))) return { ok: false, error: 'session not found' }
     if (!text) return { ok: false, error: 'message is empty' }
     this.cancelTurn()
@@ -1067,7 +1051,8 @@ export class AppRuntime {
       this.pendingTitles.set(sessionId, title)
       this.applyTitle(sessionId, title)
       // 改名失败时退回默认标题，下一条消息再试，不让界面和索引长期不一致。
-      this.pi.request('session.rename', { sessionId, title }).then(
+      // source=default：这只是占位，worker 不会拿它盖掉已经起好的名字，自动命名也照常进行。
+      this.pi.request('session.rename', { sessionId, title, source: 'default' }).then(
         () => { if (this.pendingTitles.get(sessionId) === title) this.pendingTitles.delete(sessionId) },
         () => {
           if (this.pendingTitles.get(sessionId) !== title) return

@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell, utilityProcess } from 'electron'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,7 +13,6 @@ import { workerBaker } from './emoteBakeHost.ts'
 import { FishTts } from './fishTts.ts'
 import { PiHost } from './piHost.ts'
 import { ensurePromptFiles } from './role.ts'
-import { SessionStore } from './sessionStore.ts'
 import { SpeechBridge, systemSpeechOptions } from './speechBridge.ts'
 
 type Json = Record<string, unknown>
@@ -85,17 +84,6 @@ function writeYaml(file: string, data: Json): void {
   writeFileSync(file, stringifyYaml(data), { encoding: 'utf8', mode: 0o600 })
 }
 
-/** 兼容平滑迁移旧版文件命名，无冲突时接管历史数据。 */
-function adoptLegacyFile(file: string): string {
-  const legacy = path.join(path.dirname(file), path.basename(file).replace(/^amadeus-next-/, 'salieri-next-'))
-  try {
-    if (!existsSync(file) && existsSync(legacy)) renameSync(legacy, file)
-  } catch {
-    // 迁移失败时回退为空存储，避免阻断应用启动。
-  }
-  return file
-}
-
 function createRuntime(): AppRuntime {
   const root = projectRoot()
   const userData = app.getPath('userData')
@@ -111,7 +99,6 @@ function createRuntime(): AppRuntime {
     userData,
     memoryDir,
     clock: systemClock,
-    store: new SessionStore(adoptLegacyFile(path.join(userData, 'amadeus-next-sessions.json'))),
     settings: { read: () => readYaml(settingsFile), write: data => writeYaml(settingsFile, data) },
     safeStorage,
     dialog,

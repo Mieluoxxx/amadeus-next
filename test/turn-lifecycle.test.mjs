@@ -5,7 +5,6 @@ import os from 'node:os'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import { AppRuntime } from '../src/main/appRuntime.ts'
-import { SessionStore } from '../src/main/sessionStore.ts'
 import { SpeechBridge } from '../src/main/speechBridge.ts'
 import { ageOf, isActiveStatus, isOpenStatus, normalizeApproval, normalizeCard, normalizeTasks } from '../src/renderer/components/scene/taskTypes.ts'
 
@@ -37,8 +36,6 @@ function runtime(env = {}, clock = { value: Date.now() }, emote = {}, state = {}
   const fakes = {
     dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
     timestampedSessionTitle: () => '新对话-2026-01-01-00-00',
-    // Pre-migration history: listed, readable, never writable.
-    SessionStore: class { sessions = state.legacy ?? [{ id: 'legacy', title: 'Legacy', messages: [{ role: 'user', text: 'keep me', turn_id: 'old' }] }] },
     SceneHost: class { url = 'http://127.0.0.1:1234/scene/stage/index.html'; async start() {}; setEmoteAssets(...args) { calls.push(['emote-assets', ...args]) }; reload() { calls.push(['reload-scene']) }; close() {} },
     // 模型烘焙在独立进程里跑：被测类只依赖它的返回值。
     ensureBakedModel: async () => ({ psb: '/fixture/model.psb', meta: '/fixture/model.meta.json' }),
@@ -94,7 +91,6 @@ function runtime(env = {}, clock = { value: Date.now() }, emote = {}, state = {}
       setTimeout(fn, ms) { const id = ++timerId; timers.set(id, { fn, ms, at: clock.value + ms }); return id },
       clearTimeout: id => timers.delete(id),
     },
-    store: new fakes.SessionStore(),
     settings: { read: () => settings, write: data => { Object.keys(settings).forEach(key => delete settings[key]); Object.assign(settings, data) } },
     safeStorage: { isEncryptionAvailable: () => false },
     dialog: fakes.dialog,
@@ -158,7 +154,7 @@ test('missing character resources do not block application initialization and ca
   })
   await app.init()
   assert.equal(bakes, 0, 'window startup must not bake the character')
-  assert.equal((await app.request('session.list')).sessions.length, 3, 'two worker sessions plus the legacy one')
+  assert.equal((await app.request('session.list')).sessions.length, 2, 'the two worker sessions')
   const failed = await app.request('wallpaper.start')
   assert.equal(failed.status, 'error')
   assert.match(failed.error, /缺少模型包/)
@@ -492,21 +488,6 @@ test('speech helper replacement resets listening and ignores the retired helper 
   assert.equal(children.length, 2, 'A late exit must not clear the new helper')
   assert.equal(events.length, 0)
   bridge.dispose()
-})
-
-test('legacy history stays readable but the store is read-only', () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), 'amadeus-history-'))
-  try {
-    const file = path.join(root, 'history.json')
-    const original = JSON.stringify({ currentId: 'two', sessions: [{ id: 'one', title: 'Legacy', messages: [{ role: 'user', text: 'keep me' }] }, { id: 'two', title: 'Two', messages: [] }] })
-    writeFileSync(file, original)
-    const store = new SessionStore(file)
-    assert.equal(store.sessions[0].messages[0].text, 'keep me')
-    assert.equal(typeof store.save, 'undefined', 'nothing may write the old history again')
-    writeFileSync(file, JSON.stringify([{ id: 'array', title: 'Array form', messages: [] }]))
-    assert.equal(new SessionStore(file).sessions[0].id, 'array', 'the oldest array layout still loads')
-    assert.deepEqual(new SessionStore(path.join(root, 'missing.json')).sessions, [])
-  } finally { rmSync(root, { recursive: true, force: true }) }
 })
 
 test('development main reload exits for the launcher only after model and playback finish', async () => {
@@ -963,30 +944,14 @@ test('chat.abort stops the worker run and tells the renderer; events of the stop
   assert.equal(calls.length, count)
 })
 
-test('sessions come from the worker; legacy sessions are listed read-only and cannot be continued', async () => {
-  const { app, calls, submits } = runtime(undefined, undefined, undefined, {
-    legacy: [
-      { id: 'old', title: '旧对话', messages: [{ role: 'user', text: 'keep me', turn_id: 'a' }, { role: 'assistant', text: '好的', turn_id: 'a' }] },
-      { id: 'ghost', title: '新对话', messages: [] },
-    ],
-  })
+test('sessions come from the worker; unknown sessions cannot be loaded', async () => {
+  const { app, submits } = runtime()
   await app.init()
   const listed = await app.request('session.list')
-  assert.deepEqual(listed.sessions.map(item => [item.id, item.readonly ?? false]), [['one', false], ['two', false], ['old', true]], 'empty legacy shells are not listed')
+  assert.deepEqual(listed.sessions.map(item => item.id), ['one', 'two'])
   assert.equal(listed.current_session_id, 'one')
   assert.equal('messages' in listed, false, 'history comes from session.load')
-  const loaded = await app.request('session.load', { session_id: 'old' })
-  assert.equal(loaded.ok, true)
-  assert.equal(loaded.session.readonly, true)
-  assert.deepEqual(loaded.messages.map(item => item.text), ['keep me', '好的'])
-  assert.equal(calls.some(([type, value]) => type === 'worker-load' && value === 'old'), false, 'legacy history never touches the worker')
-  assert.deepEqual(await app.request('chat.send', { text: 'continue' }), { ok: false, error: 'legacy session is read-only' })
-  assert.deepEqual(await app.request('chat.send', { session_id: 'old', text: 'continue' }), { ok: false, error: 'legacy session is read-only' })
-  assert.equal(submits.length, 0)
-  assert.equal((await app.request('session.rename', { session_id: 'old', title: 'x' })).ok, false)
-  assert.equal((await app.request('session.delete', { session_id: 'old' })).ok, false)
   assert.equal((await app.request('session.load', { session_id: 'missing' })).ok, false)
-  // 回到 worker 会话后可以继续。
   assert.equal((await app.request('session.load', { session_id: 'two' })).ok, true)
   assert.equal((await app.request('chat.send', { text: 'hi' })).ok, true)
   assert.equal(submits[0].sessionId, 'two')
@@ -1259,6 +1224,20 @@ test('task commands and the task graph pass through; only an explicit true allow
   assert.deepEqual(calls.find(([type]) => type === 'task.graph')[1], { sessionId: 'one', tasks: [{ taskId: 't1', kind: 'research', title: '查', status: 'running' }] })
 })
 
+test('the work panel lists across sessions and traces a task in the session it names, not the current one', async () => {
+  const listed = { sessions: [{ sessionId: 'two', title: '旧', tasks: [{ taskId: 't_01', status: 'done' }] }] }
+  const { app, calls, emitPi } = runtime({}, undefined, {}, { replies: { 'task.all': listed, 'task.trace': { task: { taskId: 't_01' }, actions: [] } } })
+  await app.init()
+  assert.deepEqual(await app.request('work.list'), { ok: true, ...listed })
+  assert.deepEqual((await app.request('work.trace', { session_id: 'two', task_id: 't_01' })).ok, true)
+  assert.deepEqual(await app.request('work.trace', { task_id: 't_01' }), { ok: false, error: 'session not found' }, 'no silent fallback to the current session')
+  const control = calls.filter(([type]) => type === 'pi-control').map(call => call.slice(1))
+  assert.deepEqual(control, [['task.all', {}], ['task.trace', { sessionId: 'two', taskId: 't_01' }]])
+  const actions = [{ id: 'tool:a', type: 'tool', tool: 'read', label: 'x', status: 'running', at: 1 }]
+  emitPi({ name: 'task.activity', sessionId: 'two', taskId: 't_01', actions, toolUses: 1, tokens: 5 })
+  assert.deepEqual(calls.find(([type]) => type === 'task.activity')[1], { sessionId: 'two', taskId: 't_01', actions, toolUses: 1, tokens: 5 }, 'activity from a background session is forwarded, not filtered as a stray turn event')
+})
+
 test('handoff v2 fields (round, progress, question, needs_input) reach the renderer untouched and are normalized there', async () => {
   const entries = [
     { taskId: 't_01', kind: 'research', title: '查', status: 'running', round: 2, progress: { text: '读到第三篇了', at: 1_700_000_000_000 } },
@@ -1349,7 +1328,7 @@ test('forwarded commands are refused while the worker itself is being replaced, 
   await app.init()
   app.deps.memoryDir = mkdtempSync(path.join(os.tmpdir(), 'amadeus-memory-'))
   app.workerReloading = true
-  for (const method of ['session.list', 'session.load', 'task.cancel', 'memory.list']) {
+  for (const method of ['session.list', 'session.load', 'task.cancel', 'work.list', 'work.trace', 'memory.list']) {
     assert.deepEqual(await app.request(method, { session_id: 'one' }), { ok: false, error: 'Runtime reload pending' }, method)
   }
   assert.equal((await app.request('memory.open-folder')).ok, true, 'opening a folder does not need the worker')
@@ -1560,7 +1539,7 @@ test('a worker that is down while the app starts is recovered when it becomes re
   const down = await app.request('session.list')
   assert.equal(down.ok, true)
   assert.equal(down.current_session_id, '', 'no worker, no current session yet')
-  assert.deepEqual(down.sessions.map(item => item.id), ['legacy'], 'legacy history is still browsable')
+  assert.deepEqual(down.sessions, [], 'nothing to list until the worker is back')
   worker.fail.delete('session.list')
   emitPi({ name: 'worker.ready' })
   await flush()
