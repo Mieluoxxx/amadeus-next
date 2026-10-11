@@ -524,7 +524,7 @@ Question: Which ward of Tokyo do you mean?
   6. 组装正文行（`Task:` / `Reason:` / `Partial progress:` / `Question:` 或摘要）写入 `OutboxItem.text`。`needs_input` 的问题走同一条流水线的简化版（`cleanQuestion`）：去控制字符、折成一行、中和标签、截到 400 字符，注入扫描照常。标签、系统注与 `flagged` 行在投递时由 `renderReport` 按 `status` 套上，所以系统注措辞升级不需要迁移数据。
 - **结果是数据**：事件桥的清洗器拦截 `amadeus_*` 标签，不让它们进入字幕和 TTS（`long-term-memory.md` §4.4）。
 - **界面识别**：汇报输入生成的条目 kind 是 `pi.user`，与用户输入一样，**不能按 kind 区分**。界面用 `app.outbox.delivered` 里的 `entryId` 集合识别，把这些条目渲染为任务卡片而不是用户气泡；事件桥给对应回合的 `turn.*` 消息带 `kind: "report"`（依据 `requestId` 前缀 `report:`）。`submit` 返回时条目可能还没放置的情形见 §3.5。
-- **原始结果**：子对话本身保留在 durable 存储中，任务卡片可以展开查看。
+- **原始结果**：子对话本身保留在 durable 存储中，任务卡片与工作面板都可以展开查看；工作面板给的是完整时间线（`architecture.md` §2.4）。
 
 ### 3.4 取消、失败与恢复
 

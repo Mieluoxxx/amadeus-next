@@ -4,8 +4,9 @@
 > v3 变更：依据对 pi-durable 1.1.0 真实包与 Electron 44 的核实，改为**一会话一个存储文件**（durable 没有删除 API）；汇报回合按 `requestId` 识别；流式节流参数与首包预算；worker 重启时序；角色热更新的语义变化；原型验收从 8 条扩到 12 条；记录与现状的行为差异。
 > 定稿补全：话筒仲裁重写（区分 `armed` / `hearing`，转移表，worker 重启时序）；§7 补全封包、载荷、错误码、命令分道；§2.2 补全 SessionHost 的打开 / 回收 / 删除 / 崩溃恢复；§1 模块表按真实代码校正；§11 退路改为自包含（git 历史里没有 pi-coding-agent 版设计）。
 > 跨文档同步：`app.approvals` 挂子对话、确认按 `taskId` + `approvalId`、`task.approval-request`（带 `approvalId`、`detail`、`expiresAt`）/ `task.approval-resolved` 两条事件；汇报只有 `speak` 一种投递，取消不生成汇报、只更新卡片；`delivered` 带 `taskId`，`entryId` 可先为空再由对账补齐；`report.deliver` 遇 `busy` 重试 1 秒 × 5 次再等 `pump()`；并发按会话计；执行环境不是沙箱（路径守卫、环境清理）；记忆开关走命令；`rejections` / `audit` 不可重建；角色热更新的追加语义随模型而变；崩溃后先 `abort` 再 `resume`；单进程独占靠应用层锁，不靠 `busy_timeout`；第一版已定默认值见 §12。
-> 实现同步：P0 与 A1~A6 已实现，pi-durable 是唯一运行时，旧运行时代码已删，旧会话只读。**本文与代码不一致处以代码为准**，已按 `src/main/{floor,appRuntime,piHost,index}.ts` 与 `src/main/durable/*` 校正：打开时序先对账、再中止遗留 run、再 `resume`；`hasActive` 在 `chat.submit` 受理前预置；`checkpoint` 的 5 秒宽限与 `turn.error{code:"closed"}`；`report.deliver` 先判 `already` / `missing` 再判 `busy`；Floor 的 pump 顺序、`busy` 重试后搁置；设置项（`report_proactive`、`web_search_*`、`memory_*`）。首包延迟与缓存命中率（验收 2、3）仍待真实模型实测。
+> 实现同步：P0 与 A1~A6 已实现，pi-durable 是唯一运行时，旧运行时代码已删。**本文与代码不一致处以代码为准**，已按 `src/main/{floor,appRuntime,piHost,index}.ts` 与 `src/main/durable/*` 校正：打开时序先对账、再中止遗留 run、再 `resume`；`hasActive` 在 `chat.submit` 受理前预置；`checkpoint` 的 5 秒宽限与 `turn.error{code:"closed"}`；`report.deliver` 先判 `already` / `missing` 再判 `busy`；Floor 的 pump 顺序、`busy` 重试后搁置；设置项（`report_proactive`、`web_search_*`、`memory_*`）。首包延迟与缓存命中率（验收 2、3）仍待真实模型实测。
 > 实现同步（handoff v2 与审查修复）：主对话工具集是六个（`remember`、`forget`、`handoff`、`handoff_send`、`handoff_status`、`handoff_cancel`），任务可续接（轮次）、可查询、可提问（`needs_input`），子代理有 `report_progress`，另有委托专用模型（设置项 `delegation_model`，环境变量 `AMADEUS_DELEGATION_MODEL`）；`task.graph`、`task.report-ready`、`session.load` 的卡片都带 `round`、`progress`、`question`（§7）；打开会话时为每个被作废的确认补发 `task.approval-resolved { state: "expired" }`；Floor 对 `deferred` 的汇报做退避，回合有 120 秒看门狗（§4.2）；安全边界补了确认卡完整展示、`web_fetch` 固定 IP、`pathGuard` 显式 deny 与悬空链接、进程锁防 pid 复用、`remember` 的引用下限与汇报回合禁用（§6）。
+> 实现同步（工作面板、自动命名与旧会话清理）：新增工作面板（§2.4）——worker 命令 `task.all` / `task.trace`、事件 `task.activity`、派生账本 `sessions/work.json`，界面是与 transcript / settings 并列的 `work` 面板；会话标题改为自动命名（§2.3），`app.session.titleSource` 区分占位、自动与主人手改；旧会话只读通道整体删除，`SessionStore` 与 `amadeus-next-sessions.json` 不再读取（§9、§12 #2）；`handoff` 改为先调用再开口（§3.2）。
 > 前提（原型阶段）：pi-durable 原型（评估 §4）通过。若不通过，见 §11 的退路。
 
 ---
@@ -34,7 +35,7 @@
 
 ```text
 ┌──────────────────────── 渲染进程 ────────────────────────┐
-│ NextApp / ScenePage：对话界面、任务卡片、设置页（含长期记忆、待确认）│
+│ NextApp / ScenePage：对话界面、任务卡片、工作面板（§2.4）、设置页（含长期记忆、待确认）│
 │ Scene：E-mote 角色、口型、表情、音频播放                     │
 └───────────────▲──────────────────────────────┬───────────┘
                 │ next.request（invoke）/ next.event（push）
@@ -44,7 +45,6 @@
 │  ├─ Floor 话筒仲裁（§4）：由回合 / ASR / 重载标志推导状态      │
 │  ├─ 呈现管线：PresentationText → 字幕 + FishTts + 表情     │
 │  ├─ SpeechBridge（Apple Speech helper）                    │
-│  ├─ LegacySessions：只读旧会话（amadeus-next-sessions.json）│
 │  └─ PiHost：worker 命令通道 + 事件订阅 + 自动重拉           │
 └───────────────▲──────────────────────────────┬───────────┘
                 │ utilityProcess 端口消息（§7）                
@@ -68,7 +68,7 @@
 | :--- | :--- | :--- |
 | `AppRuntime`（`appRuntime.ts`） | 单个 `activeTurn`（`piDone` / `drained` / `speech`）；`listeningEnabled`、`listeningResumeAt`；`runChat` 调 `PiHost.prompt`；会话来自 `SessionStore`；渲染方法 `session.list / create / load`、`chat.send / abort`、`asr.start / stop`、`voice.playback`、`pi.models / pi.model.set`、`runtime.reload` | `activeTurn` 带 `kind`（`user` / `report`）、`parser`（`PresentationText`）；回合经 `chat.submit` 加 `turn.*` 事件（`onPiEvent` → `onTurnEvent`）；会话操作转发给 worker，并缓存 `workerSessions`、待确认数；汇报回合（`deliverReport`）；设置项 `report_proactive`、`delegation_model`、`web_search_*`、`memory_*`；回合看门狗（120 秒，§4.2）；`worker.ready` / `worker.down` 时作废缓存里的未决确认并发 `expired`（§7.3）；渲染方法映射见 §7.5 |
 | `Floor`（`floor.ts`） | 无 | **纯决策器**：不碰呈现、TTS 与 worker 通信，宿主通过 `FloorHost`（`gates()`、`turn()`、`speechStart/Stop/Finish`、`deliver`、`flushReload`）注入；时钟走 `deps.clock`，状态由 `turn()` 与自己的 `asrOn` / `hearing` 推导，不另存一份。`test/floor.test.mjs` 用假时钟覆盖 |
-| `SessionStore`（`sessionStore.ts`） | `StoredSession { id, title, messages[] }` 加 `currentId`；经 `RuntimeDeps.store` 注入 | **只读**：没有任何消息的旧会话不列出，其余在列表里以 `readonly: true` 单独成组，可看不可续；`currentId` 不再写入 |
+| `SessionStore`（`sessionStore.ts`） | `StoredSession { id, title, messages[] }` 加 `currentId`；经 `RuntimeDeps.store` 注入 | **已删除**（2026-10-11）：旧会话不再列出，`amadeus-next-sessions.json` 不再读取，`RuntimeDeps.store` 与界面上的 `readonly` 一并移除（§9、§12 #2） |
 | `PiHost`（`piHost.ts`） | `prompt()` / `abort()` / `request()` / `restart()`；文本与工具事件只在 `prompt` 的回调里；worker 意外退出后不会自己重拉，要等下一条命令触发 `ensureStarted()` | 只有 `request(command, params)`（`prompt` / `abort` 并入；`abort` 在没有进程时不拉起 worker）、`restart()`、`dispose()`；构造函数多一个 `onEvent`；命令封包 `{ id, command, params }`；`PiError` 保留 `code`；合成 `worker.ready` / `worker.down` 与 `turn.error(worker_exit)`；自动重拉（§2.2）。`restart()`：`checkpoint` → 拉起 → 杀旧；替换失败对旧 worker 发 `resume`；`checkpoint` 失败则杀旧进程并等它 `exit`（最多 10 秒）再拉起 |
 | `pi-worker`（`pi-worker.ts`） | `createAgentSession` 按会话缓存；`stopping` / `epochs` 旁路 abort；命令 `prompt` / `abort` / `checkpoint` / `reload` / `models` / `set-model` | 入口 `pi-worker.ts` 只有 11 行，转给 `durable/worker.ts`（建 `ModelRuntime`、`DurableRuntime`，先取进程锁再发 `ready`，`ready` 之后后台 `warm()`）。命令、分道、`stopping` / `epochs` 在 `durable/runtime.ts`；`checkpoint` 关闭全部 Harness 并拒绝后续命令（`resume` 除外） |
 | `piSessions.ts`、旧 worker（`piLegacyWorker.ts`） | Pi jsonl 会话；`createAgentSession` 运行时 | **已删除**；退路见 §11 |
@@ -89,6 +89,8 @@ src/main/
     ├── sessionHost.ts      # 一会话一 Harness 的打开 / 关闭 / 删除 / 回收 / 中毒恢复 / 扫描重建
     ├── sessionIndex.ts     # sessions/index.json 的原子读写；SessionDoc（app.session）
     ├── sessionName.ts      # 会话自动命名：触发时机、命名提示词、MMDD｜话题、titleSource（§2.3）
+    ├── workLedger.ts       # sessions/work.json：委托摘要与动作计数的派生账本（§2.4）
+    ├── childActivity.ts    # 子对话动作记录：条目 → 动作，历史与实时共用一套翻译（§2.4）
     ├── processLock.ts      # sessions/.lock
     ├── eventBridge.ts      # watchEvents → turn.* 事件；requestId → turn 映射
     ├── scrub.ts            # TagScrubber：流式剔除 <amadeus_*> 围栏与写成文本的工具调用；TOOL_TEXT_TAGS
@@ -113,6 +115,7 @@ src/main/
 <userData>/                                 # app.getPath('userData')
 ├── sessions/
 │   ├── index.json                          # 派生缓存，见下；缺失或损坏时重建
+│   ├── work.json                           # 派生缓存：各会话委托的摘要与动作计数（§2.4）；缺失或损坏时从空账本开始
 │   ├── .lock                               # worker 进程锁（pid + 启动时间），见 §2.2
 │   ├── .trash/<id>-<时间戳>/               # 删除中的会话目录；启动时清空
 │   └── <session_id>/                       # id 须匹配 ^[A-Za-z0-9_-]{1,128}$
@@ -123,7 +126,7 @@ src/main/
 │   ├── journal/*.md                        # 情景日记（M3，事实来源）
 │   ├── .trash/                             # 删除与清空的去处，保留 7 天
 │   └── index.sqlite3                       # meta、FTS 可重建；rejections、audit 是账本，不可重建
-├── amadeus-next-sessions.json              # 旧 SessionStore：只读历史
+├── amadeus-next-sessions.json              # 旧 SessionStore 的历史：不再读取，保留
 └── pi-sessions/*.jsonl                     # 旧 Pi 会话：不再打开，保留
 
 ~/.amadeus/                                 # amadeusHome()，可由 AMADEUS_HOME 覆盖
@@ -137,6 +140,7 @@ src/main/
 | :--- | :--- | :--- |
 | `sessions/<id>/durable.sqlite` | 仅 pi-worker | **事实来源** |
 | `sessions/index.json` | 仅 pi-worker 的 SessionHost | 派生，可从各库的 `app.session` 文档重建 |
+| `sessions/work.json` | 仅 pi-worker 的 SessionHost | 派生，可从各库的 `app.handoffs` 与子对话条目重建（§2.4）；缺失或损坏从空账本开始，会话下次打开时补齐 |
 | `memory/core`、`memory/journal` | pi-worker 的 MemoryStore；主人也可直接改 | **事实来源** |
 | `memory/index.sqlite3` | MemoryStore | `meta`、`memory_fts` 派生，可重建；`rejections`、`audit` 是账本，**不可重建**，随 `memory/` 一起备份 |
 | `~/.amadeus/pi/ROLE.md`、`PRESENTATION.md` | 主人 | **事实来源**；不进 durable，改完下一次请求生效（§9） |
@@ -186,7 +190,7 @@ src/main/
 | 4 | **先不 `resume()`**：`Harness.open` 只把 `running` 任务改回 `pending`，不调度；`resume()`（或 submit、wait、abort）才开始。实测重开后直接 `resume()`，被中断的生成会**重新向模型发请求**，与现有"崩溃不重放 prompt"（`test/pi-reload.test.mjs`）冲突。先附上事件桥（`watchEvents`，不调度），从 snapshot 里读出有没有遗留的根对话 run（`hasRun`） |
 | 5 | **对账**（`reconcileHandoffs` + `expireApprovalsOnOpen`，此时没有任何任务在跑）：① `outbox.pending` 里的每个 id，用 `tx.submissionByRequest(root, "report:<id>")` 查，已有提交就补做第二次提交（`pending` 移除、写 `delivered`）；② `delivered` 里 `entryId` 为空的项，用 `harness.submission(submissionId).status()` 补齐；③ `app.handoffs` 里未终态条目的子对话，把 `app.approvals` 中所有 `pending` 置 `expired`、`by: "restart"`（被打断的工具随后返回 `interrupted`，子代理自行决定是否重新请求；工具约束 §4.3）。**对账前先记下这些 `pending` 项，对账后为每一项补发 `task.approval-resolved { state: "expired" }`**：作废发生在第 7 步挂 `app.approvals` 监视之前，监视看不到这次状态变化，渲染进程里旧的确认卡片只能靠这个事件收起；④ 清理器：queued / running 的委托若 Reporter 已终止或不存在，置 `failed`（原因 `lost`）并补写 outbox（工具约束 §3.4） |
 | 6 | 有遗留 run（`hasRun`）→ `root.abort()`，随后 `harness.resume()`。**abort 排在对账之后**：`Conversation.abort()` 内部会先 `tasks.resume()` 启动调度器（`pi-durable/dist/harness/harness.js`），而对账第 ③ 项要求此刻没有工具任务在跑，否则会误伤正在等待确认的任务。abort 实测约 4ms，不发模型请求，提交落为 `unanswered / aborted`：半截回答成为 `aborted` 的 assistant 条目，不进模型上下文；后台任务不受影响。原因：没人在听的回答没有意义，也不该在后台白烧 token（评估 §3.1、S1） |
-| 7 | 数一遍主人发言次数（记忆重新冻结按它触发）；挂 watch：`app.outbox`（现存 `pending` 逐条发 `task.report-ready`，重放——`watchDoc` 的 `value` 只给打开时的现值，不会回放历史变化）、`app.handoffs`（`task.graph`，状态 / 轮次 / 问题的变化立即发，只有 `progress` 变了按 15 秒节流，§7.3）、各未终态委托子对话的 `app.approvals`（§4.4）；校正索引（`hasActive`、`pendingReports`） |
+| 7 | 数一遍主人发言次数（记忆重新冻结按它触发）；挂 watch：`app.outbox`（现存 `pending` 逐条发 `task.report-ready`，重放——`watchDoc` 的 `value` 只给打开时的现值，不会回放历史变化）、`app.handoffs`（`task.graph`，状态 / 轮次 / 问题的变化立即发，只有 `progress` 变了按 15 秒节流，§7.3；同时同步账本并给 queued / running 的条目挂子对话监视，§2.4）、各未终态委托子对话的 `app.approvals`（§4.4）；校正索引（`hasActive`、`pendingReports`） |
 
 **删除时序**（`session.delete`）：
 
@@ -218,7 +222,7 @@ src/main/
 **checkpoint / resume**（计划内重启）：
 - `checkpoint`：**一到达就进入 `checkpointing`**，此后除 `chat.abort`、`checkpoint`、`resume` 外的命令一律回 `closed`。然后：等所有会话道排空、记忆任务落定 → 给每个会话的在途回合最多 **5 秒宽限**（`checkpointGraceMs`）自然结束 → 仍在流式的，`close()` 会中止它们，事件桥给它们发 `turn.error{code:"closed"}`（主进程按"被打断"处理：`chat.interrupted`，不弹错误）→ 关闭全部 Harness（空闲约 1ms，流式中约 73ms）→ 关记忆服务、落索引、释放进程锁 → `closed`。此后只接受 `checkpoint`（幂等）和 `resume`。不"按需重开"：重开会让旧进程和正在启动的新进程同时持有同一个库，见下。
 - `PiHost.restart()` 顺序：对旧 worker `checkpoint` → 拉起替换进程并等 `ready`（新进程此时才取锁、开库）→ 杀旧进程。
-- 替换进程启动失败：对旧 worker 发 `resume`（重新取锁、起记忆服务、以磁盘为准重校索引，会话懒重开，`hasActive` 的会话后台重开），行为恢复；`restart()` 抛错给上层。
+- 替换进程启动失败：对旧 worker 发 `resume`（重新取锁、起记忆服务、以磁盘为准重校索引与账本，会话懒重开，`hasActive` 的会话后台重开），行为恢复；`restart()` 抛错给上层。
 - `checkpoint` 超时或失败：杀旧进程，**等它的 `exit` 事件到了**（最多 10 秒，之后靠新 worker 的进程锁兜底）再拉起新进程（冷启动，等同崩溃恢复）。
 - `AppRuntime.flushReload` 只在两处发 `checkpoint`：目标含 `main`（退出前落盘，之后 `exit(75)`），以及 `restart()` 内部；目标含 `pi-worker`（或 `pi` 且 worker 已挂）走 `restart()`，`pi` 单独重载走 `reload`；`scene`、`speech` 不碰 worker。
 
@@ -253,6 +257,23 @@ src/main/
   - 占位请求（`source: 'default'`）比自动命名晚到时会被忽略。
   - 旧库没有这个字段：标题还是占位的当作 `default`，其它的当作主人起的名字保护起来。
 - **失败**：只记日志，下一个到点的回合再试。测试夹具默认关闭自动命名（`DurableRuntimeOptions.autoName: false`），免得命名请求消耗掉 faux 的脚本响应。
+
+### 2.4 工作面板
+
+代码在 `workLedger.ts`（账本）、`childActivity.ts`（动作记录）、`sessionHost.ts` 的 `work()` / `attachChild()`（监视）与 `runtime.ts` 的 `allTasks()` / `trace()`；界面在 `WorkPanel.tsx` / `useWorkPanel.ts` / `workTypes.ts`。红莉栖委托出去的事要看得见：谁在跑、跑了多久、最近做了什么，以及完整做过的每一步。
+
+```text
+app.handoffs 变化 ─► SessionHost.work()：同步 sessions/work.json；给 queued / running 的条目挂子对话监视
+子对话 watchEvents ─► ActivityLog ─► 事件 task.activity { sessionId, taskId, actions, toolUses, tokens }
+work.list（task.all）   ─► 合并两处：已打开的会话读 app.handoffs 并附最近三步，其余读账本
+work.trace（task.trace）─► 打开该会话，读子对话的全部条目与用量，顺带校正账本计数
+```
+
+- **账本**（`sessions/work.json`）：一条记录是一条 `TaskSummary` 去掉易变的 `progress`、加上 `toolUses` / `tokens`。它是派生缓存（§2 存储表）：已打开的会话以库里的 `app.handoffs` 为准，每次变化整体替换，计数沿用账本里已有的；未打开的会话读它，所以列出任务不必为了列表打开会话库。写盘合并到 200ms 内一次，临时文件加 `rename`；写失败只记日志、留着 dirty，下一次变更重试。
+- **动作记录**（`ActivityLog`）：把子对话的条目翻译成动作——`pi.user` 条目是 `brief`，assistant 的 text 块是 `text`，`toolCall` 是 `tool`（`labelOf` 的 `LABEL_KEYS` 取最能说明这一步的参数：`bash` 的 `command`、`read` / `write` / `edit` / `list_dir` 的 `path`、`web_fetch` 的 `url`，都取不到就折叠成 JSON），同 `toolCallId` 的结果条目补上状态、耗时与截断后的输出；工具任务 faulted 时没有结果条目，按 `error` 收尾，不让它一直显示在转。`report_progress` 不计入工具调用数，另记一条 `progress`。动作 id 由条目 id 或 `toolCallId` 派生，所以历史（`task.trace`）与实时（`watchEvents`）走同一套翻译，界面按 id 合并即可对齐基线。内存里每个任务只留最近 200 条（`LIVE_MAX`），列表行的最近几步与详情共用它。
+- **实时**：`app.handoffs` 里状态为 queued / running 的条目挂一次子对话 `watchEvents`（成为终态、会话关闭时摘下）。**子对话不走事件桥**，这是唯一读它实时事件的地方。动作先攒在内存里，最多每 250ms 推一条 `task.activity`，顺带带上工具调用数与 token 数；结果条目与终态常在同一个提交里到达，摘下前把已收到的动作推完。
+- **回退**：`task.all` 读某个会话的库失败时退回该会话的账本记录；`task.trace` 的任务不在 `app.handoffs` 里回 `not_found`，读不到子对话时只给条目里的摘要。
+- **界面**（`ScenePage` 的 `work` 面板，与 transcript / settings 并列，`sceneLayout` 的 `ScenePanelKind`）：列表分"进行中 / 已结束"两组，每行是标题、状态、轮次、等待或已运行时长、最近几步与工具调用数 / token 数；点开是完整时间线，`needs_input` 的任务在工具栏上带提醒点，"打开所在会话"跳到所在会话。列表在面板打开、worker 重连与会话增删时重拉一次，`task.graph` 与 `task.activity` 作为增量合并；基线请求在途时到达的增量先缓冲，响应落地后重放，旧响应不会盖掉新状态。
 
 ## 3. Agent 层
 
@@ -316,7 +337,7 @@ entry    pi.user（汇报回合：<amadeus_handoff_result>）          子代理
 | 上下文 | 只看到 `brief`；不注入核心记忆，不继承主对话历史 |
 | 生命周期 | 后台任务：主人按停止不影响它；`handoff_cancel` 或任务卡片上取消时，置 `cancelRequested`，Reporter 对子对话调用 `abort()`；取消只更新 `app.handoffs` 与卡片，不写 outbox。`needs_input` 的任务没有 Reporter，取消当场置 `cancelled` 并撤回还没投递的提问汇报。结束后的任务可被 `handoff_send` 续接（`done` / `failed` / `timeout` / `needs_input`），`cancelled` 的不行 |
 | 资源 | 超时默认 5 分钟（活跃时间，不含确认等待；Reporter 用 `runtime.sleep` 计时）；并发**按会话计**，每会话默认 2（`app.handoffs` 计数 + Reporter `wait-slot` 排队，一会话一库，各库互不可见）；崩溃时只有 `replay: "safe"` 的工具会重跑 |
-| 进度 | 子代理对话的事件不经事件桥；任务卡片的数据来自 `app.handoffs`。子代理用 `report_progress`（三类都带）写一行进度备注，落在条目的 `progress`，只给任务卡片与 `handoff_status`，不打扰主人；推给界面的 `task.graph` 对只有 `progress` 变化的更新按 15 秒节流 |
+| 进度 | 子代理对话的事件不经事件桥（工作面板的动作流另行挂子对话监视，§2.4）；任务卡片的数据来自 `app.handoffs`。子代理用 `report_progress`（三类都带）写一行进度备注，落在条目的 `progress`，只给任务卡片与 `handoff_status`，不打扰主人；推给界面的 `task.graph` 对只有 `progress` 变化的更新按 15 秒节流 |
 | 结果 | Reporter 写入 `app.outbox.pending`，由主进程决定何时投递（§4.3） |
 
 ---
@@ -356,8 +377,8 @@ Floor 的状态**由现有标志推导**，不另存一份：
 | 动作 | 闸门 |
 | :--- | :--- |
 | 开麦（`speech.start`） | `listeningEnabled` ∧ `sceneReady`（`asr.start` 在场景未就绪时只记意图，握手后补开）∧ worker 就绪 ∧ 识别器没在跑 ∧ 无进行中回合 ∧ 非 blocked ∧ 缓冲期已过 |
-| 起用户回合 | 非 blocked（`reloading`、`reloadTargets` 非空、`importingEmote`，由 `sendChat` 拒绝）∧ 会话不是旧会话（`legacy session is read-only`）∧ 不在删除中 |
-| 起汇报回合 | 非 blocked ∧ 无进行中回合 ∧ worker 就绪 ∧ `sceneReady` ∧ `report_proactive` ∧ 当前会话不是旧会话 ∧ 当前会话有未搁置的 pending ∧ 没有投递在途、没有 `busy` 重试计时器 ∧ 输入框没有草稿（`composing` 为 false） ∧ 状态为 `idle` 或（`armed` 且防抖通过）∧ 缓冲期已过 |
+| 起用户回合 | 非 blocked（`reloading`、`reloadTargets` 非空、`importingEmote`，由 `sendChat` 拒绝）∧ 不在删除中 |
+| 起汇报回合 | 非 blocked ∧ 无进行中回合 ∧ worker 就绪 ∧ `sceneReady` ∧ `report_proactive` ∧ 当前会话有未搁置的 pending ∧ 没有投递在途、没有 `busy` 重试计时器 ∧ 输入框没有草稿（`composing` 为 false） ∧ 状态为 `idle` 或（`armed` 且防抖通过）∧ 缓冲期已过 |
 
 - `composing` 由渲染进程用 `chat.composing { active }` 上报，语义是"草稿非空，且最近 30 秒内有键入"（超时由渲染进程自己置回 false，避免一份忘在框里的草稿让汇报永远发不出去）。主进程在切会话、`chat.send`、窗口关闭时把它清零。
 - `report_proactive` 关闭时，主进程**不发** `report.deliver`，汇报留在 `pending`，界面只显示卡片。取消的任务不进 outbox，所以闸门里没有"取消"这一类。
@@ -376,7 +397,7 @@ Floor 的状态**由现有标志推导**，不另存一份：
 | :--- | :--- | :--- | :--- | :--- |
 | 1 | idle | `asr.start` | `listeningEnabled = true`；闸门通过则 `speech.start` | armed（闸门未过则留在 idle，解除后补开） |
 | 2 | armed | ASR 非空 partial | 记 `hearing` | hearing |
-| 3 | hearing | ASR 最终结果（自动） | 识别器已结束（`asrOn = false`）。判定（`recognized`）：blocked 或有回合在进行 → 丢弃；`listeningEnabled` 关、旧会话或空文本 → 丢弃；否则以新 `turnId` 起用户回合（`sendChat`） | responding(user) |
+| 3 | hearing | ASR 最终结果（自动） | 识别器已结束（`asrOn = false`）。判定（`recognized`）：blocked 或有回合在进行 → 丢弃；`listeningEnabled` 关或空文本 → 丢弃；否则以新 `turnId` 起用户回合（`sendChat`） | responding(user) |
 | 4 | hearing | ASR 最终结果（`manual`，主人点了停） | blocked 或有回合在进行时同样丢弃；否则文本进输入框（`asr.recognized` 照常转给界面），不起回合；`listeningEnabled = false` | idle |
 | 5 | armed、hearing | ASR 报错、no-speech、30 秒无转写 | `status()`：`listeningEnabled = false`；清 `hearing`；识别结束即 `asrOn = false`，随后 `pump(false)` | idle |
 | 6 | armed、hearing | `asr.stop` | `listeningEnabled = false`；`speech.finish(true)` | idle |
@@ -490,14 +511,16 @@ watchEvents（worker） ─ 文本差量 ─► 清洗器（scrub 记忆和结�
 
 找不到映射的 run（理论上只在恢复过程中出现）：不发 `turn.*`，`run_end` 时发 `session.updated`。
 
-**子对话的文档**（不走 `watchEvents`）：事件桥另外监视两类 `watchDoc`：
+**子对话的文档**（`watchDoc`，不是 `watchEvents`）：事件桥另外监视两类 `watchDoc`：
 - `app.handoffs` 与 `harness.watchTaskGraph()` 合并成 `task.graph`；`app.outbox` 新增的 pending → `task.report-ready`。
 - 每个未终态委托的子对话的 `app.approvals`：新增 `pending` 项发 `task.approval-request`，`state` 离开 `pending` 发 `task.approval-resolved`。会话打开时对 queued / running 的委托挂上，运行中看到新条目也挂上，条目终态且确认都已收尾后卸载。这是 `app.approvals` 放子对话的代价（工具约束 §4.3）。
 
+子对话自己的事件流只给工作面板用（§2.4），不进上面两条 `watchDoc`。
+
 **界面历史**（`session.load` 的 `messages`）：
 - 来源是根对话的 `entries({ order: "ascending" })` 分页读取，**不用 `viewState()`**：`viewState()` 只含压缩头之后的活动上下文，历史会缺。
-- `pi.user` → 用户气泡；`entryId` 在 `delivered` 里的 → `card`（`{ taskId, title, status, summary, round, progress?, question? }`，较早轮次的卡片从当时的汇报文本还原）。`pi.assistant` → 取 text 块，同一个 run 内的多条合并为一个气泡，**经 `PresentationText` 取 `display` 通道**。原因：模型原文带 `<zh>` / `<jp>` 与 `[EMO ...]` 标签，现有 `SessionStore` 存的是 `display`，实时的 `chat.token` 也是 `display`，历史必须一致。
-- `stopReason` 为 `aborted`、`error` 的 assistant 条目不显示：与现状一致（被打断的半截回答从来不进 `SessionStore`），也与 durable 一致（这类消息不进模型上下文，模型下一轮看不到它）。`pi.system`、`pi.tool-result`、`pi.compaction`、`amadeus.*` 不显示。
+- `pi.user` → 用户气泡；`entryId` 在 `delivered` 里的 → `card`（`{ taskId, title, status, summary, round, progress?, question? }`，较早轮次的卡片从当时的汇报文本还原）。`pi.assistant` → 取 text 块，同一个 run 内的多条合并为一个气泡，**经 `PresentationText` 取 `display` 通道**，并且先过一次清洗器（写成文本的工具调用与内部围栏不进历史，与实时链路是同一只）——原因：模型原文带 `<zh>` / `<jp>` 与 `[EMO ...]` 标签，实时的 `chat.token` 也是 `display`，历史必须一致。
+- `stopReason` 为 `aborted`、`error` 的 assistant 条目不显示：与现状一致（被打断的半截回答从来不进历史），也与 durable 一致（这类消息不进模型上下文，模型下一轮看不到它）。`pi.system`、`pi.tool-result`、`pi.compaction`、`amadeus.*` 不显示。
 - `id` 取 `entryId`（权威 id）；`turnId` 只给进行中的回合，历史条目不带。渲染进程的 `reconcileLoadedMessages` 靠它避免重复。
 
 ---
@@ -562,7 +585,8 @@ watchEvents（worker） ─ 文本差量 ─► 清洗器（scrub 记忆和结�
 | 分道 | 命令 | 规则 |
 | :--- | :--- | :--- |
 | 旁路 | `chat.abort` | 不排队，立即执行；递增该会话的 epoch，使已排队但未开始的 `chat.submit` / `report.deliver` 直接回 `aborted`；记录 `stopping`（沿用） |
-| 会话道（按 `sessionId` 串行） | `chat.submit`、`report.deliver`、`session.load`、`session.rename`、`session.delete`、`task.cancel`、`task.approve` | 开头先 `await stopping`，即上一次 abort 已完成 |
+| 不进道（只读、跨会话） | `task.all` | 直接应答，不排会话道也不占全局道：它只读索引、账本与已打开会话的文档，不该跟在 `model.list` 的最长 15 秒网络刷新后面（§2.4） |
+| 会话道（按 `sessionId` 串行） | `chat.submit`、`report.deliver`、`session.load`、`session.rename`、`session.delete`、`task.cancel`、`task.approve`、`task.trace` | 开头先 `await stopping`，即上一次 abort 已完成 |
 | 全局道（串行） | `session.list`、`session.create`、`model.list`、`model.set`、`reload`、`checkpoint`、`resume` | `checkpoint` 先等所有会话道排空 |
 | 记忆道（MemoryStore 的互斥队列） | `memory.*` | 不进会话道，也不占全局道（记忆 §8.1）。业务失败用 `done { ok: false, code, error }` 返回，`error` 应答只留给意外异常 |
 
@@ -580,6 +604,8 @@ watchEvents（worker） ─ 文本差量 ─► 清洗器（scrub 记忆和结�
 | `report.deliver` | `{ sessionId, id, turnId }` | `{ status: "started" \| "already" \| "missing", card? }` | 步骤与应答见 §4.3。`card` 同 `session.load` 的 `card`。`busy`、`not_found`、`closed` |
 | `task.cancel` | `{ sessionId, taskId }` | `{ status: "cancelling" \| "terminal" }` | 置 `cancelRequested`，由 Reporter 对子对话 `abort()`；只更新 `app.handoffs` 与卡片，不写 outbox（工具约束 §3.4）。`needs_input` 的任务没有 Reporter，当场置 `cancelled` 并撤回还没投递的提问汇报。`not_found` |
 | `task.approve` | `{ sessionId, taskId, approvalId, allow }` | `{}` | 按 `taskId` 在 `app.handoffs` 查到子对话，写该子对话的 `app.approvals[approvalId]`；写入前核对该项存在、`state === "pending"` 且未过期，重复点击、过期点击都按 `not_found`（已处理或已过期）应答。键用 `approvalId` 而不是 `callId`；单凭 `approvalId` 找不到子对话，所以必须带 `taskId` |
+| `task.all` | — | `{ sessions: [{ sessionId, title, tasks: [{ taskId, kind, title, status, round, createdAt, startedAt?, endedAt?, reason?, question?, toolUses, tokens, recent? }] }] }` | 工作面板的列表（§2.4）：已打开的会话读 `app.handoffs` 并附上最近三步（`recent`），其余读账本；只返回有任务的会话。`progress` 只有已打开的会话才有 |
+| `task.trace` | `{ sessionId, taskId }` | `{ task: { …同 `task.all` 的条目… }, actions: [{ id, type, text \| tool, … }] }` | 工作面板的详情（§2.4）：打开该会话，读该子对话的全部条目与用量；顺带把数出来的 `toolUses` / `tokens` 写回账本。`not_found` |
 | `memory.list / write / delete / accept / reject / clear / status / configure` | 见记忆 §8.1 | 见记忆 §8.1 | 记忆道。`memory.configure { enabled?, recall? }` 热生效；`memory.open-folder` 由主进程处理，不转发 |
 | `model.list` | `{ sessionId? }` | `{ models: [{ value, label }], current, thinkingLevel, thinkingLevels }` | 原 `models`。`sessionId` 缺省或未打开时取全局默认 |
 | `model.set` | `{ sessionId?, model, thinkingLevel? }` | 同 `model.list` | 原 `set-model`。写 `~/.amadeus/pi/settings.json` 三键；已打开会话在下一次 `chat.submit` 时 `configure`。`invalid` |
@@ -599,6 +625,7 @@ watchEvents（worker） ─ 文本差量 ─► 清洗器（scrub 记忆和结�
 | `turn.error` | `{ sessionId, turnId, kind, code, error }` | `code` 为 durable 的 reason 或 `worker_exit`（由 PiHost 合成） |
 | `turn.aborted` | `{ sessionId, turnId, kind }` | 终止事件三选一，每个回合恰好一条；本地已 `cancelTurn` 的回合，主进程忽略 |
 | `task.graph` | `{ sessionId, tasks: [{ taskId, kind, title, status, round, progress?, question? }] }` | `status` ∈ queued / running / done / failed / timeout / cancelled / **needs_input**，来自 `app.handoffs`（与 `watchTaskGraph()` 合并）；任务卡片的数据源。`round` 从 1 开始、始终有；`progress` = `{ text, at }`，仅进行中且子代理写过 `report_progress`；`question` 仅 `needs_input`。状态、轮次、问题的变化立即推；**只有 `progress` 变了的更新按 15 秒节流**（间隔内合并，间隔结束时推最新一条）。`session.load` 的 `tasks` 同形 |
+| `task.activity` | `{ sessionId, taskId, actions, toolUses, tokens }` | 子对话动作的增量（§2.4）：`actions` 是自上次以来变化的动作，按 id 合并（同一步的调用与结果是同一条）；带上该任务的工具调用数与 token 数。动作先攒在内存里，最多每 250ms 推一条；只在会话打开、条目 queued / running 时有 |
 | `task.report-ready` | `{ sessionId, id, title, status, round }` | `status` ∈ done / failed / timeout / **needs_input**（取消不进 outbox）；`id` 第 1 轮与 `taskId` 同值，之后是 `<taskId>.<n>`；只对新增的 pending id 发，会话打开时对现存 pending 重放 |
 | `task.approval-request` | `{ sessionId, taskId, approvalId, summary, detail, expiresAt }` | 子对话 `app.approvals` 新增 `pending` 项时发。主进程缓存各会话的待确认数：非当前会话在会话列表上标红点；窗口无焦点时发系统通知"有操作等待确认"（工具约束 §4.3） |
 | `task.approval-resolved` | `{ sessionId, taskId, approvalId, state }` | 该项离开 `pending`（`allow` / `deny` / `expired`）时发，卡片据此收起按钮、主进程减红点。**重启时作废的项也会通知**，来源有两处：① worker 打开会话时，对账作废发生在事件桥挂 `app.approvals` 监视之前（§2.2 打开时序第 5、7 步），监视看不到这次变化，所以 SessionHost 在对账前记下 `pending` 项、对账后**为每一项补发 `state: "expired"`**；② 主进程在 `worker.ready` / `worker.down` 时，对缓存里未决的确认各发一条 `expired` 再清空缓存（worker 倒下后没人再等这些确认）。渲染进程据此收起旧卡片 |
@@ -625,25 +652,27 @@ watchEvents（worker） ─ 文本差量 ─► 清洗器（scrub 记忆和结�
 | `chat.submit`、`report.deliver` | 15 秒（只到受理；原 `prompt` 的 0 即不超时，取消） |
 | `session.delete`、`checkpoint` | 30 秒 |
 | `model.list`、`model.set` | 20 秒（内部网络刷新 15 秒） |
+| `task.all`、`task.trace` | 15 秒 / 20 秒（`task.trace` 要打开会话并翻子对话条目） |
 | worker 启动 | 20 秒（沿用） |
 
 ### 7.5 渲染进程接口映射
 
 | 渲染进程方法 / 事件 | 现状 | 迁移后 |
 | :--- | :--- | :--- |
-| `session.list` | 读 `SessionStore`，返回 `messages` | worker `session.list` 加旧会话分组；条目 `{ id, title, readonly?, pendingReports?, pendingApprovals? }`（后者来自主进程缓存，用于红点）；`messages` 来自 `session.load` |
+| `session.list` | 读 `SessionStore`，返回 `messages` | worker `session.list`；条目 `{ id, title, pendingReports?, pendingApprovals? }`（后者来自主进程缓存，用于红点）；`messages` 来自 `session.load` |
 | `session.create` / `session.load` | 同步改 store | 转发；仍返回 `ok`、`client_request_id`、`source: "next"`，并发 `session.changed`（形状不变） |
 | `session.rename`、`session.delete` | 无 | 会话选择器里可以重命名、删除；首次发消息后的时间戳占位仍由主进程 `session.rename`（`source: 'default'`）产生，并发 `session.titled`；之后 worker 的自动命名（§2.3）经 `session.updated` 改成 `MMDD｜话题` |
-| `chat.send` | `PiHost.prompt` | `chat.submit`；旧会话回 `{ ok: false, error: "legacy session is read-only" }` |
+| `chat.send` | `PiHost.prompt` | `chat.submit` |
 | `chat.abort` | 渲染进程无调用方 | A2 加停止按钮 |
 | `pi.models` / `pi.model.set` | worker `models` / `set-model` | `model.list` / `model.set`；回合进行中与重载期间仍回 `Wait for the current reply or reload to finish` |
 | `runtime.reload`、`runtime.status` | 沿用 | 沿用；`reloading` 期间所有转发给 worker 的方法回 `Runtime reload pending` |
 | `chat.composing { active }` | 无 | **新增**，渲染进程在草稿状态变化时上报，供 Floor 闸门使用（§4.2）；主进程自己消化，不转发 worker |
 | `task.cancel`、`task.approve` | 无 | **新增**，转发。`task.approve` 带 `taskId`、`approvalId`、`allow` |
+| `work.list`、`work.trace` | 无 | **新增**，转发给 `task.all` / `task.trace`；`work.trace` 带 `session_id`——工作面板跨会话查看，不能落回当前会话 |
 | `memory.*` | 无 | **新增**，转发给记忆道；`memory.open-folder` 由主进程处理 |
 | 事件 `chat.token / complete / error / interrupted` | 沿用 | 沿用；汇报回合带 `kind: "report"` |
 | 事件 `session.changed`、`session.titled` | 沿用 | 沿用 |
-| 事件 `task.graph`、`task.report`、`task.approval-request`、`task.approval-resolved`、`memory.changed` | 无 | **新增**。`task.report` = 汇报开始时的卡片数据 `{ sessionId, turnId, taskId, title, status, summary, round?, question? }`（`status` 可为 `needs_input`）；确认用请求 / 已处理两条事件（`task.approval-request` 带 `approvalId`、`detail`、`expiresAt`），`memory.changed` 带 `reason` |
+| 事件 `task.graph`、`task.activity`、`task.report`、`task.approval-request`、`task.approval-resolved`、`memory.changed` | 无 | **新增**。`task.report` = 汇报开始时的卡片数据 `{ sessionId, turnId, taskId, title, status, summary, round?, question? }`（`status` 可为 `needs_input`）；确认用请求 / 已处理两条事件（`task.approval-request` 带 `approvalId`、`detail`、`expiresAt`），`memory.changed` 带 `reason` |
 | 事件 `voice.event` | 沿用 | 不变 |
 
 worker 的环境变量（`index.ts` 的 `fork`）：沿用 `PI_CODING_AGENT_DIR`、`AMADEUS_NEXT_PI_CWD`、`AMADEUS_NEXT_PI_AUTH`、`AMADEUS_NEXT_PI_MODELS`、代理三项、`AMADEUS_JEV_*`；`AMADEUS_NEXT_PI_SESSIONS`（旧 jsonl 目录）不再使用；新增 `AMADEUS_NEXT_SESSIONS`（`<userData>/sessions`）、`AMADEUS_MEMORY_DIR`、`AMADEUS_SEARCH_PROVIDER` / `AMADEUS_SEARCH_API_KEY`（设置项 `web_search_provider` / `web_search_api_key`）、**`AMADEUS_DELEGATION_MODEL`**（设置项 `delegation_model`，`provider/model`，空 = 与对话模型相同）。这些在 `fork` 时读取，`piEnv()` 变化会触发 `pi-worker` 重载。`fork` 时 `AMADEUS_DELEGATION_MODEL` 总是被显式设置（设置页留空就是空串）：设置页是委托模型的唯一来源，继承来的同名环境变量不能悄悄生效。worker 里 `delegationModelFromEnv` 只在第一个斜杠处切（模型 id 里可以有斜杠），格式不对一律当作没设置。**记忆开关与召回模式不放环境变量**，走 `memory.configure`（§5）。
@@ -704,7 +733,8 @@ A2 和 A3 可以并行。
 | 角色热更新 | 改 ROLE.md 后 `reload`，system prompt 整体重写 | 不需要 reload；section 每次请求重新渲染，变化作为位置化 system 条目写入。**行为随模型而变**：`compat.supportsMidConvoSystemMessages` 为 true 的模型原样追加，旧文本仍在上下文里，缓存前缀得以保留；其余模型把所有 system 补丁折叠进开头的系统提示，旧文本消失、缓存前缀整体失效，等于现状的"整体重写"。角色需要彻底重来时开新会话（S4 验证） |
 | 会话存储 | 一个 JSON 加一堆 jsonl | 每个会话一个目录；删除会话是删目录 |
 | 新建会话 | 立即写入列表 | 懒创建：发第一条消息时才建目录与库；从未使用的空会话在下次启动时清掉 |
-| 旧会话 | 可继续 | 只读，单独一组 |
+| 会话标题 | 首条消息后写时间戳标题，之后不再变 | 首条消息后是占位标题；第 1 次主人发言后自动起名 `MMDD｜话题`，之后每 5 次刷新一次；主人改过的名字不再被覆盖（§2.3） |
+| 旧会话 | 可继续 | 不再出现：`amadeus-next-sessions.json` 与旧 jsonl 都不再读取（2026-10-11 删掉只读通道，§12 #2） |
 | 界面历史 | `SessionStore` 存的字幕文本 | 从 durable 条目重建，assistant 文本经 `PresentationText` 取字幕通道 |
 | worker 内存 | — | 与 `pi-coding-agent` 同进程时仅多约 +4MB（TypeBox 已被加载；README 的 23MB 不适用于本项目）；每个空闲会话库另加约 0.3MB 与 3 个 fd |
 | 打断 | `session.abort()`，被打断的半截回答不进历史 | `conversation.abort()`：撤回排队输入，半截回答落成 `stopReason: "aborted"` 的 assistant 条目；它不进模型上下文，界面历史也不显示（与现状一致） |
@@ -734,7 +764,7 @@ A2 和 A3 可以并行。
 | 项 | pi-durable 方案 | 退路 |
 | :--- | :--- | :--- |
 | 运行时 | Harness | 沿用现有 `createAgentSession`（`noTools: "builtin"` 去掉内置工具，`customTools` 装 `remember` / `forget` / `handoff` / `handoff_send` / `handoff_status` / `handoff_cancel`；`systemPromptOverride` 渲染角色） |
-| 会话存储 | `sessions/<id>/durable.sqlite` | 沿用 Pi jsonl（`piSessions.ts`）；界面历史仍由 `SessionStore` 之外的 jsonl 重建 |
+| 会话存储 | `sessions/<id>/durable.sqlite` | 沿用 Pi jsonl（`piSessions.ts`）；界面历史由 jsonl 重建（`SessionStore` 与只读旧会话列表已在 2026-10-11 删除） |
 | 汇报信箱 | `app.outbox` 文档 | worker 内自建的 SQLite 表（`node:sqlite`），`pending` / `delivered` 语义不变 |
 | 汇报投递 | `submit` 加 `requestId` | `sendCustomMessage`（以 `role: "user"` 送给模型）；幂等靠 outbox 表自己的 `delivered` 记录 |
 | 子代理与任务 | Anchor / Reporter 后台任务 | worker 内自建任务表与调度；崩溃后按表恢复 |
@@ -752,7 +782,7 @@ A2 和 A3 可以并行。
 | # | 问题 | 决定 | 依据 |
 | :--- | :--- | :--- | :--- |
 | 1 | 是否接受 pi-durable 的实验性依赖 | 接受，`package.json` 锁定 `1.1.0` 精确版本，升级前读 CHANGELOG | 评估 §0 |
-| 2 | 历史会话 | 只读保留，不迁移 | 评估 §3 |
+| 2 | 历史会话 | 不迁移；旧 `amadeus-next-sessions.json` 与旧 jsonl 留在 userData 但不读取（2026-10-11 删掉只读通道，原为"只读保留、单独一组"） | 评估 §3；§9 |
 | 3 | 记忆注入方式 | 自定义条目；重新冻结用 `replace` + `omit` | 评估 §2.2 |
 | 4 | 存储布局 | 一会话一个存储文件 | durable 没有删除 API（评估 §3.1） |
 | 5 | 汇报回合识别 | `requestId` → `SubmissionRecord.entry` → `app.outbox.delivered` | 输入条目一律是 `pi.user`（评估 §2.1） |
@@ -787,6 +817,8 @@ A2 和 A3 可以并行。
 | 34 | 汇报 `deferred` 与回合挂住 | 信箱级退避 1/2/4/8/16/30 秒；回合 120 秒无 `turn.*` 事件由看门狗收尾 | 本文 §4.2 |
 | 35 | 记忆写入的来源控制 | `remember` 的引用过三关（找得到、够长、撑得起正文）；汇报回合里 `remember` / `forget` 禁用；两者都在工具层 / 闸门里做，不靠 prompt | 记忆 §3.2、§3.3 |
 | 36 | 确认卡展示与 `web_fetch` | 确认卡展示完整命令 / 内容，超限直接拒绝而不截断；`web_fetch` 固定校验过的 IP；`pathGuard` 以宿主显式 deny 为准并拒绝悬空符号链接；进程锁核对启动时间防 pid 复用 | 工具约束 §4.1、§4.3、§4.4；本文 §6 |
+| 37 | 会话标题的归属 | `app.session.titleSource`（`default` / `auto` / `manual`）记标题来历：`manual` 永不覆盖，命名期间主人改名以主人为准，晚到的占位不盖自动名 | 本文 §2.3 |
+| 38 | 工作面板的数据来源 | 列表 = 已打开会话的 `app.handoffs`（附最近三步）+ 未打开会话的派生账本 `sessions/work.json`；动作 = 子对话的 `watchEvents` 按 id 合并，最多 250ms 推一次；`task.all` 只读、不打开别的会话，直接应答不排队 | 本文 §2.4、§7.1、§7.2 |
 
 #### 第一版默认（主人可改）
 
@@ -806,6 +838,7 @@ A2 和 A3 可以并行。
 | 子代理超时 / 并发 | 5 分钟（活跃时间）/ 每会话 2 | 按 `research` 子代理的实测时长调整 |
 | 委托专用模型 | 空（与对话模型相同） | 想让后台任务用更便宜或更强的模型时在设置页填 `provider/model` |
 | `task.graph` 进度节流 | 15 秒 | 界面刷新太频繁或太迟钝时调 `limits.progressIntervalMs` |
+| `task.activity` 推送合并 / 列表最近动作数 | 250ms / 3 条（`RECENT_ACTIONS`） | 面板刷新太频繁，或列表里看不到关键步骤时 |
 | 主动汇报 | 开 | 设置页开关 |
 | 汇报防抖（`armed` 抢占） | 500ms | 主人反映被抢话就调大 |
 | `report.deliver` 遇 `busy` 重试 | 1 秒 × 5 次，再等下一次 `pump()` | — |
