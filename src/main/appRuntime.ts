@@ -3,7 +3,7 @@ import { existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 import type { BrowserWindow, Dialog, SafeStorage, Shell } from 'electron'
 import type { Clock } from './clock.ts'
-import type { Baker, ensureBakedModel, importEmoteAssets, verifyEmoteRuntime } from './emoteBake.ts'
+import type { Baker, BakedModel, ensureBakedModel, importEmoteAssets, importEmoteZip, verifyEmoteRuntime } from './emoteBake.ts'
 import type { FishTts } from './fishTts.ts'
 import { Floor, type PendingReport, type ReportOutcome } from './floor.ts'
 import type { PiHost } from './piHost.ts'
@@ -69,6 +69,7 @@ export type RuntimeDeps = {
   verifyEmoteRuntime: typeof verifyEmoteRuntime
   ensureBakedModel: typeof ensureBakedModel
   importEmoteAssets: typeof importEmoteAssets
+  importEmoteZip: typeof importEmoteZip
   createScene(cacheDir: string): SceneHost
   createPi(env: () => Record<string, string>, onEvent: (event: Json) => void): PiHost
   createSpeech(emit: (method: string, params: Json) => void): SpeechBridge
@@ -237,6 +238,8 @@ export class AppRuntime {
         }
       case 'emote.import':
         return this.importEmoteResources()
+      case 'emote.install':
+        return this.installEmoteFromZip()
       case 'system.get_config':
         return { values: this.configSnapshot() }
       case 'system.set_config':
@@ -363,20 +366,20 @@ export class AppRuntime {
     return this.emotePreparation
   }
 
-  private async importEmoteResources(): Promise<Json> {
+  /** 目录与压缩包共用的一条导入流程：抢锁 → 选来源 → 校验与原子替换 → 交给场景。 */
+  private async importEmote(pick: () => Promise<string | undefined>, run: (source: string, destination: string) => Promise<BakedModel>): Promise<Json> {
     if (this.importingEmote || this.reloading || this.reloadTargets.size || this.floor.busy()) {
       return { ok: false, error: '请等待当前回复或资源操作完成后再导入' }
     }
     this.importingEmote = true
     try {
-      const selection = await this.deps.dialog.showOpenDialog({
-        title: '导入 E-mote 角色资源', properties: ['openDirectory'],
-        message: '选择包含 FreeMoteDriver.js、emoteplayer.js 和 models/ 的 emote 目录。资源将复制到本应用，不使用软链接。',
-      })
-      if (selection.canceled || !selection.filePaths[0]) return { ok: true, cancelled: true }
+      // pick 必须在首个 await 之前同步发起（request 派发链上不允许有额外微任务，
+      // 对话框的释放回调依赖同步捕获；见 request() 顶部的时序注释）。
+      const source = await pick()
+      if (!source) return { ok: true, cancelled: true }
       await this.emotePreparation?.catch(() => {})
       const destination = path.join(this.deps.userData, 'emote')
-      const baked = await this.deps.importEmoteAssets(selection.filePaths[0], destination, { baker: this.deps.emoteBaker, cacheDir: this.emoteCache })
+      const baked = await run(source, destination)
       this.emoteRoot = destination
       this.scene.setEmoteAssets(destination, path.dirname(baked.psb))
       return { ok: true }
@@ -386,6 +389,34 @@ export class AppRuntime {
       this.importingEmote = false
       this.floor.wake()
     }
+  }
+
+  /** 已解压好的目录；开发与内置资源损坏时的应急路径。 */
+  private async importEmoteResources(): Promise<Json> {
+    return this.importEmote(
+      async () => {
+        const selection = await this.deps.dialog.showOpenDialog({
+          title: '导入 E-mote 角色资源', properties: ['openDirectory'],
+          message: '选择包含 FreeMoteDriver.js、emoteplayer.js 和 models/ 的 emote 目录。资源将复制到本应用，不使用软链接。',
+        })
+        return selection.canceled || !selection.filePaths[0] ? undefined : selection.filePaths[0]
+      },
+      (source, destination) => this.deps.importEmoteAssets(source, destination, { baker: this.deps.emoteBaker, cacheDir: this.emoteCache }),
+    )
+  }
+
+  /** 设置页的正式路径：压缩包先解到临时目录，再由 importEmoteZip 走同一套校验。 */
+  private async installEmoteFromZip(): Promise<Json> {
+    return this.importEmote(
+      async () => {
+        const selection = await this.deps.dialog.showOpenDialog({
+          title: '安装 E-mote 角色资源', properties: ['openFile'], filters: [{ name: 'E-mote 压缩包', extensions: ['zip'] }],
+          message: '选择含 FreeMoteDriver.js、emoteplayer.js 与 models/ 的 emote.zip。资源将解压到本应用，不使用软链接。',
+        })
+        return selection.canceled || !selection.filePaths[0] ? undefined : selection.filePaths[0]
+      },
+      (source, destination) => this.deps.importEmoteZip(source, destination, { baker: this.deps.emoteBaker, cacheDir: this.emoteCache }),
+    )
   }
 
   private queueReload(params: Json, development: boolean): Json {

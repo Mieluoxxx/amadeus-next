@@ -277,6 +277,10 @@ const EN = {
   'settings.subagent.title': 'Subagents', 'settings.subagent.note': 'Background tasks are handed to a subagent, which reports back when done. Subagents use skills from ~/.amadeus/skills and MCP servers from ~/.amadeus/mcp.json (web search comes from an MCP server such as Exa); shared also uses ~/.agents/skills, ~/.pi/agent/skills and ~/.pi/agent/mcp.json.',
   'settings.capability_mode.isolated': 'Isolated (Amadeus only)', 'settings.capability_mode.shared': 'Shared with this computer',
   'settings.delegation_model.same': 'Same as chat model',
+  'settings.character.title': 'Character assets',
+  'settings.character.note': 'The E-mote model packs are distributed separately from this app. Installing emote.zip unpacks it into the app\'s own data folder; the scene uses it from the next load on, and you can install a newer pack the same way at any time.',
+  'settings.character.choose': 'Install from emote.zip', 'settings.character.installing': 'Installing…',
+  'settings.character.installed': 'Installed. The scene uses this pack from now on.', 'settings.character.failed': 'Install failed: {error}',
 
 }
 
@@ -385,6 +389,10 @@ const ZH: Messages = {
   'settings.subagent.title': '子代理', 'settings.subagent.note': '后台任务交给子代理执行，完成后向你汇报。子代理使用 ~/.amadeus/skills 里的 skills 与 ~/.amadeus/mcp.json 里的 MCP 服务（网页搜索也来自 MCP，例如 Exa）；选择共享时还会使用 ~/.agents/skills、~/.pi/agent/skills 与 ~/.pi/agent/mcp.json。',
   'settings.capability_mode.isolated': '隔离（仅 Amadeus）', 'settings.capability_mode.shared': '与本机共享',
   'settings.delegation_model.same': '与对话模型相同',
+  'settings.character.title': '角色资源',
+  'settings.character.note': 'E-mote 模型包与应用分开分发。安装 emote.zip 会把它解压进应用自己的数据目录，场景从下次加载起使用它；以后可以用同样的方式换成更新的包。',
+  'settings.character.choose': '从 emote.zip 安装', 'settings.character.installing': '正在安装…',
+  'settings.character.installed': '安装完成，场景从现在起使用这个包。', 'settings.character.failed': '安装失败：{error}',
 
 }
 
@@ -483,6 +491,10 @@ const JA: Messages = {
   'settings.subagent.title': 'サブエージェント', 'settings.subagent.note': 'バックグラウンドのタスクはサブエージェントが実行し、完了後に報告します。サブエージェントは ~/.amadeus/skills のスキルと ~/.amadeus/mcp.json の MCP サーバーを使います（ウェブ検索も Exa などの MCP サーバー経由）。共有にすると ~/.agents/skills、~/.pi/agent/skills、~/.pi/agent/mcp.json も使います。',
   'settings.capability_mode.isolated': '分離（Amadeus のみ）', 'settings.capability_mode.shared': 'このコンピューターと共有',
   'settings.delegation_model.same': '会話モデルと同じ',
+  'settings.character.title': 'キャラクター素材',
+  'settings.character.note': 'E-mote モデルパックは本体とは別に配布されます。emote.zip をインストールするとアプリのデータフォルダに展開され、次回のシーン読み込みから使われます。新しいパックも同じ手順で入れ替えられます。',
+  'settings.character.choose': 'emote.zip からインストール', 'settings.character.installing': 'インストール中…',
+  'settings.character.installed': 'インストールしました。以降このパックが使われます。', 'settings.character.failed': 'インストールに失敗しました：{error}',
 
 }
 

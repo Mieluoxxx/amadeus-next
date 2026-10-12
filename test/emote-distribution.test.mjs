@@ -3,13 +3,14 @@ import test from 'node:test'
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
-import { cp, lstat, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import os from 'node:os'
 import path from 'node:path'
 import { beforePack } from '../scripts/before-pack.mjs'
-import { ensureBakedModel, importEmoteAssets } from '../src/main/emoteBake.ts'
+import { ensureBakedModel, importEmoteAssets, importEmoteZip } from '../src/main/emoteBake.ts'
 import { workerBaker } from '../src/main/emoteBakeHost.ts'
+import { buildZip } from './zip-fixture.mjs'
 
 const emoteRelDir = existsSync(new URL('../resources/character/emote/FreeMoteDriver.js', import.meta.url))
   ? 'resources/character/emote'
@@ -118,6 +119,42 @@ test('an unzipped folder imports as-is: wrapper directories and macOS archive ju
     assert.equal(existsSync(path.join(destination, 'FreeMoteDriver.js')), true, 'the wrapper directory must be descended into')
     assert.equal(existsSync(path.join(destination, 'models/kurisu_ab_white/._kurisu_ab_white.psb.m.json')), false, 'archive junk must not be copied')
     assert.equal(baked.length, 1)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('a zip installs through the same checks as a directory, and the unzip staging is cleaned up', { skip: !existsSync(emoteDriverUrl) }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'amadeus-zip-install-'))
+  const driver = await readFile(new URL(`../${emoteRelDir}/FreeMoteDriver.js`, import.meta.url))
+  const player = await readFile(new URL(`../${emoteRelDir}/emoteplayer.js`, import.meta.url))
+  const baker = {
+    version: 'fixture-1',
+    async bake(job) {
+      await writeFile(job.psb, Buffer.concat([Buffer.from('PSB\0'), Buffer.alloc(60)]))
+      await writeFile(job.meta, JSON.stringify({ metadata: { variableMetaInfoList: [], eyeControl: [], customSelectorList: [] }, parts: [], snaps: {} }))
+    },
+  }
+  try {
+    const zip = path.join(root, 'emote.zip')
+    await writeFile(zip, Buffer.from(buildZip([
+      { name: '__MACOSX/', mode: 0o040755 },
+      { name: '__MACOSX/emote/._FreeMoteDriver.js', data: Buffer.from('apple double') },
+      // 从 resources 里压出来的包会带上三层前缀，导入要能一路钻到底。
+      { name: 'resources/', mode: 0o040755 },
+      { name: 'resources/character/', mode: 0o040755 },
+      { name: 'resources/character/emote/', mode: 0o040755 },
+      { name: 'resources/character/emote/FreeMoteDriver.js', data: driver, method: 8 },
+      { name: 'resources/character/emote/emoteplayer.js', data: player, method: 8 },
+      { name: 'resources/character/emote/models/kurisu_ab_white/', mode: 0o040755 },
+      { name: 'resources/character/emote/models/kurisu_ab_white/kurisu_ab_white.psb.m.json', data: Buffer.from('{}') },
+      { name: 'resources/character/emote/models/kurisu_ab_white/kurisu_ab_white.psb.m.resx.json', data: Buffer.from(JSON.stringify({ Resources: {}, ExtraResources: {} })) },
+      { name: 'resources/character/emote/models/kurisu_ab_white/._junk', data: Buffer.from('junk') },
+    ])))
+
+    const base = path.join(root, 'user'), destination = path.join(base, 'emote')
+    await importEmoteZip(zip, destination, { baker, cacheDir: path.join(root, 'cache') })
+    assert.equal(existsSync(path.join(destination, 'FreeMoteDriver.js')), true, '三层目录必须被下钻到')
+    assert.equal(existsSync(path.join(destination, 'models/kurisu_ab_white/._junk')), false, '归档垃圾不得留下')
+    assert.deepEqual((await readdir(base)).filter(name => name.startsWith('.emote-')), [], '解压的临时目录必须被清掉')
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 

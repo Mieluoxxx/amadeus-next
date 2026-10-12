@@ -3,9 +3,10 @@ import { existsSync } from 'node:fs'
 import { cp, lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Baker } from './emoteBakeNode.ts'
+import { extractEmoteZip } from './emoteZip.ts'
 
 export type { Baker } from './emoteBakeNode.ts'
-type BakedModel = { psb: string; meta: string }
+export type BakedModel = { psb: string; meta: string }
 type BakeOptions = { baker: Baker; modelRoot: string; cacheDir: string }
 const pending = new Map<string, Promise<BakedModel>>()
 
@@ -120,10 +121,13 @@ export async function ensureBakedModel(model: string, options: BakeOptions): Pro
   return task
 }
 
-/** 压缩包解开后常多套一层同名目录：选中的目录里只有一个子目录时自动进入，用户不必找准哪一层。 */
+/**
+ * 压缩包解开后常多套几层目录：Finder 的「压缩」多一层 `emote/`，从 resources 里压的多三层
+ * `resources/character/emote/`。根目录里只有一个子目录时一路进到看见运行时为止。
+ */
 async function emoteRootOf(selected: string): Promise<string> {
   let root = selected
-  for (let depth = 0; depth < 2 && !existsSync(path.join(root, 'FreeMoteDriver.js')); depth++) {
+  for (let depth = 0; depth < 4 && !existsSync(path.join(root, 'FreeMoteDriver.js')); depth++) {
     const entries = (await readdir(root, { withFileTypes: true })).filter(entry => !isSystemJunk(entry.name))
     if (entries.length !== 1 || !entries[0].isDirectory()) break
     root = path.join(root, entries[0].name)
@@ -153,4 +157,18 @@ export async function importEmoteAssets(selected: string, destination: string, o
     if (moved) await rm(backup, { recursive: true, force: true }).catch(() => {}) // 备份清理异常不阻断已成功的导入流程。
     return baked
   } finally { await rm(temporary, { recursive: true, force: true }) }
+}
+
+/**
+ * 压缩包导入 = 解压到临时目录，再走一遍目录导入。校验、试烘焙与原子替换都在
+ * importEmoteAssets 里，这里不重复一遍；解压目录无论成败都由本函数清掉。
+ */
+export async function importEmoteZip(zipPath: string, destination: string, options: Omit<BakeOptions, 'modelRoot'>): Promise<BakedModel> {
+  const parent = path.dirname(destination)
+  await mkdir(parent, { recursive: true }) // 全新安装时 userData 下还没有这一层，就地解压会没有落脚处。
+  const staging = await mkdtemp(path.join(parent, '.emote-unzip-'))
+  try {
+    await extractEmoteZip(zipPath, staging)
+    return await importEmoteAssets(staging, destination, options)
+  } finally { await rm(staging, { recursive: true, force: true }) }
 }

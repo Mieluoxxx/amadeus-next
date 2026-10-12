@@ -220,6 +220,8 @@ export default function SettingsPage({ send, subscribe }: Props) {
   const [saving, setSaving] = useState<string | null>(null)
   const [error, setError] = useState<UiMessage | null>(null)
   const [reloadStatus, setReloadStatus] = useState('ready')
+  const [emoteBusy, setEmoteBusy] = useState(false)
+  const [emoteNote, setEmoteNote] = useState<UiMessage | null>(null)
   const [piModels, setPiModels] = useState<ComboOption[]>([])
   const [piModel, setPiModel] = useState('')
   const [thinkingLevel, setThinkingLevel] = useState('off')
@@ -300,6 +302,22 @@ export default function SettingsPage({ send, subscribe }: Props) {
       setSaving(null)
     }
   }, [send, setLocale, t])
+
+  // 解压、校验与烘焙都在主进程做，这里只管按钮状态与结果提示。
+  const installEmote = useCallback(async () => {
+    setEmoteBusy(true)
+    setEmoteNote(null)
+    try {
+      const result = await send('emote.install', {})
+      if (result.cancelled) return
+      if (!result.ok) throw new Error(String(result.error || ''))
+      setEmoteNote({ key: 'settings.character.installed' })
+    } catch (reason) {
+      setEmoteNote({ key: 'settings.character.failed', values: { error: reason instanceof Error ? reason.message : String(reason) } })
+    } finally {
+      setEmoteBusy(false)
+    }
+  }, [send])
 
   const handleStartupSave = useCallback<SaveField>(async (field, value, secret) => {
     if (!window.amadeus || !field.key) return
@@ -432,6 +450,13 @@ export default function SettingsPage({ send, subscribe }: Props) {
               <ComboSelect label={t('settings.label.interface_language')} value={val('presentation_locale', locale)} onChange={value => void handleChange('presentation_locale', value)} options={[{ value: 'en-US', label: t('settings.option.english') }, { value: 'zh-CN', label: t('settings.option.chinese') }, { value: 'ja-JP', label: t('settings.option.japanese') }]} />
             </Row>
             {generalGroups.map(group => <GroupFields key={group.id} group={group} desktop={desktop} onSave={handleStartupSave} />)}
+          </Card>
+          <Card title={t('settings.character.title')}>
+            <p className="settings-card-note">{t('settings.character.note')}</p>
+            <button type="button" className="crt-button" data-variant="primary" disabled={emoteBusy} onClick={() => void installEmote()}>
+              {emoteBusy ? t('settings.character.installing') : t('settings.character.choose')}
+            </button>
+            {emoteNote ? <p className="settings-card-note" role="status">{t(emoteNote.key, emoteNote.fallback, emoteNote.values)}</p> : null}
           </Card>
           </>
         ))}

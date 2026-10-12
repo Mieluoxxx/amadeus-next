@@ -8,7 +8,7 @@ import { AppRuntime } from './appRuntime.ts'
 import { bootMark } from './bootProfile.ts'
 import { systemClock } from './clock.ts'
 import { SceneHost } from './sceneHost.ts'
-import { ensureBakedModel, importEmoteAssets, verifyEmoteRuntime } from './emoteBake.ts'
+import { ensureBakedModel, importEmoteAssets, importEmoteZip, verifyEmoteRuntime } from './emoteBake.ts'
 import { workerBaker } from './emoteBakeHost.ts'
 import { FishTts } from './fishTts.ts'
 import { PiHost } from './piHost.ts'
@@ -118,6 +118,7 @@ function createRuntime(): AppRuntime {
     verifyEmoteRuntime,
     ensureBakedModel,
     importEmoteAssets,
+    importEmoteZip,
     createScene: cacheDir => new SceneHost(root, path.join(MODULE_DIR, '../scene'), cacheDir),
     createPi: (piEnv, onEvent) => new PiHost(() => {
       bootMark('pi-fork')
