@@ -92,11 +92,14 @@ export type Outbox = {
  * command / preview 是批准所依据的完整内容（限长在写入前由工具包装拒绝，不截断），界面不得截断。
  */
 export type ApprovalDetail = {
-  tool: 'bash' | 'write' | 'edit'
+  tool: 'bash' | 'write' | 'edit' | 'mcp'
   command?: string
   cwd?: string
   path?: string
   preview?: string
+  /** 仅 mcp：server 名与它的工具名；preview 是完整的 JSON 参数。 */
+  server?: string
+  mcpTool?: string
 }
 
 export type Approval = {

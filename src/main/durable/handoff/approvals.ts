@@ -66,6 +66,26 @@ export async function requestApproval(api: ToolExecutionApi, context: Context, r
   }
 }
 
+/** 请求确认，allow 才执行 run；参数就是卡片上展示的那一份。task 与 MCP 共用。 */
+export async function runApproved<D extends JsonValue>(
+  api: ToolExecutionApi<D>,
+  context: Context,
+  request: ApprovalRequest,
+  ttlMs: number,
+  target: string,
+  run: () => Promise<ToolExecutionResult<D>>,
+): Promise<ToolExecutionResult<D>> {
+  let decision
+  try {
+    decision = await requestApproval(api as ToolExecutionApi, context, request, ttlMs)
+  } catch (error) {
+    // 取消与中止要原样抛出，工具任务才会以 aborted 收尾；其余（存储失败）当作没有得到批准。
+    if (context.abortSignal?.aborted) throw error
+    return { content: [{ type: 'text', text: 'The action could not be submitted for approval, so it was not done.' }], isError: true }
+  }
+  return decision === 'allow' ? run() : declinedResult(decision, request.tool, target)
+}
+
 /** 模型可见的拒绝文案（pi-tool-constraints §4.3）；{target} 是命令首行（调用方已截断）或文件路径（不截断，截了就不是同一个路径）。 */
 export function declinedResult<D extends JsonValue = JsonValue>(decision: Exclude<Decision, 'allow'>, tool: Approval['tool'], target: string): ToolExecutionResult<D> {
   const text =

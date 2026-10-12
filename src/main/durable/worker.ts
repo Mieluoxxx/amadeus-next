@@ -1,10 +1,28 @@
+import { homedir } from 'node:os'
 import path from 'node:path'
 import { ModelRuntime, getAgentDir } from '@earendil-works/pi-coding-agent'
 import type { ParentPortLike } from '../pi-worker.ts'
-import { searchConfigFromEnv } from './handoff/index.ts'
+import { McpManager, mcpConfigFiles, skillRoots, type CapabilityMode, type HandoffOptions } from './handoff/index.ts'
 import { DurableRuntime } from './runtime.ts'
 
 type Json = Record<string, unknown>
+
+const modeOf = (value: string | undefined): CapabilityMode => (value?.trim().toLowerCase() === 'shared' ? 'shared' : 'isolated')
+
+/**
+ * 子代理的 skills 与 MCP（设置页的两个开关，经环境变量进 worker，变化时 worker 重载）。
+ * 不知道 amadeus 主目录（基准脚本、旧主进程）就都不挂，而不是猜一个目录去读。
+ */
+export function capabilitiesFromEnv(env: NodeJS.ProcessEnv, log: (message: string) => void): Pick<HandoffOptions, 'skills' | 'mcp'> {
+  const home = env.AMADEUS_HOME_DIR?.trim()
+  if (!home) return {}
+  const userHome = homedir()
+  const sharedDir = env.AMADEUS_PI_SHARED_DIR?.trim() || path.join(userHome, '.pi', 'agent')
+  return {
+    skills: { roots: skillRoots(modeOf(env.AMADEUS_SKILLS_MODE), { home, sharedDir, userHome }), log },
+    mcp: new McpManager({ files: mcpConfigFiles(modeOf(env.AMADEUS_MCP_MODE), { home, sharedDir }), userHome, log }),
+  }
+}
 
 export function startDurableWorker(port: ParentPortLike): void {
   let runtime: DurableRuntime | null = null
@@ -25,7 +43,7 @@ export function startDurableWorker(port: ParentPortLike): void {
       models, sessionsDir, agentDir,
       memoryDir: process.env.AMADEUS_MEMORY_DIR,
       post: message => port.postMessage(message),
-      handoff: { search: searchConfigFromEnv(process.env) },
+      handoff: capabilitiesFromEnv(process.env, message => console.error(`[amadeus-next] ${message}`)),
       // 仅供测试缩短等待；正式运行用默认的 10 秒。
       ...(process.env.AMADEUS_NEXT_LOCK_WAIT_MS ? { lockWaitMs: Number(process.env.AMADEUS_NEXT_LOCK_WAIT_MS) } : {}),
     })

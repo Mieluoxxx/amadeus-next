@@ -30,8 +30,9 @@ const clip = (value: string, max: number): string => value.length > max ? `${val
 const oneLine = (value: string): string => value.replace(/\s+/g, ' ').trim()
 
 const LABEL_KEYS: Record<string, string> = {
-  web_search: 'query',
   web_fetch: 'url',
+  read_skill: 'skill',
+  mcp_list_tools: 'server',
   read: 'path',
   list_dir: 'path',
   write: 'path',
@@ -41,6 +42,11 @@ const LABEL_KEYS: Record<string, string> = {
 
 export function labelOf(tool: string, args: unknown): string {
   const value = args && typeof args === 'object' ? args as Record<string, unknown> : {}
+  // MCP 调用一行里要同时看出是哪个 server 的哪个工具，参数放后面。
+  if (tool === 'mcp_call' && typeof value.server === 'string' && typeof value.tool === 'string') {
+    const rest = value.arguments && typeof value.arguments === 'object' && Object.keys(value.arguments).length ? ` ${JSON.stringify(value.arguments)}` : ''
+    return clip(oneLine(`${value.server}.${value.tool}${rest}`), LABEL_MAX)
+  }
   const key = LABEL_KEYS[tool]
   const picked = key ? value[key] : undefined
   if (typeof picked === 'string') return clip(oneLine(picked), LABEL_MAX)

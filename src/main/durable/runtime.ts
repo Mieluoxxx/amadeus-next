@@ -385,6 +385,7 @@ export class DurableRuntime {
     if (this.sweeper) clearInterval(this.sweeper)
     this.sweeper = undefined
     await this.host.closeAll()
+    await this.options.handoff?.mcp?.closeAll()
     await this.memory?.close().catch(error => this.log('memory close failed', error))
     this.memory = undefined
     this.index.close()

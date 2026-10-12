@@ -99,13 +99,13 @@ const mainScript = context => {
 
 /**
  * 主对话与子代理共用 faux provider 的同一条响应队列：所以排一串相同的路由函数，由请求里的工具表区分调用方
- * （子代理有 web_search），并记下每次请求用的模型。
+ * （子代理有 web_fetch），并记下每次请求用的模型。
  */
 function scripted(handlers, fauxModels) {
   const faux = fauxProvider(fauxModels ? { models: fauxModels } : {})
   const calls = { main: [], child: [], after: [] }
   const router = (context, options, state, model) => {
-    const side = toolNames(context).includes('web_search') ? 'child' : 'main'
+    const side = toolNames(context).includes('web_fetch') ? 'child' : 'main'
     if (side === 'main' && isAck(context)) { calls.after.push({ context, model: model.id }); return answer('<zh>交给他们了。</zh><jp>頼んだわ。</jp>') }
     calls[side].push({ context, model: model.id })
     return handlers[side](context, options, state, model)

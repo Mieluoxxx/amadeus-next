@@ -16,12 +16,10 @@ const ASR_SETTINGS_GROUP: Record<string, string> = {
   mimo: 'asr_mimo',
 }
 
-const WEB_SEARCH_GROUP_IDS = ['web_search']
-const WEB_SEARCH_LABELS: Record<string, string> = { brave: 'Brave Search', tavily: 'Tavily' }
-
 const DELEGATION_MODEL_KEY = 'delegation_model'
 // 子代理相关的字段在界面上归到模型配置页，按此顺序展示。
-const SUBAGENT_KEYS = [DELEGATION_MODEL_KEY, 'report_proactive']
+const SUBAGENT_KEYS = [DELEGATION_MODEL_KEY, 'report_proactive', 'skills_mode', 'mcp_mode']
+const CAPABILITY_MODE_KEYS = ['skills_mode', 'mcp_mode']
 
 const SECTIONS = ['general', 'models', 'voice', 'memory'] as const
 type SectionId = typeof SECTIONS[number]
@@ -327,8 +325,6 @@ export default function SettingsPage({ send, subscribe }: Props) {
   const voiceConfiguration = asConfigurationGroups(config.voice_configuration)
   const generalConfiguration = asConfigurationGroups(config.general_configuration)
   const memoryGroups = generalConfiguration.filter(group => group.id === 'memory')
-  // 主进程把网页搜索作为配置分组下发（id 为 web_search）；服务商名只是小写 id，这里换成可读的标签。
-  const webSearchGroup = generalConfiguration.find(group => WEB_SEARCH_GROUP_IDS.includes(group.id))
   // 委托模型的候选就是对话用的那份模型列表；主进程只知道当前值，所以下拉在这里补全。
   const delegationOptions = (current: string): ComboOption[] => {
     const options: ComboOption[] = [{ value: '', label: t('settings.delegation_model.same') }, ...piModels]
@@ -341,27 +337,14 @@ export default function SettingsPage({ send, subscribe }: Props) {
   const subagentFields = SUBAGENT_KEYS.flatMap(key => {
     const field = generalFields.find(item => item.key === key)
     if (!field) return []
-    return key === DELEGATION_MODEL_KEY ? [{ ...field, type: 'select' as const, options: delegationOptions(String(field.value ?? '')) }] : [field]
+    if (key === DELEGATION_MODEL_KEY) return [{ ...field, type: 'select' as const, options: delegationOptions(String(field.value ?? '')) }]
+    // 主进程只下发取值；选项文案按界面语言在这里补。
+    if (CAPABILITY_MODE_KEYS.includes(key)) return [{ ...field, options: (['isolated', 'shared'] as const).map(value => ({ value, label: t(`settings.capability_mode.${value}`) })) }]
+    return [field]
   })
   const generalGroups = generalConfiguration
-    .filter(group => group.id !== 'memory' && !WEB_SEARCH_GROUP_IDS.includes(group.id))
+    .filter(group => group.id !== 'memory')
     .map(group => ({ ...group, fields: group.fields.filter(field => !SUBAGENT_KEYS.includes(field.key)) }))
-  const webSearchLabel = (value: string) => value === '' ? t('settings.web_search.none') : WEB_SEARCH_LABELS[value] ?? value
-  const webSearchView: ConfigurationGroup | undefined = webSearchGroup && {
-    ...webSearchGroup,
-    fields: webSearchGroup.fields.map(field => {
-      if (!/provider$/i.test(field.key)) return field
-      const current = String(field.value ?? '')
-      const values = field.options?.length
-        ? field.options.map(option => typeof option === 'string' ? option : option.value)
-        : ['', ...Object.keys(WEB_SEARCH_LABELS)]
-      // 已保存的服务商不在选项里时保留它，否则下拉框会悄悄显示成"未配置"。
-      if (!values.includes('')) values.unshift('')
-      if (current && !values.includes(current)) values.push(current)
-      return { ...field, type: 'select', options: values.map(value => ({ value, label: webSearchLabel(value) })) }
-    }),
-  }
-
   const asrBackendId = val('asr_backend', 'qwen3_asr')
   const asrBackends = Array.isArray(config.asr_backends)
     ? config.asr_backends as Array<{ id: string; label: string; deployment?: string }>
@@ -450,12 +433,6 @@ export default function SettingsPage({ send, subscribe }: Props) {
             </Row>
             {generalGroups.map(group => <GroupFields key={group.id} group={group} desktop={desktop} onSave={handleStartupSave} />)}
           </Card>
-          {webSearchView ? (
-            <Card title={t('settings.web_search.title')} status={<GroupStatus group={webSearchView} />}>
-              <p className="settings-card-note">{t('settings.web_search.note')}</p>
-              <GroupFields group={webSearchView} desktop={desktop} onSave={handleStartupSave} />
-            </Card>
-          ) : null}
           </>
         ))}
 

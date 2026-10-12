@@ -587,24 +587,27 @@ test('the Jev client posts typed questions and returns answers by question id', 
   await assert.rejects(systemOne(config, 'hello', {}), error => error.message === 'Jev request failed: HTTP 401')
 })
 
-test('web search provider and key are worker settings; the key is a secret that never reaches the renderer', async () => {
+test('skills_mode and mcp_mode default to isolated, reach the worker only when shared, and replace the worker when they change', async () => {
   const { app, calls } = runtime()
   await app.init()
-  assert.equal(app.piEnv().AMADEUS_SEARCH_PROVIDER, undefined)
-  assert.equal((await app.request('system.set_config', { values: { web_search_provider: 'altavista' } })).ok, false)
-  const applied = await app.request('desktop.settings.update', { values: { web_search_provider: ' Tavily ' }, secrets: { web_search_api_key: ' tvly-secret ' } })
-  assert.equal(applied.ok, true)
-  assert.deepEqual(app.piEnv(), { AMADEUS_SEARCH_PROVIDER: 'tavily', AMADEUS_SEARCH_API_KEY: 'tvly-secret' })
-  assert.equal(applied.settings.secrets.web_search_api_key.configured, true)
-  assert.equal(applied.settings.values.web_search_provider, 'tavily')
-  assert.equal(JSON.stringify(await app.request('system.get_config')).includes('tvly-secret'), false)
-  assert.equal(JSON.stringify(applied.settings).includes('tvly-secret'), false)
-  const search = (await app.request('system.get_config')).values.general_configuration.find(group => group.id === 'web_search')
-  assert.equal(search.configured, true)
+  const { values } = await app.request('system.get_config')
+  assert.deepEqual([values.skills_mode, values.mcp_mode], ['isolated', 'isolated'])
+  const delegation = values.general_configuration.find(group => group.id === 'delegation')
+  assert.deepEqual(delegation.fields.filter(field => field.key.endsWith('_mode')).map(field => [field.key, field.type, field.options]), [
+    ['skills_mode', 'select', ['isolated', 'shared']],
+    ['mcp_mode', 'select', ['isolated', 'shared']],
+  ])
+  assert.equal(values.general_configuration.some(group => group.id === 'web_search'), false, 'search now comes from MCP servers')
+  assert.equal(app.piEnv().AMADEUS_SKILLS_MODE, undefined, 'isolated is the absence of the variable; the fork clears inherited ones')
+  assert.equal((await app.request('system.set_config', { values: { skills_mode: 'everything' } })).ok, false)
+  assert.equal((await app.request('desktop.settings.update', { values: { skills_mode: 'shared' } })).ok, true)
+  assert.deepEqual(app.piEnv(), { AMADEUS_SKILLS_MODE: 'shared' })
   await flush()
-  assert.equal(calls.some(([type]) => type === 'restart-pi'), true, 'the worker only reads these at fork time')
-  await app.request('desktop.settings.update', { secrets: { web_search_api_key: null } })
-  assert.equal(app.piEnv().AMADEUS_SEARCH_API_KEY, undefined)
+  assert.equal(calls.filter(([type]) => type === 'restart-pi').length, 1, 'the worker reads these at fork time')
+  await app.request('system.set_config', { values: { mcp_mode: 'shared' } })
+  assert.deepEqual(app.piEnv(), { AMADEUS_SKILLS_MODE: 'shared', AMADEUS_MCP_MODE: 'shared' })
+  await app.request('system.set_config', { values: { skills_mode: 'isolated', mcp_mode: 'isolated' } })
+  assert.deepEqual(app.piEnv(), {})
 })
 
 test('delegation_model is validated, reaches only the Pi worker environment, and replaces the worker when it changes', async () => {
@@ -613,7 +616,7 @@ test('delegation_model is validated, reaches only the Pi worker environment, and
   const restarts = () => calls.filter(([type]) => type === 'restart-pi').length
   const delegation = async () => (await app.request('system.get_config')).values.general_configuration.find(group => group.id === 'delegation')
   assert.equal(app.piEnv().AMADEUS_DELEGATION_MODEL, undefined, 'empty means the chat model, so the worker gets nothing')
-  assert.deepEqual((await delegation()).fields.map(field => [field.key, field.value]), [['report_proactive', true], ['delegation_model', '']])
+  assert.deepEqual((await delegation()).fields.map(field => [field.key, field.value]), [['report_proactive', true], ['delegation_model', ''], ['skills_mode', 'isolated'], ['mcp_mode', 'isolated']])
   for (const bad of ['gpt-5', 'openai/', '/gpt-5', 'open ai/gpt-5', 'openai/gpt 5']) {
     assert.equal((await app.request('system.set_config', { values: { delegation_model: bad } })).ok, false, `${bad} is not provider/model`)
   }
@@ -671,18 +674,31 @@ test('settings survive a restart: plain values in the file, secrets only encrypt
   const first = runtime({}, undefined, {}, { settings })
   first.app.deps.safeStorage = encrypted
   await first.app.init()
-  await first.app.request('system.set_config', { values: { report_proactive: false, web_search_provider: 'brave', web_search_api_key: 'key-1' } })
+  await first.app.request('system.set_config', { values: { report_proactive: false, mcp_mode: 'shared', JEV_API_KEY: 'key-1' } })
   assert.equal(settings.report_proactive, false)
-  assert.equal(settings.web_search_provider, 'brave')
-  assert.equal(settings.web_search_api_key, undefined, 'no plaintext key on disk')
-  assert.ok(settings.web_search_api_key_ENCRYPTED)
+  assert.equal(settings.mcp_mode, 'shared')
+  assert.equal(settings.JEV_API_KEY, undefined, 'no plaintext key on disk')
+  assert.ok(settings.JEV_API_KEY_ENCRYPTED)
   first.app.dispose()
   const second = runtime({}, undefined, {}, { settings })
   second.app.deps.safeStorage = encrypted
   second.app.loadPersistedSettings()
   assert.equal(second.app.config.report_proactive, false)
-  assert.equal(second.app.piEnv().AMADEUS_SEARCH_API_KEY, 'key-1')
+  assert.equal(second.app.piEnv().AMADEUS_MCP_MODE, 'shared')
+  assert.equal(second.app.piEnv().AMADEUS_JEV_API_KEY, 'key-1')
   second.app.dispose()
+})
+
+test('the retired web search settings are dropped from the file, encrypted key included, at the next save', async () => {
+  const settings = { web_search_provider: 'brave', web_search_api_key_ENCRYPTED: 'ZW5jOmtleQ==', report_proactive: true }
+  const { app } = runtime({}, undefined, {}, { settings })
+  app.loadPersistedSettings()
+  await app.init()
+  assert.equal('web_search_provider' in app.config, false)
+  await app.request('system.set_config', { values: { report_proactive: false } })
+  assert.deepEqual(Object.keys(settings).filter(key => key.startsWith('web_search')), [])
+  assert.equal(settings.report_proactive, false)
+  app.dispose()
 })
 
 test('disposing the runtime cancels its conversation-idle timer', async () => {

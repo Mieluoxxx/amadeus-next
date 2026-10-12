@@ -34,7 +34,7 @@ export { DELEGATION_MODEL_ENV, delegationModelFromEnv, resolveDelegation, type D
 export { PROGRESS_NOTE_MAX_CHARS, REPORT_PROGRESS_DESCRIPTION, reportProgress } from './progress.ts'
 export { formatDuration, renderStatus } from './status.ts'
 export { followUpContent, noteRequestIdOf, outboxIdOf, questionIn, requestIdOf, roundOf, steerContent } from './rounds.ts'
-export { AmadeusResearch, RESEARCH_EXTENSION_NAME, createResearchExtension, createWebFetchTool, createWebSearchTool, webFetch, webSearch } from './research.ts'
+export { AmadeusResearch, RESEARCH_EXTENSION_NAME, createResearchExtension, createWebFetchTool, webFetch } from './research.ts'
 export { FILES_EXTENSION_NAME, createFilesExtension } from './files.ts'
 export { TASK_EXTENSION_NAME, bashEnvironment, createTaskExtension } from './task.ts'
 export { createPathGuard, type DenyCategory, type PathGuard, type PathGuardOptions } from './pathGuard.ts'
@@ -52,4 +52,7 @@ export {
   type ApprovalResolved,
   type TaskSummary,
 } from './control.ts'
-export { SEARCH_API_KEY_ENV, SEARCH_PROVIDER_ENV, searchConfigFromEnv, type SearchConfig, type SearchProviderName } from '../search/index.ts'
+export { SKILLS_EXTENSION_NAME, createSkillsExtension, discoverSkills, skillRoots, skillsBlock, type CapabilityMode, type FoundSkill, type SkillRoot, type SkillsOptions } from './skills.ts'
+export { loadMcpConfig, mcpConfigFiles, type McpConfigFile, type McpServer } from './mcp/config.ts'
+export { McpManager, McpUnavailable, type McpManagerOptions, type McpTransportFactory } from './mcp/manager.ts'
+export { MCP_EXTENSION_NAME, createMcpExtension, mcpBlock } from './mcp/extension.ts'

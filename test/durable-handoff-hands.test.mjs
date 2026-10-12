@@ -194,7 +194,7 @@ test('the research instructions are byte-stable, and the shared opening carries 
 - When the work takes several steps, call report_progress now and then with a one-line note (at most 200 characters) about what you are doing. It is shown on the task card and is not your reply.
 - If you cannot continue without something only the user can tell you and no reasonable assumption will do, stop and make your final reply exactly one line: QUESTION: <your question>. Do not ask for anything you can look up or assume.
 - Later messages in this conversation come from the delegating assistant: an update to the task, a follow-up, or the user's answer to your question. They continue the same task; answer them with an updated deliverable in the same shape.
-- Use web_search to find 3 to 5 sources, then web_fetch the most relevant ones; about 8 tool calls in total at most. Give the page date for time-sensitive facts, and say so when sources disagree.
+- Search with a search tool from the MCP servers listed below to find 3 to 5 sources, then web_fetch the most relevant ones; about 8 tool calls in total at most. If no search tool is listed, work from pages whose address you know or can infer, and say that web search was unavailable. Give the page date for time-sensitive facts, and say so when sources disagree.
 - Keep the deliverable under about 600 words, in this shape:
 Conclusion: one or two sentences
 Key points:
@@ -214,7 +214,7 @@ test('the handoff description lists the enabled kinds, verbatim when all three a
     all,
     `Delegate something that takes time or hands-on work to a background subagent. The call returns immediately; do not wait for the result.
 Kinds you can delegate:
-- research: search the web, read pages and summarize.
+- research: look things up on the web, read pages and summarize.
 - files: read files or directories the user pointed to and answer questions about them (read-only). Needs paths.
 - task: do things that change something, such as organizing files or running scripts; every write or command needs the user's approval. Needs paths.
 Do not delegate small talk, things you already know, or something the user only wants you to remember (use remember for that).
@@ -357,7 +357,7 @@ test('children get exactly the extension, tools, instructions and cwd of their k
       assert.equal(taskAgent.tools.find(tool => tool.name === 'read').replay, 'safe')
 
       const researchAgent = await agentOf(research)
-      assert.deepEqual(researchAgent.tools.map(tool => tool.name).sort(), ['report_progress', 'web_fetch', 'web_search'])
+      assert.deepEqual(researchAgent.tools.map(tool => tool.name).sort(), ['report_progress', 'web_fetch'])
       for (const agent of [filesAgent, taskAgent, researchAgent]) assert.ok(!agent.extensions.some(extension => extension.name === 'amadeus-handoff'), 'no recursive delegation')
     } finally {
       await t.close()

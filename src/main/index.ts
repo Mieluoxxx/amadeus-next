@@ -54,7 +54,7 @@ function settingsPath(): string {
 }
 
 // 运行环境与宿主开发机隔离，防止外部扩展与技能污染角色设定，仅共享凭据与模型定义。
-function piHome(): { agentDir: string; cwd: string; authPath: string; modelsPath: string } {
+function piHome(): { agentDir: string; cwd: string; authPath: string; modelsPath: string; sharedDir: string } {
   const agentDir = path.join(amadeusHome(), 'pi')
   const shared = process.env.AMADEUS_PI_CREDENTIALS_DIR || path.join(os.homedir(), '.pi', 'agent')
   const cwd = path.join(amadeusHome(), 'workspace')
@@ -67,7 +67,7 @@ function piHome(): { agentDir: string; cwd: string; authPath: string; modelsPath
     const seed = Object.fromEntries(['defaultProvider', 'defaultModel', 'defaultThinkingLevel'].filter(key => key in source).map(key => [key, source[key]]))
     writeFileSync(settings, JSON.stringify(seed, null, 2), 'utf8')
   }
-  return { agentDir, cwd, authPath: path.join(shared, 'auth.json'), modelsPath: path.join(shared, 'models.json') }
+  return { agentDir, cwd, authPath: path.join(shared, 'auth.json'), modelsPath: path.join(shared, 'models.json'), sharedDir: shared }
 }
 
 function readYaml(file: string): Json {
@@ -129,6 +129,9 @@ function createRuntime(): AppRuntime {
           ...process.env, ...overrides,
           // 设置页是委托模型的唯一来源：选“与对话模型相同”时，继承来的同名环境变量不能悄悄生效。
           AMADEUS_DELEGATION_MODEL: overrides.AMADEUS_DELEGATION_MODEL ?? '',
+          // 共享宿主机的 skills / MCP 只能由设置页打开，同理不认继承来的变量。
+          AMADEUS_SKILLS_MODE: overrides.AMADEUS_SKILLS_MODE ?? '', AMADEUS_MCP_MODE: overrides.AMADEUS_MCP_MODE ?? '',
+          AMADEUS_HOME_DIR: amadeusHome(), AMADEUS_PI_SHARED_DIR: home.sharedDir,
           PI_CODING_AGENT_DIR: home.agentDir, AMADEUS_NEXT_PI_CWD: home.cwd,
           AMADEUS_NEXT_PI_AUTH: home.authPath, AMADEUS_NEXT_PI_MODELS: home.modelsPath,
           AMADEUS_NEXT_SESSIONS: path.join(userData, 'sessions'), AMADEUS_MEMORY_DIR: memoryDir,

@@ -1,5 +1,4 @@
 import type { Extension } from '@earendil-works/pi-durable'
-import type { SearchConfig } from '../search/index.ts'
 import { createFilesExtension } from './files.ts'
 import type { HandoffKind } from './docs.ts'
 import { FILES_INSTRUCTIONS, RESEARCH_INSTRUCTIONS, TASK_INSTRUCTIONS, grantedLocations } from './instructions.ts'
@@ -21,7 +20,7 @@ export type KindSpec = {
 
 // 新增类型要同时登记到 pi-tool-constraints §4.2；启用哪些类型在 worker 启动时确定，schema 与 description 随之固定。
 export const KIND_LINES: Record<HandoffKind, string> = {
-  research: '- research: search the web, read pages and summarize.',
+  research: '- research: look things up on the web, read pages and summarize.',
   files: '- files: read files or directories the user pointed to and answer questions about them (read-only). Needs paths.',
   task: "- task: do things that change something, such as organizing files or running scripts; every write or command needs the user's approval. Needs paths.",
 }
@@ -30,7 +29,6 @@ export const KIND_LINES: Record<HandoffKind, string> = {
 export const ALL_KINDS: readonly HandoffKind[] = ['research', 'files', 'task']
 
 export type KindDeps = {
-  search?: SearchConfig
   limits: HandoffLimits
   guard: PathGuard
   bashEnv?: () => NodeJS.ProcessEnv
@@ -41,7 +39,7 @@ export function createKindSpecs(kinds: readonly HandoffKind[], deps: KindDeps): 
   for (const kind of ALL_KINDS) {
     if (!kinds.includes(kind)) continue
     if (kind === 'research') {
-      specs.research = { line: KIND_LINES.research, needsPaths: false, extension: createResearchExtension(deps.search ? { search: deps.search } : {}), instructions: () => RESEARCH_INSTRUCTIONS }
+      specs.research = { line: KIND_LINES.research, needsPaths: false, extension: createResearchExtension(), instructions: () => RESEARCH_INSTRUCTIONS }
     } else if (kind === 'files') {
       specs.files = {
         line: KIND_LINES.files,

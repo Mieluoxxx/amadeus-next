@@ -3,7 +3,7 @@ import { Type } from '@earendil-works/pi-ai'
 import type { Context, JsonValue } from '@earendil-works/chord'
 import { defineExtension, wrapTool, type Extension, type ToolExecutionApi, type ToolExecutionResult } from '@earendil-works/pi-durable'
 import { createBashTool, createEditTool, createWriteTool } from '@earendil-works/pi-durable/tools'
-import { declinedResult, requestApproval, type ApprovalRequest } from './approvals.ts'
+import { runApproved, type ApprovalRequest } from './approvals.ts'
 import { checkPath, createGuardedRead, createListDirTool, refused } from './fileTools.ts'
 import type { HandoffLimits } from './limits.ts'
 import type { PathGuard } from './pathGuard.ts'
@@ -11,7 +11,7 @@ import { reportProgress } from './progress.ts'
 
 export const TASK_EXTENSION_NAME = 'amadeus-task'
 
-// 只给 bash 这些变量：worker 的环境里有 AMADEUS_JEV_API_KEY、AMADEUS_SEARCH_API_KEY 等，bash 默认会整个继承（pi-tool-constraints §4.1）。
+// 只给 bash 这些变量：worker 的环境里有 AMADEUS_JEV_API_KEY 等密钥，bash 默认会整个继承（pi-tool-constraints §4.1）。
 // 小写的代理变量是 macOS / Linux 上更常见的写法，与大写同样放行。
 const ENV_ALLOWLIST = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'TERM', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy']
 const FALLBACK_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
@@ -85,24 +85,13 @@ export function createTaskExtension(options: TaskOptions): Extension {
   const edit = createEditTool()
 
   /** 守卫通过后请求确认；allow 才执行，参数就是卡片上展示的那一份。 */
-  async function gated<D extends JsonValue>(
-    tool: ApprovalRequest['tool'],
+  const gated = <D extends JsonValue>(
     target: string,
     request: ApprovalRequest,
     api: ToolExecutionApi<D>,
     context: Context,
     run: () => Promise<ToolExecutionResult<D>>,
-  ): Promise<ToolExecutionResult<D>> {
-    let decision
-    try {
-      decision = await requestApproval(api, context, request, limits.approvalTtlMs)
-    } catch (error) {
-      // 取消与中止要原样抛出，工具任务才会以 aborted 收尾；其余（存储失败）当作没有得到批准。
-      if (context.abortSignal?.aborted) throw error
-      return { content: [{ type: 'text', text: 'The action could not be submitted for approval, so it was not done.' }], isError: true }
-    }
-    return decision === 'allow' ? run() : declinedResult(decision, tool, target)
-  }
+  ): Promise<ToolExecutionResult<D>> => runApproved(api, context, request, limits.approvalTtlMs, target, run)
 
   // 文件名可以含换行等控制字符，摘要是单行文本。
   const summary = (text: string): string => cut(text.replace(/[\u0000-\u001F\u007F]+/g, ' '), SUMMARY_MAX)
@@ -129,7 +118,6 @@ export function createTaskExtension(options: TaskOptions): Extension {
             return { content: [{ type: 'text', text: COMMAND_TOO_LONG }], isError: true }
           }
           return gated(
-            'bash',
             firstLine(command, 80),
             {
               tool: 'bash',
@@ -154,7 +142,6 @@ export function createTaskExtension(options: TaskOptions): Extension {
           const overwrite = existing.ok && existing.value
           const bytes = Buffer.byteLength(args.content)
           return gated(
-            'write',
             args.path,
             {
               tool: 'write',
@@ -177,7 +164,6 @@ export function createTaskExtension(options: TaskOptions): Extension {
           const preview = renderEdits(args.edits)
           if (length(preview) > DETAIL_MAX) return { content: [{ type: 'text', text: EDITS_TOO_LONG }], isError: true }
           return gated(
-            'edit',
             args.path,
             {
               tool: 'edit',

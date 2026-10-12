@@ -24,9 +24,9 @@ export type SceneTask = {
 
 export type ApprovalState = 'pending' | 'allow' | 'deny' | 'expired'
 
-export type ApprovalTool = 'bash' | 'write' | 'edit'
+export type ApprovalTool = 'bash' | 'write' | 'edit' | 'mcp'
 
-const APPROVAL_TOOLS: readonly ApprovalTool[] = ['bash', 'write', 'edit']
+const APPROVAL_TOOLS: readonly ApprovalTool[] = ['bash', 'write', 'edit', 'mcp']
 
 /** 与 worker 的确认事件一致：command / preview 是批准所依据的完整原文，界面不得截断。 */
 export type ApprovalDetail = {
@@ -35,6 +35,8 @@ export type ApprovalDetail = {
   cwd?: string
   path?: string
   preview?: string
+  server?: string
+  mcpTool?: string
 }
 
 export type TaskApproval = {
@@ -126,6 +128,8 @@ function normalizeDetail(value: unknown): ApprovalDetail {
   if (typeof detail.cwd === 'string') out.cwd = detail.cwd
   if (typeof detail.path === 'string') out.path = detail.path
   if (typeof detail.preview === 'string') out.preview = detail.preview
+  if (typeof detail.server === 'string') out.server = detail.server
+  if (typeof detail.mcpTool === 'string') out.mcpTool = detail.mcpTool
   return out
 }
 

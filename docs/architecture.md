@@ -4,7 +4,7 @@
 > v3 变更：依据对 pi-durable 1.1.0 真实包与 Electron 44 的核实，改为**一会话一个存储文件**（durable 没有删除 API）；汇报回合按 `requestId` 识别；流式节流参数与首包预算；worker 重启时序；角色热更新的语义变化；原型验收从 8 条扩到 12 条；记录与现状的行为差异。
 > 定稿补全：话筒仲裁重写（区分 `armed` / `hearing`，转移表，worker 重启时序）；§7 补全封包、载荷、错误码、命令分道；§2.2 补全 SessionHost 的打开 / 回收 / 删除 / 崩溃恢复；§1 模块表按真实代码校正；§11 退路改为自包含（git 历史里没有 pi-coding-agent 版设计）。
 > 跨文档同步：`app.approvals` 挂子对话、确认按 `taskId` + `approvalId`、`task.approval-request`（带 `approvalId`、`detail`、`expiresAt`）/ `task.approval-resolved` 两条事件；汇报只有 `speak` 一种投递，取消不生成汇报、只更新卡片；`delivered` 带 `taskId`，`entryId` 可先为空再由对账补齐；`report.deliver` 遇 `busy` 重试 1 秒 × 5 次再等 `pump()`；并发按会话计；执行环境不是沙箱（路径守卫、环境清理）；记忆开关走命令；`rejections` / `audit` 不可重建；角色热更新的追加语义随模型而变；崩溃后先 `abort` 再 `resume`；单进程独占靠应用层锁，不靠 `busy_timeout`；第一版已定默认值见 §12。
-> 实现同步：P0 与 A1~A6 已实现，pi-durable 是唯一运行时，旧运行时代码已删。**本文与代码不一致处以代码为准**，已按 `src/main/{floor,appRuntime,piHost,index}.ts` 与 `src/main/durable/*` 校正：打开时序先对账、再中止遗留 run、再 `resume`；`hasActive` 在 `chat.submit` 受理前预置；`checkpoint` 的 5 秒宽限与 `turn.error{code:"closed"}`；`report.deliver` 先判 `already` / `missing` 再判 `busy`；Floor 的 pump 顺序、`busy` 重试后搁置；设置项（`report_proactive`、`web_search_*`、`memory_*`）。首包延迟与缓存命中率（验收 2、3）仍待真实模型实测。
+> 实现同步：P0 与 A1~A6 已实现，pi-durable 是唯一运行时，旧运行时代码已删。**本文与代码不一致处以代码为准**，已按 `src/main/{floor,appRuntime,piHost,index}.ts` 与 `src/main/durable/*` 校正：打开时序先对账、再中止遗留 run、再 `resume`；`hasActive` 在 `chat.submit` 受理前预置；`checkpoint` 的 5 秒宽限与 `turn.error{code:"closed"}`；`report.deliver` 先判 `already` / `missing` 再判 `busy`；Floor 的 pump 顺序、`busy` 重试后搁置；设置项（`report_proactive`、`skills_mode` / `mcp_mode`、`memory_*`；`web_search_*` 已移除，检索改走 MCP）。首包延迟与缓存命中率（验收 2、3）仍待真实模型实测。
 > 实现同步（handoff v2 与审查修复）：主对话工具集是六个（`remember`、`forget`、`handoff`、`handoff_send`、`handoff_status`、`handoff_cancel`），任务可续接（轮次）、可查询、可提问（`needs_input`），子代理有 `report_progress`，另有委托专用模型（设置项 `delegation_model`，环境变量 `AMADEUS_DELEGATION_MODEL`）；`task.graph`、`task.report-ready`、`session.load` 的卡片都带 `round`、`progress`、`question`（§7）；打开会话时为每个被作废的确认补发 `task.approval-resolved { state: "expired" }`；Floor 对 `deferred` 的汇报做退避，回合有 120 秒看门狗（§4.2）；安全边界补了确认卡完整展示、`web_fetch` 固定 IP、`pathGuard` 显式 deny 与悬空链接、进程锁防 pid 复用、`remember` 的引用下限与汇报回合禁用（§6）。
 > 实现同步（工作面板、自动命名与旧会话清理）：新增工作面板（§2.4）——worker 命令 `task.all` / `task.trace`、事件 `task.activity`、派生账本 `sessions/work.json`，界面是与 transcript / settings 并列的 `work` 面板；会话标题改为自动命名（§2.3），`app.session.titleSource` 区分占位、自动与主人手改；旧会话只读通道整体删除，`SessionStore` 与 `amadeus-next-sessions.json` 不再读取（§9、§12 #2）；`handoff` 改为先调用再开口（§3.2）。
 > 前提（原型阶段）：pi-durable 原型（评估 §4）通过。若不通过，见 §11 的退路。
@@ -66,7 +66,7 @@
 
 | 模块 | 迁移前 | 已实现 |
 | :--- | :--- | :--- |
-| `AppRuntime`（`appRuntime.ts`） | 单个 `activeTurn`（`piDone` / `drained` / `speech`）；`listeningEnabled`、`listeningResumeAt`；`runChat` 调 `PiHost.prompt`；会话来自 `SessionStore`；渲染方法 `session.list / create / load`、`chat.send / abort`、`asr.start / stop`、`voice.playback`、`pi.models / pi.model.set`、`runtime.reload` | `activeTurn` 带 `kind`（`user` / `report`）、`parser`（`PresentationText`）；回合经 `chat.submit` 加 `turn.*` 事件（`onPiEvent` → `onTurnEvent`）；会话操作转发给 worker，并缓存 `workerSessions`、待确认数；汇报回合（`deliverReport`）；设置项 `report_proactive`、`delegation_model`、`web_search_*`、`memory_*`；回合看门狗（120 秒，§4.2）；`worker.ready` / `worker.down` 时作废缓存里的未决确认并发 `expired`（§7.3）；渲染方法映射见 §7.5 |
+| `AppRuntime`（`appRuntime.ts`） | 单个 `activeTurn`（`piDone` / `drained` / `speech`）；`listeningEnabled`、`listeningResumeAt`；`runChat` 调 `PiHost.prompt`；会话来自 `SessionStore`；渲染方法 `session.list / create / load`、`chat.send / abort`、`asr.start / stop`、`voice.playback`、`pi.models / pi.model.set`、`runtime.reload` | `activeTurn` 带 `kind`（`user` / `report`）、`parser`（`PresentationText`）；回合经 `chat.submit` 加 `turn.*` 事件（`onPiEvent` → `onTurnEvent`）；会话操作转发给 worker，并缓存 `workerSessions`、待确认数；汇报回合（`deliverReport`）；设置项 `report_proactive`、`delegation_model`、`skills_mode` / `mcp_mode`、`memory_*`；回合看门狗（120 秒，§4.2）；`worker.ready` / `worker.down` 时作废缓存里的未决确认并发 `expired`（§7.3）；渲染方法映射见 §7.5 |
 | `Floor`（`floor.ts`） | 无 | **纯决策器**：不碰呈现、TTS 与 worker 通信，宿主通过 `FloorHost`（`gates()`、`turn()`、`speechStart/Stop/Finish`、`deliver`、`flushReload`）注入；时钟走 `deps.clock`，状态由 `turn()` 与自己的 `asrOn` / `hearing` 推导，不另存一份。`test/floor.test.mjs` 用假时钟覆盖 |
 | `SessionStore`（`sessionStore.ts`） | `StoredSession { id, title, messages[] }` 加 `currentId`；经 `RuntimeDeps.store` 注入 | **已删除**（2026-10-11）：旧会话不再列出，`amadeus-next-sessions.json` 不再读取，`RuntimeDeps.store` 与界面上的 `readonly` 一并移除（§9、§12 #2） |
 | `PiHost`（`piHost.ts`） | `prompt()` / `abort()` / `request()` / `restart()`；文本与工具事件只在 `prompt` 的回调里；worker 意外退出后不会自己重拉，要等下一条命令触发 `ensureStarted()` | 只有 `request(command, params)`（`prompt` / `abort` 并入；`abort` 在没有进程时不拉起 worker）、`restart()`、`dispose()`；构造函数多一个 `onEvent`；命令封包 `{ id, command, params }`；`PiError` 保留 `code`；合成 `worker.ready` / `worker.down` 与 `turn.error(worker_exit)`；自动重拉（§2.2）。`restart()`：`checkpoint` → 拉起 → 杀旧；替换失败对旧 worker 发 `resume`；`checkpoint` 失败则杀旧进程并等它 `exit`（最多 10 秒）再拉起 |
@@ -100,7 +100,6 @@ src/main/
     ├── role.ts             # amadeus-role 扩展
     ├── handoff/            # amadeus-handoff（extension.ts：handoff / handoff_send / handoff_status / handoff_cancel）与 research / files / task 三类子代理扩展；docs.ts（文档类型）；reporter.ts + rounds.ts + settle.ts（Reporter、轮次、终态写入）；deliver.ts（deliverReport、reconcileHandoffs）；control.ts（cancel / approve / watchApprovals、expireApprovalsOnOpen、summaryOf）；status.ts、progress.ts（handoff_status 与 report_progress）；delegation.ts（委托模型）；pathGuard.ts、fetchGuard.ts（路径守卫、web_fetch 固定 IP）；fence.ts（汇报围栏）
     ├── memory/             # MemoryStore、service、extract、recall 等（见 long-term-memory.md §8）
-    └── search/             # web_search 后端：brave.ts、tavily.ts
 ```
 
 构建与依赖（评估 §3 实测）：
@@ -145,7 +144,8 @@ src/main/
 | `memory/index.sqlite3` | MemoryStore | `meta`、`memory_fts` 派生，可重建；`rejections`、`audit` 是账本，**不可重建**，随 `memory/` 一起备份 |
 | `~/.amadeus/pi/ROLE.md`、`PRESENTATION.md` | 主人 | **事实来源**；不进 durable，改完下一次请求生效（§9） |
 | `~/.amadeus/pi/settings.json` 的默认模型三键 | pi-worker（`model.set`） | 全局默认；沿用现有读取方式，不再经 `SettingsManager` |
-| `~/.amadeus/settings.yaml` | 主进程 | 不变。设置项含 `report_proactive`、`delegation_model`、`web_search_provider` / `web_search_api_key`、`memory_enabled` / `memory_recall` 等；设置页的"委托"分组放 `report_proactive` 与 `delegation_model` |
+| `~/.amadeus/settings.yaml` | 主进程 | 不变。设置项含 `report_proactive`、`delegation_model`、`skills_mode` / `mcp_mode`、`memory_enabled` / `memory_recall` 等；设置页的"委托"分组放这四项（界面上归到模型配置页的子代理卡片）。旧的 `web_search_*` 在下次保存时从文件里消失 |
+| `~/.amadeus/skills/`、`~/.amadeus/mcp.json` | worker（只读） | 子代理的 skills 与 MCP server；`shared` 时另读 `~/.agents/skills`、`~/.pi/agent/skills`、`~/.pi/agent/mcp.json`（工具约束 §4.5） |
 
 `index.json` 结构：`{ version: 1, currentId, sessions: [{ id, title, createdAt, updatedAt, hasActive, pendingReports, empty? }] }`（`empty` 只在为真时出现；命令载荷与 `session.updated` 里的摘要不含它）。
 - `hasActive`：该会话有未终止的任务或未结提交。**先置标记、后提交**：`chat.submit` 在 `submit` 之前就把它置位（`handoff` 工具同理），之后用 `harness.inspect()` 校正——每次回合落定、任务图变化、每分钟的空闲巡检、关闭前都会校正（`hasActive = inspect().tasks 或 submissions 非空`）。标记只会多、不会少，所以重启后不会漏掉要续跑的会话。
@@ -284,7 +284,9 @@ work.trace（task.trace）─► 打开该会话，读子对话的全部条目�
 | `amadeus-role` | section：ROLE + PRESENTATION + protocol，`tag: false`（渲染结果与现状 system prompt 同形，不套 `<role>` 标签）；`GenerationTask` 钩子 `beforeRequest` / `onYield`：处理写成文本的工具调用（工具约束 §2.3）。钩子挂在这里而不是新扩展，因为已有会话按名字选扩展，新扩展名进不了旧会话 | ✓ | ✗ |
 | `amadeus-memory` | 工具 `remember` / `forget`；任务定义 `MemoryExtract`（M2）；条目 kind `amadeus.memory-*`、`amadeus.episode`；`beforeCompact` 钩子（A4 起）：摘要源里剔除记忆块，并自带陪伴向的压缩提示词（默认提示词面向编码任务）；文档 `app.memory-baseline`、`app.memory-extract` | ✓ | ✗ |
 | `amadeus-handoff` | 工具 `handoff` / `handoff_send` / `handoff_status` / `handoff_cancel`（都不 `terminate`：先调用，拿到结果再开口）；任务定义 Anchor、Reporter；文档 `app.handoffs`、`app.outbox` | ✓ | ✗（禁止递归） |
-| `amadeus-research` | 只读 web 搜索 / 抓取工具（`web_search`、`web_fetch`）、`report_progress` | ✗ | `research` |
+| `amadeus-research` | 只读网页抓取 `web_fetch`、`report_progress`（检索来自 MCP） | ✗ | `research` |
+| `amadeus-skills` | `read_skill` | ✗ | 三类子代理（有 skill 时受理才挂） |
+| `amadeus-mcp` | `mcp_list_tools`、`mcp_call` | ✗ | 三类子代理（有启用的 server 时受理才挂） |
 | `amadeus-files` | 受限的 `read` 与 `list_dir`（只允许主人授权的路径）、`report_progress` | ✗ | `files` |
 | `amadeus-task` | `read`、`list_dir`、`bash` / `edit` / `write`（后三者经 `wrapTool` 包装为逐次确认，并受 `pathGuard` 与环境清理约束）、`report_progress`；写 `app.approvals`（挂子对话） | ✗ | `task` |
 
@@ -557,7 +559,7 @@ watchEvents（worker） ─ 文本差量 ─► 清洗器（scrub 记忆和结�
 | 确认卡完整展示 | 卡片必须展示将要执行或写入的**完整**内容：`bash` 的完整命令（≤ 2000 字符）、`write` 的完整内容（≤ 20000 字符）、`edit` 展开成差异后的全部预览（≤ 20000 字符）。超限**不截断，直接拒绝**，不进确认并让模型拆小重来：只展示前一段，主人批准的就是看不全的内容 |
 | `web_fetch` 防 DNS 重绑定 | 每一跳先解析域名并校验全部地址（回环、内网、链路本地、映射到这些段的 IPv6 都拒绝），通过的 IP 登记进本次抓取的固定表；连接用 undici 的 dns 拦截器，`lookup` 只读这张表、不再查 DNS，没登记的主机一律拒绝。校验与连接用同一份解析结果，攻击者的域名在两次解析之间改答案没有可乘之机；请求以 IP 发出，`Host` 与 TLS 的 SNI / 证书校验保留主机名（工具约束 §4.4） |
 | 确认通道 | 写操作确认只能由界面点击（主进程 `task.approve`）；红莉栖没有批准工具，语音里说"允许"不会生效，确认不经过任何可被投毒的文本 |
-| 外部配置 | Registry 是进程内对象，不读取 `~/.pi/agent` 下的扩展、MCP、AGENTS.md |
+| 外部配置 | Registry 是进程内对象，不读取 `~/.pi/agent` 下的扩展、AGENTS.md。skills 与 MCP 只给子代理，默认只读 `~/.amadeus` 下的；设置页切到共享才读宿主机的。stdio MCP server 不继承 worker 的密钥，非只读的 MCP 调用逐次确认，宿主机配置里的 `autoApprove` 不生效（工具约束 §4.5） |
 | 注入内容 | 记忆、子代理结果、网页内容都带围栏和系统注；写入记忆前做投毒和敏感信息扫描 |
 | 记忆写入的来源 | `remember` 的 `source_quote` 要能在主人最近说的话里找到、够长、撑得起正文（引用下限，记忆 §3.3 第 5 步）；**汇报回合里 `remember` / `forget` 一律禁用**：汇报围栏里是子代理带回的网页 / 文件内容，被注入的指令最容易借这个回合改记忆，而该回合主人什么都没说（记忆 §3.2） |
 | 输出 | 事件桥的清洗器拦截所有 `amadeus_*` 标签，不让它们进入字幕和 TTS |
@@ -675,7 +677,7 @@ watchEvents（worker） ─ 文本差量 ─► 清洗器（scrub 记忆和结�
 | 事件 `task.graph`、`task.activity`、`task.report`、`task.approval-request`、`task.approval-resolved`、`memory.changed` | 无 | **新增**。`task.report` = 汇报开始时的卡片数据 `{ sessionId, turnId, taskId, title, status, summary, round?, question? }`（`status` 可为 `needs_input`）；确认用请求 / 已处理两条事件（`task.approval-request` 带 `approvalId`、`detail`、`expiresAt`），`memory.changed` 带 `reason` |
 | 事件 `voice.event` | 沿用 | 不变 |
 
-worker 的环境变量（`index.ts` 的 `fork`）：沿用 `PI_CODING_AGENT_DIR`、`AMADEUS_NEXT_PI_CWD`、`AMADEUS_NEXT_PI_AUTH`、`AMADEUS_NEXT_PI_MODELS`、代理三项、`AMADEUS_JEV_*`；`AMADEUS_NEXT_PI_SESSIONS`（旧 jsonl 目录）不再使用；新增 `AMADEUS_NEXT_SESSIONS`（`<userData>/sessions`）、`AMADEUS_MEMORY_DIR`、`AMADEUS_SEARCH_PROVIDER` / `AMADEUS_SEARCH_API_KEY`（设置项 `web_search_provider` / `web_search_api_key`）、**`AMADEUS_DELEGATION_MODEL`**（设置项 `delegation_model`，`provider/model`，空 = 与对话模型相同）。这些在 `fork` 时读取，`piEnv()` 变化会触发 `pi-worker` 重载。`fork` 时 `AMADEUS_DELEGATION_MODEL` 总是被显式设置（设置页留空就是空串）：设置页是委托模型的唯一来源，继承来的同名环境变量不能悄悄生效。worker 里 `delegationModelFromEnv` 只在第一个斜杠处切（模型 id 里可以有斜杠），格式不对一律当作没设置。**记忆开关与召回模式不放环境变量**，走 `memory.configure`（§5）。
+worker 的环境变量（`index.ts` 的 `fork`）：沿用 `PI_CODING_AGENT_DIR`、`AMADEUS_NEXT_PI_CWD`、`AMADEUS_NEXT_PI_AUTH`、`AMADEUS_NEXT_PI_MODELS`、代理三项、`AMADEUS_JEV_*`；`AMADEUS_NEXT_PI_SESSIONS`（旧 jsonl 目录）不再使用；新增 `AMADEUS_NEXT_SESSIONS`（`<userData>/sessions`）、`AMADEUS_MEMORY_DIR`、`AMADEUS_HOME_DIR` / `AMADEUS_PI_SHARED_DIR`、`AMADEUS_SKILLS_MODE` / `AMADEUS_MCP_MODE`（设置项 `skills_mode` / `mcp_mode`，只在 `shared` 时输出，`fork` 时同样总被显式设置）、**`AMADEUS_DELEGATION_MODEL`**（设置项 `delegation_model`，`provider/model`，空 = 与对话模型相同）。这些在 `fork` 时读取，`piEnv()` 变化会触发 `pi-worker` 重载。`fork` 时 `AMADEUS_DELEGATION_MODEL` 总是被显式设置（设置页留空就是空串）：设置页是委托模型的唯一来源，继承来的同名环境变量不能悄悄生效。worker 里 `delegationModelFromEnv` 只在第一个斜杠处切（模型 id 里可以有斜杠），格式不对一律当作没设置。**记忆开关与召回模式不放环境变量**，走 `memory.configure`（§5）。
 
 ---
 
@@ -685,7 +687,7 @@ worker 的环境变量（`index.ts` 的 `fork`）：沿用 `PI_CODING_AGENT_DIR`
 | :--- | :--- | :--- | :--- |
 | **P0 原型** | 一会话一 Harness + 现有 ModelRuntime + `amadeus-role` + 最小 handoff（写 outbox）+ 最小快照与一次 `replace` 重新冻结 + `checkpoint` 关库 + 最小 `pathGuard` 与 `bash` 环境清理（子代理的占位工具也不能碰绝对路径和 worker 的环境变量），跑评估文档的 P1~P12 与 S1~S4，并验证 §12 的 V1~V4 | 无 | 评估 §4 |
 | **A1 运行时切换** | `pi-worker` 改用 SessionHost；事件桥；会话管理迁到 worker（索引、懒创建、删除、历史渲染）；进程锁；旧会话只读分组；`PiHost` 长连接事件、自动重拉、保留 `error.code`、`resume`；`flushReload` 只在重启时 `checkpoint`；`package.json` 依赖；`test/turn-lifecycle.test.mjs`、`test/pi-reload.test.mjs` 随接口迁移（fake `PiHost` 补事件，`openPiSession` 用例删除） | P0 | 评估 §3 |
-| **A2 话筒与委托** | Floor 状态机（抽成 `floor.ts`）、汇报信箱（pending / delivered）、汇报回合、`report_proactive` 设置项与 `chat.composing`、任务卡片、停止按钮；`research` 子代理（`web_search` 后端见 §12 待决）；每会话并发与超时 | A1 | 工具约束 §3、§4；本文 §4 |
+| **A2 话筒与委托** | Floor 状态机（抽成 `floor.ts`）、汇报信箱（pending / delivered）、汇报回合、`report_proactive` 设置项与 `chat.composing`、任务卡片、停止按钮；`research` 子代理（检索来自 MCP，见 §12 Q1）；每会话并发与超时 | A1 | 工具约束 §3、§4；本文 §4 |
 | **A3 记忆 M1** | MemoryStore、快照 / 增量 / 重新冻结条目、`remember` / `forget`、设置页核心记忆 | A1 | 记忆 M1 |
 | **A4 记忆 M2** | 后台抽取任务（`app.memory-extract`）、待确认列表、拒绝记忆；`beforeCompact` 剔除记忆块并自带陪伴向压缩提示词（可选） | A3 | 记忆 M2 |
 | **A5 动手类子代理** | `files`、`task` 类型；完整 `pathGuard` 与拒绝列表、`bash` 环境清理；确认界面（`task.approval-request` / `task.approval-resolved`）与 `wrapTool` 确认；`files` 的授权路径取自 `handoff.paths`，首次授权不弹确认（工具约束 §6） | A2 | 工具约束 §4.2、§4.3 |
@@ -864,6 +866,6 @@ A2 和 A3 可以并行。
 
 | # | 问题 | 备注 |
 | :--- | :--- | :--- |
-| ~~Q1~~ | ~~`research` 子代理的 `web_search` 后端~~ | 已定：设置页可选 Brave / Tavily（`web_search_provider`），未配置时如实返回未配置（工具约束 §4.4） |
+| ~~Q1~~ | ~~`research` 子代理的 `web_search` 后端~~ | 已定：专用 `web_search` 移除，检索由 `mcp.json` 里的 MCP server 提供（工具约束 §4.5） |
 
 前面"第一版默认"里的 D1~D4 已按默认写入，主人可以改，不阻塞开工。

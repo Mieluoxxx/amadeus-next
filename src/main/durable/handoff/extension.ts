@@ -11,16 +11,18 @@ import {
   type TaskId,
   type ToolExecutionResult,
 } from '@earendil-works/pi-durable'
-import type { SearchConfig } from '../search/index.ts'
 import { requestCancel } from './control.ts'
 import { resolveDelegation } from './delegation.ts'
 import { ApprovalsDoc, HandoffsDoc, OutboxDoc, canContinue, isActive, type HandoffItem, type HandoffKind } from './docs.ts'
 import { ALL_KINDS, KIND_LINES, createKindSpecs, type KindSpec } from './kinds.ts'
 import { BRIEF_MAX_CHARS, BRIEF_MIN_CHARS, MESSAGE_MAX_CHARS, PATHS_MAX, TITLE_MAX_CHARS, resolveLimits, type HandoffLimits } from './limits.ts'
+import { createMcpExtension, mcpBlock } from './mcp/extension.ts'
+import type { McpManager } from './mcp/manager.ts'
 import { createPathGuard, type PathGuard, type PathGuardOptions } from './pathGuard.ts'
 import { AnchorTask, createReporterTask, reporterPhase } from './reporter.ts'
 import { outboxIdOf, roundOf } from './rounds.ts'
 import { MODEL_FALLBACK } from './settle.ts'
+import { createSkillsExtension, discoverSkills, skillsBlock, type SkillsOptions } from './skills.ts'
 import { renderStatus, taskList } from './status.ts'
 
 export const HANDOFF_EXTENSION_NAME = 'amadeus-handoff'
@@ -117,6 +119,9 @@ async function checkPaths(raw: readonly string[] | undefined, guard: PathGuard):
 }
 
 type Placement = { taskId: string; ahead: number; queued: boolean }
+/** 受理时按当前配置给子代理追加的扩展与 instructions 段落。 */
+type Extras = { extensions: Extension[]; text: string }
+
 type Accepted =
   | ({ type: 'accepted' } & Placement)
   | { type: 'duplicate'; taskId: string }
@@ -131,6 +136,7 @@ function createHandoffTool(
   specs: Partial<Record<HandoffKind, KindSpec>>,
   guard: PathGuard,
   delegationModel: ModelRef | undefined,
+  extrasFor: (kind: HandoffKind) => Extras,
 ) {
   const kinds = ALL_KINDS.filter(kind => specs[kind])
   const takesPaths = kinds.some(kind => specs[kind]?.needsPaths)
@@ -179,6 +185,8 @@ function createHandoffTool(
       const briefHash = briefHashOf(kind, brief, paths)
       // 模型目录与凭据要异步查，不能放进 commit；重放时多查一次无妨，commit 里按 callId 查重。
       const delegation = await resolveDelegation(delegationModel, api, context)
+      // 读目录与配置文件不能放进 commit；重放时多读一次无妨，结果只在新建子对话时用到。
+      const extras = extrasFor(kind)
       let accepted: Accepted
       try {
         accepted = await api.commit(async (tx): Promise<Accepted> => {
@@ -205,8 +213,8 @@ function createHandoffTool(
           // 任务归属的子对话创建时复制主对话的 agent（model、thinkingLevel）；这里改扩展、说明与目录，有委托专用模型时再改模型。
           const child = await tx.createConversation({ ownership: { kind: 'task', taskId: anchor } })
           await configure(tx, child.id, {
-            extensions: [spec.extension],
-            instructions: spec.instructions({ paths, cwd }),
+            extensions: [spec.extension, ...extras.extensions],
+            instructions: spec.instructions({ paths, cwd }) + (extras.text ? `\n\n${extras.text}` : ''),
             ...(cwd ? { cwd } : {}),
             ...(delegation.model ? { model: delegation.model } : {}),
             ...(delegation.thinkingLevel ? { thinkingLevel: delegation.thinkingLevel } : {}),
@@ -392,8 +400,10 @@ const handoffCancel = defineTool({
 
 export type HandoffOptions = {
   limits?: Partial<HandoffLimits>
-  /** 网页搜索后端；缺省时 web_search 返回"尚未配置后端"。 */
-  search?: SearchConfig
+  /** 子代理可用的 skill 目录；缺省不挂 skills。 */
+  skills?: SkillsOptions
+  /** 子代理可用的 MCP server；缺省不挂 MCP。 */
+  mcp?: McpManager
   /** 启用的委托类型，默认全部；worker 启动时确定，会话内不变（schema 与 description 随之固定）。 */
   kinds?: readonly HandoffKind[]
   guard?: PathGuardOptions
@@ -410,16 +420,37 @@ function assemble(options: HandoffOptions) {
   const specs = createKindSpecs(options.kinds ?? ALL_KINDS, {
     limits,
     guard,
-    ...(options.search ? { search: options.search } : {}),
     ...(options.bashEnv ? { bashEnv: options.bashEnv } : {}),
   })
+  const skills = options.skills ? createSkillsExtension(options.skills) : undefined
+  const mcp = options.mcp ? createMcpExtension(options.mcp, limits) : undefined
+  // 每次受理时现扫现读，新装的 skill、改过的 mcp.json 下一个任务就生效；空的就不挂，子代理的工具与 instructions 与没有这项能力时逐字节相同。
+  const extrasFor = (kind: HandoffKind): Extras => {
+    const extensions: Extension[] = []
+    const blocks: string[] = []
+    if (skills && options.skills) {
+      const found = discoverSkills(options.skills)
+      if (found.length) {
+        extensions.push(skills)
+        blocks.push(skillsBlock(found, { canRunScripts: kind === 'task' }))
+      }
+    }
+    if (mcp && options.mcp) {
+      const { servers } = options.mcp.refresh()
+      if (servers.length) {
+        extensions.push(mcp)
+        blocks.push(mcpBlock(servers))
+      }
+    }
+    return { extensions, text: blocks.join('\n\n') }
+  }
   // 任务定义随扩展注册，按名字解析，与哪个对话选择了本扩展无关——子对话不选它也不影响 Reporter 运行。
   const main = defineExtension({
     name: HANDOFF_EXTENSION_NAME,
-    tools: [createHandoffTool(limits, reporter, specs, guard, options.delegationModel), createHandoffSendTool(limits, reporter), handoffStatus, handoffCancel],
+    tools: [createHandoffTool(limits, reporter, specs, guard, options.delegationModel, extrasFor), createHandoffSendTool(limits, reporter), handoffStatus, handoffCancel],
     tasks: [AnchorTask, reporter],
   })
-  return { main, kindExtensions: ALL_KINDS.flatMap(kind => specs[kind]?.extension ?? []) }
+  return { main, kindExtensions: [...ALL_KINDS.flatMap(kind => specs[kind]?.extension ?? []), ...(skills ? [skills] : []), ...(mcp ? [mcp] : [])] }
 }
 
 export const createHandoffExtension = (options: HandoffOptions = {}): Extension => assemble(options).main
@@ -430,6 +461,6 @@ export function createHandoffExtensions(options: HandoffOptions = {}): readonly 
   return [main, ...kindExtensions]
 }
 
-/** 未配置搜索时的默认组合。 */
+/** 不带 skills 与 MCP 的默认组合。 */
 export const handoffExtensions: readonly Extension[] = createHandoffExtensions()
 export const AmadeusHandoff: Extension = handoffExtensions[0]

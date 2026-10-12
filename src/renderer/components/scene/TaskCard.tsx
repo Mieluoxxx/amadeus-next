@@ -70,6 +70,7 @@ const DETAIL_LABELS: Record<ApprovalTool, { path: MessageKey; preview: MessageKe
   bash: { path: 'task.detail.path', preview: 'task.detail.preview' },
   write: { path: 'task.detail.path.write', preview: 'task.detail.preview.write' },
   edit: { path: 'task.detail.path.edit', preview: 'task.detail.preview.edit' },
+  mcp: { path: 'task.detail.path', preview: 'task.detail.preview.mcp' },
 }
 
 function DetailView({ detail }: { detail: ApprovalDetail }) {
@@ -78,6 +79,7 @@ function DetailView({ detail }: { detail: ApprovalDetail }) {
   // command / preview 是用户批准所依据的原文，必须完整放进可滚动的等宽区域，不能截断。
   const rows: Array<[string, string, boolean]> = []
   if (detail.command) rows.push([t('task.detail.command'), detail.command, true])
+  if (detail.server && detail.mcpTool) rows.push([t('task.detail.mcp_tool'), `${detail.server} › ${detail.mcpTool}`, false])
   if (detail.cwd) rows.push([t('task.detail.cwd'), detail.cwd, false])
   if (detail.path) rows.push([t(labels.path), detail.path, false])
   if (detail.preview) rows.push([t(labels.preview), detail.preview, true])
@@ -94,7 +96,7 @@ function DetailView({ detail }: { detail: ApprovalDetail }) {
   )
 }
 
-const hasDetail = (detail: ApprovalDetail) => Boolean(detail.command || detail.cwd || detail.path || detail.preview)
+const hasDetail = (detail: ApprovalDetail) => Boolean(detail.command || detail.cwd || detail.path || detail.preview || detail.mcpTool)
 
 function ApprovalBlock({ approval, remaining, busy, onDecide }: {
   approval: TaskApproval

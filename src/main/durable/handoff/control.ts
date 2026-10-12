@@ -128,7 +128,7 @@ const isTerminal = (status: HandoffStatus): boolean => !isActive(status)
 // 逐字段挑：文档里可能留有旧版本写入的其它字段（bytes、edits 等），不原样透给界面。
 function detailOf(approval: Approval): ApprovalDetail {
   const detail: ApprovalDetail = { tool: approval.tool }
-  for (const key of ['command', 'cwd', 'path', 'preview'] as const) {
+  for (const key of ['command', 'cwd', 'path', 'preview', 'server', 'mcpTool'] as const) {
     const value = approval.detail?.[key]
     if (typeof value === 'string') detail[key] = value
   }

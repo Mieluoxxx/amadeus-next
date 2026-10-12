@@ -34,10 +34,10 @@ const modelServer = createServer(async (request, response) => {
   const retained = value.messages.some(message => message.role === 'assistant' && message.content === 'saved-marker')
   response.writeHead(200, { 'Content-Type': 'text/event-stream' })
   const frame = (delta, finish_reason = null) => `data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', model: value.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`
-  const isSubagent = value.tools?.some(tool => tool.function?.name === 'web_search')
+  const isSubagent = value.tools?.some(tool => tool.function?.name === 'web_fetch')
   // 子代理先查一次再给结论，工作面板才有真实的工具步骤可看。
   if (isSubagent && !value.messages.some(message => message.role === 'tool')) {
-    const call = { index: 0, id: 'call_search', type: 'function', function: { name: 'web_search', arguments: JSON.stringify({ query: 'fixture findings' }) } }
+    const call = { index: 0, id: 'call_fetch', type: 'function', function: { name: 'web_fetch', arguments: JSON.stringify({ url: 'fixture findings' }) } }
     return response.end(frame({ role: 'assistant', content: '' }) + frame({ tool_calls: [call] }) + frame({}, 'tool_calls') + 'data: [DONE]\n\n')
   }
   if (isSubagent) return response.end(frame({ role: 'assistant', content: 'subagent-findings' }) + frame({}, 'stop') + 'data: [DONE]\n\n')
@@ -340,7 +340,7 @@ app.on('browser-window-created', (_event, window) => {
       await wait(() => ui(`document.querySelector('${row}')?.dataset.status === 'done'`), 'The work panel does not list the finished delegation')
       assert.match(await ui(`document.querySelector('${row}').textContent`), /查资料.*1 次工具调用/s)
       await ui(`document.querySelector('${row}').click()`)
-      await wait(() => ui('[...document.querySelectorAll(\'[data-testid="work-event"][data-type="tool"]\')].some(item => /web_search.*fixture findings/.test(item.textContent))'), 'The trace does not show the subagent\'s search')
+      await wait(() => ui('[...document.querySelectorAll(\'[data-testid="work-event"][data-type="tool"]\')].some(item => /web_fetch.*fixture findings/.test(item.textContent))'), 'The trace does not show the subagent\'s fetch')
       assert.match(await ui('document.querySelector(\'[data-testid="work-timeline"]\').textContent'), /subagent-findings/)
       await ui('document.querySelector(\'[data-testid="work-back"]\').click()')
       await wait(() => ui('!!document.querySelector(\'[data-testid="work-list"]\')'), 'Back did not return to the list')

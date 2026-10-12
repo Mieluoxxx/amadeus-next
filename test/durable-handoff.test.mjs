@@ -60,13 +60,13 @@ async function until(check, label, timeout = 8000) {
 
 /**
  * 主对话与子代理共用 faux provider 的同一条响应队列，所以排一串相同的路由函数，
- * 由请求里的工具表区分调用方：子代理只有 web_search / web_fetch。
+ * 由请求里的工具表区分调用方：子代理只有 web_fetch。
  */
 function scripted(handlers) {
   const faux = fauxProvider()
   const calls = { main: [], child: [], after: [] }
   const router = (context, options, state, model) => {
-    const side = toolNames(context).includes('web_search') ? 'child' : 'main'
+    const side = toolNames(context).includes('web_fetch') ? 'child' : 'main'
     if (side === 'main' && isAck(context)) { calls.after.push(context); return fauxAssistantMessage('<zh>交给他们了。</zh><jp>頼んだわ。</jp>') }
     calls[side].push(context)
     return handlers[side](context, options, state, model)
@@ -169,7 +169,7 @@ test('P4: handoff is called first and the model speaks after it returns; the mai
     // 子代理仍在运行时主对话照常聊天；子代理没有委托工具，也就不能递归委托。
     assert.equal((await say(root, '你在吗')).status, 'done')
     await until(() => calls.child.length > 0, 'child request')
-    assert.deepEqual(toolNames(calls.child[0]).sort(), ['report_progress', 'web_fetch', 'web_search'])
+    assert.deepEqual(toolNames(calls.child[0]).sort(), ['report_progress', 'web_fetch'])
     assert.equal(textOfContent(calls.child[0].messages.at(-1).content), '请查明天东京的天气预报，给出气温、降水和穿衣建议。')
     assert.equal((await outboxOf(harness)).pending.length, 0, 'no report before the child answers')
     assert.equal((await itemOf(harness)).status, 'running')
@@ -480,14 +480,14 @@ test('a report queued behind leftover inbox items is recorded with a null entryI
   }
 })
 
-test('timeout reports the partial progress; the placeholder web_search tells the child plainly it has no backend', async () => {
+test('timeout reports the partial progress; a failing tool tells the child plainly why', async () => {
   const { harness, root, calls, reports, close } = await open({
     limits: { tickMs: 20, activeTimeoutMs: 200 },
     handlers: {
       child: (context, options) =>
         hasToolResult(context)
           ? held(gate(), '不会回答')(context, options)
-          : calling('先搜一下东京天气。', fauxToolCall('web_search', { query: '东京 明天 天气' })),
+          : calling('先搜一下东京天气。', fauxToolCall('web_fetch', { url: 'not a url' })),
     },
   })
   try {
@@ -501,7 +501,7 @@ test('timeout reports the partial progress; the placeholder web_search tells the
     assert.equal(report.text, 'Task: 查明天东京的天气\nReason: not finished within 1 second\nPartial progress: 先搜一下东京天气。')
     const toolResult = calls.child[1].messages.findLast(message => message.role === 'toolResult')
     assert.equal(toolResult.isError, true)
-    assert.equal(textOfContent(toolResult.content), 'No search backend is configured yet.')
+    assert.equal(textOfContent(toolResult.content), 'The link is malformed.')
     const item = await itemOf(harness)
     assert.equal(item.status, 'timeout')
     assert.equal(item.failure.reason, 'timeout')
@@ -610,7 +610,7 @@ test('exceeding the token limit stops the child and keeps its partial progress',
     limits: { tickMs: 20, tokenLimit: 100 },
     handlers: {
       child: (context, options) =>
-        hasToolResult(context) ? held(gate(), 'x')(context, options) : calling('先搜一下。', fauxToolCall('web_search', { query: '东京 天气' })),
+        hasToolResult(context) ? held(gate(), 'x')(context, options) : calling('先搜一下。', fauxToolCall('web_fetch', { url: 'not a url' })),
     },
   })
   try {
@@ -771,7 +771,7 @@ test('handoff validation, replay by callId, and brief deduplication', async () =
     assert.deepEqual((await harness.snapshot(ApprovalsDoc, child.child, ctx)), { items: {} }, 'the commit creates app.approvals for the child')
     const agent = await (await harness.conversation(child.child, ctx)).agent(ctx)
     assert.deepEqual(agent.extensions.map(extension => extension.name), ['amadeus-research'])
-    assert.deepEqual(agent.tools.map(tool => tool.name).sort(), ['report_progress', 'web_fetch', 'web_search'])
+    assert.deepEqual(agent.tools.map(tool => tool.name).sort(), ['report_progress', 'web_fetch'])
     assert.match(agent.instructions, /^You are a background task assistant\./)
     assert.equal(agent.model.modelId, 'faux-1', 'the child copies the main conversation model')
   } finally {
@@ -944,7 +944,7 @@ test('renderReport wraps the stored body with status-specific system notes', () 
 test('handoff description is assembled from the enabled kinds only and is byte-stable', () => {
   const description = handoffDescription(['research'], { concurrency: 2 })
   assert.equal(description, handoffDescription(['research'], { concurrency: 2 }))
-  assert.match(description, /- research: search the web, read pages and summarize\./)
+  assert.match(description, /- research: look things up on the web, read pages and summarize\./)
   assert.doesNotMatch(description, /- files|- task/)
   assert.match(description, /\(use remember for that\)/, 'Things to remember go to the memory tool, not a subagent')
   assert.match(description, /At most 2 tasks run at once; the rest wait in line\. Keep the returned task_id for handoff_status, handoff_send and handoff_cancel\.$/)

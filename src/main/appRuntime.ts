@@ -30,11 +30,12 @@ type ActiveTurn = TurnKey & {
 }
 
 // 落盘时以 `<key>_ENCRYPTED` 形式经 safeStorage 加密，明文永不写入设置文件。
-const SECRET_KEYS = ['FISH_API_KEY', 'JEV_API_KEY', 'web_search_api_key']
+const SECRET_KEYS = ['FISH_API_KEY', 'JEV_API_KEY']
 const UNFOCUSED_FRAME_RATE: SceneFrameRate = 15
 const DEFAULT_SESSION_TITLE = '新对话'
 const MEMORY_RECALL_MODES = ['off', 'log', 'on']
-const SEARCH_PROVIDERS = ['brave', 'tavily']
+// 子代理的 skills 与 MCP 来源：隔离只用 ~/.amadeus 下的，共享再加宿主机上的（见 durable/worker.ts capabilitiesFromEnv）。
+const CAPABILITY_MODES = ['isolated', 'shared']
 // model.list 的取值是 `${provider}/${id}`：provider 不含斜杠，id 可以含（如 openrouter/anthropic/x）。
 const DELEGATION_MODEL_PATTERN = /^[^\s/]+\/\S+$/
 // 进行中的回合这么久没有任何 turn.* 事件，就当它的终止事件丢了；没有它 Floor 会一直 responding，重载与汇报都排不上。
@@ -132,10 +133,10 @@ export class AppRuntime {
       JEV_API_URL: deps.env.JEV_API_URL || DEFAULT_JEV_URL,
       JEV_API_KEY: deps.env.JEV_API_KEY || '',
       JEV_MODEL: deps.env.JEV_MODEL || DEFAULT_JEV_MODEL,
-      web_search_provider: deps.env.AMADEUS_SEARCH_PROVIDER || '',
-      web_search_api_key: deps.env.AMADEUS_SEARCH_API_KEY || '',
       report_proactive: true,
       delegation_model: '',
+      skills_mode: 'isolated',
+      mcp_mode: 'isolated',
       memory_enabled: true,
       memory_recall: 'log',
       mouth_gain: 8,
@@ -664,16 +665,14 @@ export class AppRuntime {
 
   // ---- 设置 ----
 
-  // Pi 子进程在启动时从环境变量加载代理、Jev、搜索与委托模型配置，故这些变更都需重建 worker。
+  // Pi 子进程在启动时从环境变量加载代理、Jev、委托模型与子代理能力来源，故这些变更都需重建 worker。
   private piEnv(): Record<string, string> {
     const proxy = String(this.config.network_proxy || '').trim()
     const env: Record<string, string> = proxy ? { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: proxy, HTTPS_PROXY: proxy } : {}
     const jevKey = String(this.config.JEV_API_KEY || '')
     if (jevKey) Object.assign(env, { AMADEUS_JEV_URL: String(this.config.JEV_API_URL), AMADEUS_JEV_MODEL: String(this.config.JEV_MODEL), AMADEUS_JEV_API_KEY: jevKey })
-    const searchProvider = String(this.config.web_search_provider || '')
-    const searchKey = String(this.config.web_search_api_key || '')
-    if (searchProvider) env.AMADEUS_SEARCH_PROVIDER = searchProvider
-    if (searchKey) env.AMADEUS_SEARCH_API_KEY = searchKey
+    if (this.config.skills_mode === 'shared') env.AMADEUS_SKILLS_MODE = 'shared'
+    if (this.config.mcp_mode === 'shared') env.AMADEUS_MCP_MODE = 'shared'
     const delegationModel = String(this.config.delegation_model || '')
     if (delegationModel) env.AMADEUS_DELEGATION_MODEL = delegationModel
     return env
@@ -714,12 +713,9 @@ export class AppRuntime {
     }
     if ('JEV_MODEL' in values) values.JEV_MODEL = String(values.JEV_MODEL ?? '').trim() || DEFAULT_JEV_MODEL
     if (typeof values.JEV_API_KEY === 'string') values.JEV_API_KEY = values.JEV_API_KEY.trim()
-    if ('web_search_provider' in values) {
-      const provider = String(values.web_search_provider ?? '').trim().toLowerCase()
-      if (provider && !SEARCH_PROVIDERS.includes(provider)) return { ok: false, error: `Invalid web_search_provider: expected one of ${SEARCH_PROVIDERS.join(', ')} or empty` }
-      values.web_search_provider = provider
+    for (const key of ['skills_mode', 'mcp_mode']) {
+      if (key in values && !CAPABILITY_MODES.includes(String(values[key]))) return { ok: false, error: `Invalid ${key}: expected one of ${CAPABILITY_MODES.join(', ')}` }
     }
-    if (typeof values.web_search_api_key === 'string') values.web_search_api_key = values.web_search_api_key.trim()
     if ('delegation_model' in values) {
       const model = String(values.delegation_model ?? '').trim()
       if (model && !DELEGATION_MODEL_PATTERN.test(model)) return { ok: false, error: 'Invalid delegation_model: expected provider/model or empty' }
@@ -739,7 +735,7 @@ export class AppRuntime {
     const previousPiEnv = JSON.stringify(this.piEnv())
     Object.assign(this.config, values)
     this.persistSettings()
-    // 代理、Jev 与搜索配置变更仅在子进程边界热重启，避免破坏正在进行的语音合成与场景渲染。
+    // 代理、Jev 与子代理配置变更仅在子进程边界热重启，避免破坏正在进行的语音合成与场景渲染。
     if (JSON.stringify(this.piEnv()) !== previousPiEnv) this.queueReload({ targets: ['pi-worker'] }, false)
     if (this.floor.listeningEnabled && this.config.asr_language !== previousLanguage) {
       this.floor.stopMic()
@@ -838,13 +834,8 @@ export class AppRuntime {
           fields: [
             { key: 'report_proactive', label: 'Proactive reports', type: 'boolean', value: this.config.report_proactive !== false, editable: true },
             { key: 'delegation_model', label: 'Delegation model', type: 'text', value: String(this.config.delegation_model || ''), editable: true },
-          ],
-        },
-        {
-          id: 'web_search', label: 'Web search', configured: Boolean(this.config.web_search_provider && this.config.web_search_api_key),
-          fields: [
-            { key: 'web_search_provider', label: 'Search provider', type: 'select', value: String(this.config.web_search_provider || ''), options: [{ value: '', label: '-' }, ...SEARCH_PROVIDERS.map(value => ({ value, label: value }))], editable: true },
-            { key: 'web_search_api_key', label: 'Search API key', type: 'secret', editable: true },
+            { key: 'skills_mode', label: 'Skills', type: 'select', value: String(this.config.skills_mode || 'isolated'), options: CAPABILITY_MODES, editable: true },
+            { key: 'mcp_mode', label: 'MCP servers', type: 'select', value: String(this.config.mcp_mode || 'isolated'), options: CAPABILITY_MODES, editable: true },
           ],
         },
         {

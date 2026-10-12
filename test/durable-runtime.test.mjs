@@ -439,7 +439,7 @@ test('a tool call written as text is hidden and corrected once, so the model mak
   const lastUser = context => JSON.stringify(context.messages.filter(message => message.role === 'user').at(-1)?.content ?? '')
   const requests = []
   const router = async context => {
-    if (context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_search'))) return new Promise(() => {})
+    if (context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_fetch'))) return new Promise(() => {})
     requests.push(lastUser(context))
     if (lastUser(context).includes('[System note: tool call written as text]')) {
       return fauxAssistantMessage([fauxToolCall('handoff', { kind: 'research', title: '东京天气', brief: '查一下东京明天的天气，给出一句结论。' })], { stopReason: 'toolUse' })
@@ -506,7 +506,7 @@ test('a model that keeps writing tool calls as text is corrected only once per r
 test('a handoff returns at once and the model speaks after it, then its report is announced and delivered as its own turn', async () => {
   const f = fixture()
   const runtime = await f.create()
-  const isChild = context => context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_search'))
+  const isChild = context => context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_fetch'))
   const isReport = context => JSON.stringify(context.messages.at(-1)?.content ?? '').includes('amadeus_handoff_result')
   const release = deferred()
   const router = async context => {
@@ -570,7 +570,7 @@ test('report.deliver never aborts another run: it answers busy, and the report s
   const f = fixture()
   const runtime = await f.create()
   const calls = []
-  const isChild = context => context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_search'))
+  const isChild = context => context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_fetch'))
   const isReport = context => JSON.stringify(context.messages.at(-1)?.content ?? '').includes('amadeus_handoff_result')
   const router = async (context, options) => {
     if (isChild(context)) return fauxAssistantMessage('结论：已完成。')
@@ -604,7 +604,7 @@ test('a new chat.submit takes priority over a leftover report turn', async () =>
   const f = fixture()
   const runtime = await f.create()
   const calls = []
-  const isChild = context => context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_search'))
+  const isChild = context => context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_fetch'))
   const isReport = context => JSON.stringify(context.messages.at(-1)?.content ?? '').includes('amadeus_handoff_result')
   const router = async (context, options) => {
     if (isChild(context)) return fauxAssistantMessage('结论：已完成。')
@@ -801,7 +801,7 @@ test('a kill in the middle of a delete never resurrects the session', async () =
 test('deleting a session aborts its running subagent and removes the directory', async () => {
   const f = fixture()
   const runtime = await f.create()
-  const isChild = context => context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_search'))
+  const isChild = context => context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_fetch'))
   const childCalls = []
   const router = async (context, options) => {
     if (isChild(context)) return hang(childCalls)(context, options)
@@ -897,7 +897,7 @@ test('invalid and unknown targets get a precise error code before touching the f
 test('task.cancel stops a running subagent: the card turns cancelled and no report is left', async () => {
   const f = fixture()
   const runtime = await f.create()
-  const isChild = context => context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_search'))
+  const isChild = context => context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_fetch'))
   const childCalls = []
   const router = async (context, options) => {
     if (isChild(context)) return hang(childCalls)(context, options)
@@ -994,7 +994,7 @@ test('the main conversation offers only delegation tools and the subagent gets n
     .map(message => [typeof message.content === 'string' ? message.content : message.content.map(block => block.text).join(''), ...Object.values(message.sections ?? {})].join('\n')).join('\n')
   const seen = { main: [], child: [] }
   const router = async context => {
-    if (tools(context).includes('web_search')) { seen.child.push(context); return fauxAssistantMessage('结论：已完成。') }
+    if (tools(context).includes('web_fetch')) { seen.child.push(context); return fauxAssistantMessage('结论：已完成。') }
     seen.main.push(context)
     if (seen.main.length === 1) return fauxAssistantMessage([fauxText('<zh>我让人去查。</zh><jp>調べてもらうわ。</jp>'), fauxToolCall('handoff', { kind: 'research', title: '查资料', brief: '查一下东京明天的天气，给出一句结论。' })], { stopReason: 'toolUse' })
     return fauxAssistantMessage('<zh>好。</zh><jp>うん。</jp>')
@@ -1007,7 +1007,7 @@ test('the main conversation offers only delegation tools and the subagent gets n
     assert.deepEqual(tools(seen.main[0]), ['handoff', 'handoff_cancel', 'handoff_send', 'handoff_status'], 'No built-in read / bash / edit / write in the main conversation')
     assert.match(systemText(seen.main[0]), /## Boundaries/)
     assert.match(systemText(seen.main[0]), /You are Amadeus/)
-    assert.deepEqual(tools(seen.child[0]), ['report_progress', 'web_fetch', 'web_search'], 'The subagent cannot delegate again')
+    assert.deepEqual(tools(seen.child[0]), ['report_progress', 'web_fetch'], 'The subagent cannot delegate again')
     assert.doesNotMatch(systemText(seen.child[0]), /You are Amadeus|## Boundaries/, 'The subagent does not inherit the persona prompt')
     assert.match(systemText(seen.child[0]), /background task assistant/)
   } finally { await f.cleanup() }
@@ -1159,7 +1159,7 @@ test('the worker entry wires the port protocol: ready, commands in order, lock f
 
 /** 主对话委托一次，子代理由 child 决定怎么答，汇报回合由 report 决定。 */
 function delegation({ child, report, plain }) {
-  const isChild = context => context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_search'))
+  const isChild = context => context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_fetch'))
   const isReport = context => JSON.stringify(context.messages.at(-1)?.content ?? '').includes('amadeus_handoff_result')
   return async (context, options) => {
     if (isChild(context)) return child(context, options)
@@ -1544,7 +1544,7 @@ test('a report is never submitted behind a leftover queued input: it stays pendi
 
 // ─── handoff v2：续接、进度、提问、委托模型（pi-tool-constraints §3.7） ───
 
-const isChildContext = context => context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_search'))
+const isChildContext = context => context.messages.some(message => message.role === 'system' && (message.toolsAdded ?? []).some(tool => tool.name === 'web_fetch'))
 const lastText = context => { const content = context.messages.at(-1)?.content; return typeof content === 'string' ? content : (content ?? []).map(block => block.text ?? '').join('') }
 const userCount = context => context.messages.filter(message => message.role === 'user').length
 
@@ -1663,7 +1663,7 @@ test('the work panel sees every delegation: live child actions, the full trace, 
     const last = lastText(context)
     if (isChildContext(context)) {
       step++
-      if (step === 1) return fauxAssistantMessage([fauxText('先搜一下。'), fauxToolCall('web_search', { query: '东京 明天 天气' })], { stopReason: 'toolUse' })
+      if (step === 1) return fauxAssistantMessage([fauxText('先搜一下。'), fauxToolCall('web_fetch', { url: 'not a url' })], { stopReason: 'toolUse' })
       if (step === 2) return fauxAssistantMessage([fauxToolCall('report_progress', { note: '整理结果' })], { stopReason: 'toolUse' })
       await release.promise
       return fauxAssistantMessage('结论：明天晴。')
@@ -1678,9 +1678,9 @@ test('the work panel sees every delegation: live child actions, the full trace, 
     await f.chat(runtime, 'one', 't1', '帮我查一下东京明天的天气')
     await f.until(() => step >= 3)
     const tool = () => f.events('task.activity').flatMap(event => event.actions).filter(action => action.type === 'tool').at(-1)
-    // 没配搜索后端时 web_search 回的是错误结果，正好也验证了失败的一步会如实显示。
+    // 打不开的链接让 web_fetch 回错误结果，正好也验证了失败的一步会如实显示。
     await f.until(() => tool()?.status === 'error')
-    assert.deepEqual([tool().tool, tool().label, tool().output], ['web_search', '东京 明天 天气', 'No search backend is configured yet.'])
+    assert.deepEqual([tool().tool, tool().label, tool().output], ['web_fetch', 'not a url', 'The link is malformed.'])
     assert.equal(f.events('task.activity').at(-1).taskId, 't_01')
     assert.equal(f.events('task.activity').at(-1).toolUses, 1, 'report_progress is not counted as a tool use')
 
@@ -1688,7 +1688,7 @@ test('the work panel sees every delegation: live child actions, the full trace, 
     assert.deepEqual(live.map(session => [session.sessionId, session.title]), [['one', '天气']])
     const running = live[0].tasks[0]
     assert.deepEqual([running.taskId, running.status, running.toolUses], ['t_01', 'running', 1])
-    assert.deepEqual(running.recent.map(action => action.type === 'tool' ? action.tool : action.text), ['web_search', '整理结果'])
+    assert.deepEqual(running.recent.map(action => action.type === 'tool' ? action.tool : action.text), ['web_fetch', '整理结果'])
 
     release.resolve()
     await f.until(() => f.events('task.report-ready').length > 0)
@@ -1697,7 +1697,7 @@ test('the work panel sees every delegation: live child actions, the full trace, 
     assert.equal(trace.actions[0].text.includes('查一下东京明天的天气'), true)
     assert.equal(trace.actions.at(-1).text, '结论：明天晴。')
     assert.deepEqual([trace.task.status, trace.task.toolUses], ['done', 1])
-    assert.deepEqual(trace.actions.filter(action => action.type === 'tool').map(action => [action.tool, action.status]), [['web_search', 'error']])
+    assert.deepEqual(trace.actions.filter(action => action.type === 'tool').map(action => [action.tool, action.status]), [['web_fetch', 'error']])
     assert.deepEqual(await f.call(runtime, 'task.trace', { sessionId: 'one', taskId: 't_09' }).then(reply => [reply.type, reply.code]), ['error', 'not_found'])
 
     await runtime.host.close('one')

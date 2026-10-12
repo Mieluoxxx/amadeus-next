@@ -16,7 +16,10 @@ const call = (id, name, args) => ({ type: 'toolCall', id, name, arguments: args 
 test('labelOf picks the argument that says what the step does', () => {
   assert.equal(labelOf('bash', { command: 'npm   test\n--watch' }), 'npm test --watch')
   assert.equal(labelOf('read', { path: '/a/b.md', offset: 3 }), '/a/b.md')
-  assert.equal(labelOf('web_search', { query: '东京' }), '东京')
+  assert.equal(labelOf('read_skill', { skill: 'pdf-tools', path: 'SKILL.md' }), 'pdf-tools')
+  assert.equal(labelOf('mcp_list_tools', { server: 'exa' }), 'exa')
+  assert.equal(labelOf('mcp_call', { server: 'exa', tool: 'web_search_exa', arguments: { query: '东京' } }), 'exa.web_search_exa {"query":"东京"}')
+  assert.equal(labelOf('mcp_call', { server: 'exa', tool: 'list' }), 'exa.list')
   assert.equal(labelOf('custom', { a: 1 }), '{"a":1}')
   assert.equal(labelOf('custom', {}), '')
   assert.equal(labelOf('bash', { command: 'x'.repeat(400) }).length, 160)

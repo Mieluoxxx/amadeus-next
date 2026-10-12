@@ -252,6 +252,7 @@ const EN = {
   'task.detail.command': 'Command', 'task.detail.cwd': 'Working directory', 'task.detail.path': 'Path', 'task.detail.preview': 'Details',
   'task.detail.path.write': 'File to write', 'task.detail.path.edit': 'File to modify',
   'task.detail.preview.write': 'Content to write', 'task.detail.preview.edit': 'Changes ("-" removed, "+" added)',
+  'task.detail.mcp_tool': 'MCP tool', 'task.detail.preview.mcp': 'Arguments',
 
   'memory.title': 'Long-term memory', 'memory.unavailable': 'The memory service is not available yet.', 'memory.loading': 'Loading…',
   'memory.enabled': 'Remember across conversations', 'memory.recall': 'Episodic recall',
@@ -273,9 +274,8 @@ const EN = {
   'memory.source.manual': 'Added by you', 'memory.source.explicit': 'You asked to remember', 'memory.source.extracted': 'Inferred from chat',
   'memory.save_error': 'Memory update failed: {error}',
 
-  'settings.subagent.title': 'Subagents', 'settings.subagent.note': 'Background tasks are handed to a subagent, which reports back when done.',
-  'settings.web_search.title': 'Web search', 'settings.web_search.note': 'Research tasks use this to look things up online.',
-  'settings.web_search.none': 'Not configured',
+  'settings.subagent.title': 'Subagents', 'settings.subagent.note': 'Background tasks are handed to a subagent, which reports back when done. Subagents use skills from ~/.amadeus/skills and MCP servers from ~/.amadeus/mcp.json (web search comes from an MCP server such as Exa); shared also uses ~/.agents/skills, ~/.pi/agent/skills and ~/.pi/agent/mcp.json.',
+  'settings.capability_mode.isolated': 'Isolated (Amadeus only)', 'settings.capability_mode.shared': 'Shared with this computer',
   'settings.delegation_model.same': 'Same as chat model',
 
 }
@@ -361,6 +361,7 @@ const ZH: Messages = {
   'task.detail.command': '命令', 'task.detail.cwd': '工作目录', 'task.detail.path': '路径', 'task.detail.preview': '详情',
   'task.detail.path.write': '写入的文件', 'task.detail.path.edit': '修改的文件',
   'task.detail.preview.write': '将写入的内容', 'task.detail.preview.edit': '修改内容（“-”删除，“+”新增）',
+  'task.detail.mcp_tool': 'MCP 工具', 'task.detail.preview.mcp': '调用参数',
 
   'memory.title': '长期记忆', 'memory.unavailable': '记忆服务暂不可用。', 'memory.loading': '正在加载…',
   'memory.enabled': '跨会话记住', 'memory.recall': '情景回忆',
@@ -381,9 +382,8 @@ const ZH: Messages = {
   'memory.source.manual': '你添加的', 'memory.source.explicit': '你要求记住的', 'memory.source.extracted': '从对话中推断的',
   'memory.save_error': '记忆更新失败：{error}',
 
-  'settings.subagent.title': '子代理', 'settings.subagent.note': '后台任务交给子代理执行，完成后向你汇报。',
-  'settings.web_search.title': '网页搜索', 'settings.web_search.note': '调研任务用它在网上查资料。',
-  'settings.web_search.none': '未配置',
+  'settings.subagent.title': '子代理', 'settings.subagent.note': '后台任务交给子代理执行，完成后向你汇报。子代理使用 ~/.amadeus/skills 里的 skills 与 ~/.amadeus/mcp.json 里的 MCP 服务（网页搜索也来自 MCP，例如 Exa）；选择共享时还会使用 ~/.agents/skills、~/.pi/agent/skills 与 ~/.pi/agent/mcp.json。',
+  'settings.capability_mode.isolated': '隔离（仅 Amadeus）', 'settings.capability_mode.shared': '与本机共享',
   'settings.delegation_model.same': '与对话模型相同',
 
 }
@@ -459,6 +459,7 @@ const JA: Messages = {
   'task.detail.command': 'コマンド', 'task.detail.cwd': '作業ディレクトリ', 'task.detail.path': 'パス', 'task.detail.preview': '詳細',
   'task.detail.path.write': '書き込むファイル', 'task.detail.path.edit': '変更するファイル',
   'task.detail.preview.write': '書き込む内容', 'task.detail.preview.edit': '変更内容（「-」削除、「+」追加）',
+  'task.detail.mcp_tool': 'MCP ツール', 'task.detail.preview.mcp': '引数',
 
   'memory.title': '長期記憶', 'memory.unavailable': '記憶サービスはまだ利用できません。', 'memory.loading': '読み込み中…',
   'memory.enabled': '会話をまたいで記憶する', 'memory.recall': 'エピソード想起',
@@ -479,9 +480,8 @@ const JA: Messages = {
   'memory.source.manual': 'あなたが追加', 'memory.source.explicit': '覚えるよう依頼', 'memory.source.extracted': '会話から推定',
   'memory.save_error': '記憶の更新に失敗しました：{error}',
 
-  'settings.subagent.title': 'サブエージェント', 'settings.subagent.note': 'バックグラウンドのタスクはサブエージェントが実行し、完了後に報告します。',
-  'settings.web_search.title': 'ウェブ検索', 'settings.web_search.note': '調査タスクがウェブで調べるときに使用します。',
-  'settings.web_search.none': '未設定',
+  'settings.subagent.title': 'サブエージェント', 'settings.subagent.note': 'バックグラウンドのタスクはサブエージェントが実行し、完了後に報告します。サブエージェントは ~/.amadeus/skills のスキルと ~/.amadeus/mcp.json の MCP サーバーを使います（ウェブ検索も Exa などの MCP サーバー経由）。共有にすると ~/.agents/skills、~/.pi/agent/skills、~/.pi/agent/mcp.json も使います。',
+  'settings.capability_mode.isolated': '分離（Amadeus のみ）', 'settings.capability_mode.shared': 'このコンピューターと共有',
   'settings.delegation_model.same': '会話モデルと同じ',
 
 }
@@ -493,28 +493,28 @@ type SettingCopy = Record<'group' | 'field' | 'description' | 'groupDescription'
 
 const ZH_SETTINGS: SettingCopy = {
   group: {
-    asr_local: 'Apple Speech（本地）', speech_synthesis: 'Fish Audio 实时合成', display: '显示', network: '网络', memory: '长期记忆（Jev）', delegation: '委托', web_search: '网页搜索',
+    asr_local: 'Apple Speech（本地）', speech_synthesis: 'Fish Audio 实时合成', display: '显示', network: '网络', memory: '长期记忆（Jev）', delegation: '委托',
   },
   field: {
     asr_language: '识别语言', FISH_API_KEY: 'Fish Audio API 密钥', FISH_VOICE_ID: 'Fish 声音 ID', FISH_API_MODEL: 'Fish 模型',
     mouth_gain: '嘴型增益', mouth_silence_threshold: '静音阈值', voice_sync_offset_ms: '音画同步偏移（毫秒）', network_proxy: '网络代理',
     scene_frame_rate: '场景帧率（FPS）',
     JEV_API_URL: 'Jev API 地址', JEV_API_KEY: 'Jev API 密钥', JEV_MODEL: 'Jev 模型',
-    report_proactive: '主动汇报', delegation_model: '委托模型', web_search_provider: '搜索服务', web_search_api_key: '搜索 API 密钥',
+    report_proactive: '主动汇报', delegation_model: '委托模型', skills_mode: 'Skills', mcp_mode: 'MCP 服务',
   },
   description: {}, groupDescription: {}, status: {}, option: {},
 }
 
 const JA_SETTINGS: SettingCopy = {
   group: {
-    asr_local: 'Apple Speech（ローカル）', speech_synthesis: 'Fish Audio リアルタイム合成', display: '表示', network: 'ネットワーク', memory: '長期記憶（Jev）', delegation: '委任', web_search: 'ウェブ検索',
+    asr_local: 'Apple Speech（ローカル）', speech_synthesis: 'Fish Audio リアルタイム合成', display: '表示', network: 'ネットワーク', memory: '長期記憶（Jev）', delegation: '委任',
   },
   field: {
     asr_language: '認識言語', FISH_API_KEY: 'Fish Audio API キー', FISH_VOICE_ID: 'Fish ボイス ID', FISH_API_MODEL: 'Fish モデル',
     mouth_gain: '口の動きのゲイン', mouth_silence_threshold: '無音しきい値', voice_sync_offset_ms: '音声同期オフセット（ミリ秒）', network_proxy: 'ネットワークプロキシ',
     scene_frame_rate: 'シーンのフレームレート（FPS）',
     JEV_API_URL: 'Jev API エンドポイント', JEV_API_KEY: 'Jev API キー', JEV_MODEL: 'Jev モデル',
-    report_proactive: '能動的な報告', delegation_model: '委任モデル', web_search_provider: '検索プロバイダー', web_search_api_key: '検索 API キー',
+    report_proactive: '能動的な報告', delegation_model: '委任モデル', skills_mode: 'スキル', mcp_mode: 'MCP サーバー',
   },
   description: {}, groupDescription: {}, status: {}, option: {},
 }
