@@ -88,6 +88,8 @@ process.once('SIGTERM', () => { void close() })
 try {
   await Promise.all([
     watchBuild('vite/main.config.mjs', [['dist/main/index.js', 'main'], ['dist/main/pi-worker.js', 'pi-worker']]),
+    // runner 的哈希在 worker 启动时计算，所以它变了要重载 worker。
+    watchBuild('vite/runner.config.mjs', [['dist/runner/amadeus-runner.mjs', 'pi-worker']]),
     watchBuild('vite/preload.config.mjs', [['dist/preload/index.cjs', 'preload']]),
     watchBuild('vite/scene.config.mjs', [['dist/scene/scene.js', 'scene'], ['dist/scene/audio-worklet.js', 'scene']]),
     compileSpeechHelper(),

@@ -3,6 +3,8 @@ import path from 'node:path'
 import { ModelRuntime, getAgentDir } from '@earendil-works/pi-coding-agent'
 import type { ParentPortLike } from '../pi-worker.ts'
 import { McpManager, mcpConfigFiles, skillRoots, type CapabilityMode, type HandoffOptions } from './handoff/index.ts'
+import { TargetPool, sshConnector } from './remote/pool.ts'
+import { targetsFromEnv } from './remote/targets.ts'
 import { DurableRuntime } from './runtime.ts'
 
 type Json = Record<string, unknown>
@@ -39,18 +41,27 @@ export function startDurableWorker(port: ParentPortLike): void {
       modelsStorePath: path.join(agentDir, 'models-store.json'),
     })
     if (models.getError()) throw new Error('Pi model configuration is invalid')
+    const log = (message: string) => console.error(`[amadeus-next] ${message}`)
+    const targets = targetsFromEnv(process.env, log)
+    const runnerFile = process.env.AMADEUS_RUNNER_FILE?.trim()
+    if (targets.length && !runnerFile) log('remote targets are configured but the runner bundle is unknown; remote tasks are disabled')
+    const remote = targets.length && runnerFile ? new TargetPool({ targets, connector: sshConnector({ runnerFile }) }) : undefined
     const created = new DurableRuntime({
       models, sessionsDir, agentDir,
       memoryDir: process.env.AMADEUS_MEMORY_DIR,
       post: message => port.postMessage(message),
-      handoff: capabilitiesFromEnv(process.env, message => console.error(`[amadeus-next] ${message}`)),
+      handoff: capabilitiesFromEnv(process.env, log),
+      ...(remote ? { remote } : {}),
       // 仅供测试缩短等待；正式运行用默认的 10 秒。
       ...(process.env.AMADEUS_NEXT_LOCK_WAIT_MS ? { lockWaitMs: Number(process.env.AMADEUS_NEXT_LOCK_WAIT_MS) } : {}),
     })
     // 先取进程锁再开任何库；锁被占用时在 ready 里报错，不开库。
     await created.start()
     runtime = created
-    process.once('exit', () => created.releaseLock())
+    process.once('exit', () => {
+      created.releaseLock()
+      remote?.close()
+    })
   }
 
   const initialized = initialize()

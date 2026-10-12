@@ -67,7 +67,7 @@ function useMeta(task: WorkTask, now: number, sessionTitle: string): string[] {
   const { t } = useI18n()
   const elapsed = elapsedOf(task, now)
   return [
-    t(`task.kind.${task.kind}` as MessageKey, task.kind),
+    t(`task.kind.${task.kind}` as MessageKey, task.kind) + (task.target ? ` @${task.target}` : ''),
     ...(sessionTitle ? [sessionTitle] : []),
     ...(task.round > 1 ? [t('task.round', undefined, { count: task.round })] : []),
     ...(task.toolUses ? [t('work.tool_uses', undefined, { count: task.toolUses })] : []),

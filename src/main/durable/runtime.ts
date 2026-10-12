@@ -26,7 +26,9 @@ import {
   resolveLimits,
   summaryOf,
   type HandoffOptions,
+  type RemotePool,
 } from './handoff/index.ts'
+import type { TargetPool } from './remote/pool.ts'
 import { createMemoryService, type MemoryService, type MemoryServiceOptions, type PrepareOptions } from './memory/index.ts'
 import { isRecallMode } from './memory/types.ts'
 import { WorkLedger } from './workLedger.ts'
@@ -54,6 +56,8 @@ export type DurableRuntimeOptions = {
   checkpointGraceMs?: number
   settings?: Partial<HarnessSettings>
   handoff?: HandoffOptions
+  /** 远程目标池（设置页的 remote_targets）；不设就没有 remote 委托。 */
+  remote?: RemotePool & Pick<TargetPool, 'env' | 'close' | 'hello'>
   extraExtensions?: readonly Extension[]
   /** 会话自动命名（默认开）；测试关掉它，免得命名请求吃掉 faux 的脚本响应。 */
   autoName?: boolean
@@ -136,6 +140,7 @@ export class DurableRuntime {
     const guard = options.handoff?.guard
     this.handoff = createHandoffExtensions({
       ...options.handoff,
+      ...(options.remote ? { remote: options.remote } : {}),
       // 设置页的委托模型经环境变量进 worker（变化时 worker 重载），所以读一次就够。
       delegationModel: options.handoff?.delegationModel ?? delegationModelFromEnv(process.env),
       guard: { ...guard, deny: [...(guard?.deny ?? []), path.dirname(options.sessionsDir), options.sessionsDir, this.memoryDir, options.agentDir] },
@@ -161,6 +166,7 @@ export class DurableRuntime {
       openStorage: options.openStorage ?? (file => openNodeSqliteStorage(file)),
       post: message => options.post(message),
       memory: () => this.memory,
+      ...(options.remote ? { remoteEnv: (target: string, cwd: string) => options.remote!.env(target, cwd) } : {}),
       ...(options.autoName === false ? {} : { afterUserTurn: (open: OpenSession) => this.autoName(open) }),
       idleCloseMs: options.idleCloseMs ?? 600_000,
       maxOpen: options.maxOpen ?? 16,
@@ -264,6 +270,8 @@ export class DurableRuntime {
     if (command.startsWith('memory.')) return reply(() => this.forwardMemory(command, params))
     // 只读、跨会话：不进全局道，免得排在 model.list（可能十几秒）后面。
     if (command === 'task.all') return reply(() => this.allTasks())
+    // 连接要等 ssh，可能十几秒；与会话无关，也不进全局道。
+    if (command === 'remote.check') return reply(() => this.checkRemote(params))
     if (GLOBAL_COMMANDS.has(command)) return this.globalLane.run(() => reply(() => this.global(command, params)))
     if (!SESSION_COMMANDS.has(command)) return fail('invalid', `unsupported Pi worker command: ${command}`)
     if (!SESSION_ID.test(sessionId)) return fail('invalid', 'Invalid session id')
@@ -303,6 +311,17 @@ export class DurableRuntime {
   }
 
   private stale(sessionId: string, epoch: number): boolean { return (this.epochs.get(sessionId) ?? 0) !== epoch }
+
+  /** 设置页的"测试连接"：连上、部署 runner、确认工作目录可用。失败是业务结果（ok: false），不是命令错误。 */
+  private async checkRemote(params: Json): Promise<Json> {
+    const name = text(params.target)
+    const remote = this.options.remote
+    if (!remote?.targets.some(each => each.name === name)) return { ok: false, code: 'not_found', error: `remote target ${name} is not configured` }
+    const check = await remote.checkDir(name, undefined)
+    if (!check.ok) return { ok: false, code: 'unreachable', error: check.detail }
+    const hello = remote.hello(name)
+    return { path: check.path, ...(hello ? { os: hello.os, arch: hello.arch, node: hello.node } : {}) }
+  }
 
   // ─── 全局道 ────────────────────────────────────────────────────────
 
@@ -386,6 +405,8 @@ export class DurableRuntime {
     this.sweeper = undefined
     await this.host.closeAll()
     await this.options.handoff?.mcp?.closeAll()
+    // 会话都关了，远程命令不再有主人；断开连接让 runner 杀掉它们。resume 之后按需重连。
+    this.options.remote?.close()
     await this.memory?.close().catch(error => this.log('memory close failed', error))
     this.memory = undefined
     this.index.close()

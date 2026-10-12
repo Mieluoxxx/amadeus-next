@@ -77,9 +77,11 @@ export type TaskSummary = {
   endedAt?: number
   /** 仅 failed / timeout。 */
   reason?: string
+  /** 仅 remote：执行任务的远程机器。 */
+  target?: string
 }
 
-export function summaryOf(item: Pick<HandoffItem, 'taskId' | 'kind' | 'title' | 'status' | 'round' | 'progress' | 'question' | 'createdAt' | 'startedAt' | 'endedAt' | 'result' | 'failure'>): TaskSummary {
+export function summaryOf(item: Pick<HandoffItem, 'taskId' | 'kind' | 'title' | 'status' | 'round' | 'progress' | 'question' | 'createdAt' | 'startedAt' | 'endedAt' | 'result' | 'failure' | 'target'>): TaskSummary {
   return {
     taskId: item.taskId,
     kind: item.kind,
@@ -92,6 +94,7 @@ export function summaryOf(item: Pick<HandoffItem, 'taskId' | 'kind' | 'title' | 
     ...(item.startedAt !== undefined ? { startedAt: item.startedAt } : {}),
     ...(item.endedAt !== undefined ? { endedAt: item.endedAt } : {}),
     ...(item.status === 'failed' || item.status === 'timeout' ? { reason: reasonOf(item) } : {}),
+    ...(item.target ? { target: item.target } : {}),
   }
 }
 

@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, type KeyboardEvent, type ReactNode } from 'react'
+import { useState, useEffect, useCallback, useMemo, type KeyboardEvent, type ReactNode } from 'react'
 import { translateDynamic, translateSetting, useI18n, type MessageKey } from '../i18n'
 import { Card, ComboSelect, IconAction, Row, type ComboOption } from './settings/parts'
 import MemorySettings from './MemorySettings'
+import { RemoteTargetsCard, normalizeTargets, type RemoteTarget } from './settings/RemoteTargets'
 
 interface Props {
   send: (method: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
@@ -303,6 +304,23 @@ export default function SettingsPage({ send, subscribe }: Props) {
     }
   }, [send, setLocale, t])
 
+  const saveTargets = useCallback(async (targets: RemoteTarget[]): Promise<RemoteTarget[]> => {
+    setSaving('remote_targets')
+    setError(null)
+    try {
+      const response = await send('system.set_config', { values: { remote_targets: targets } })
+      if (!response.ok) throw new Error(String(response.error || t('settings.update_error', undefined, { key: 'remote_targets' })))
+      const values = (response.values as Record<string, unknown>) ?? response
+      setConfig(values)
+      return normalizeTargets(values.remote_targets)
+    } catch (reason) {
+      setError({ key: 'settings.update_error', fallback: reason instanceof Error ? reason.message : String(reason), values: { key: 'remote_targets' } })
+      throw reason
+    } finally {
+      setSaving(null)
+    }
+  }, [send, t])
+
   // 解压、校验与烘焙都在主进程做，这里只管按钮状态与结果提示。
   const installEmote = useCallback(async () => {
     setEmoteBusy(true)
@@ -339,6 +357,7 @@ export default function SettingsPage({ send, subscribe }: Props) {
   }, [t])
 
   const val = (key: string, fallback: string) => String(config[key] ?? fallback)
+  const remoteTargets = useMemo(() => normalizeTargets(config.remote_targets), [config.remote_targets])
 
   const voiceConfiguration = asConfigurationGroups(config.voice_configuration)
   const generalConfiguration = asConfigurationGroups(config.general_configuration)
@@ -451,6 +470,7 @@ export default function SettingsPage({ send, subscribe }: Props) {
             </Row>
             {generalGroups.map(group => <GroupFields key={group.id} group={group} desktop={desktop} onSave={handleStartupSave} />)}
           </Card>
+          <RemoteTargetsCard targets={remoteTargets} onSave={saveTargets} send={send} reloading={reloading} />
           <Card title={t('settings.character.title')}>
             <p className="settings-card-note">{t('settings.character.note')}</p>
             <button type="button" className="crt-button" data-variant="primary" disabled={emoteBusy} onClick={() => void installEmote()}>

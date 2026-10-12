@@ -17,12 +17,13 @@ import {
   type Storage,
   type Tx,
 } from '@earendil-works/pi-durable'
-import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node'
+import type { ExecutionEnv } from '@earendil-works/pi-durable/env'
 import { ActivityLog } from './childActivity.ts'
 import { EventBridge, type SettledTurn } from './eventBridge.ts'
 import { countUserTurns } from './history.ts'
 import { CommandError } from './lanes.ts'
 import { resolveSelection } from './modelSelection.ts'
+import { executionEnvs } from './remote/route.ts'
 import { SESSION_ID, SessionDoc, summarize, type SessionEntry, type SessionIndex } from './sessionIndex.ts'
 import {
   ANCHOR_TASK_NAME,
@@ -96,6 +97,8 @@ export type HostDeps = {
   openStorage: (file: string) => Promise<Storage>
   post: (message: Json) => void
   memory: () => MemoryService | undefined
+  /** remote 任务的执行环境：按受理时钉在条目上的目标名取；没有远程目标时不设。 */
+  remoteEnv?: (target: string, cwd: string) => Promise<ExecutionEnv>
   /** 用户回合落定后的会话级后台工作（自动命名）；不等它，失败自己处理。 */
   afterUserTurn?: (open: OpenSession) => void
   idleCloseMs: number
@@ -187,7 +190,7 @@ export class SessionHost {
         models,
         registry: this.deps.registry,
         settings: this.deps.settings,
-        env: ({ cwd }) => cwd ? new NodeExecutionEnv({ cwd }) : undefined,
+        env: executionEnvs(this.deps.remoteEnv),
         onReport: error => this.report(id, error),
       }, ctx)
     } catch (error) {

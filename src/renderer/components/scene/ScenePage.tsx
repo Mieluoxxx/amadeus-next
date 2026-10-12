@@ -617,6 +617,7 @@ function SceneTranscript({
                 round: live?.round ?? message.card.round,
                 progress: live?.progress,
                 question: live?.question ?? message.card.question,
+                ...(live?.target ? { target: live.target } : {}),
               }}
               summary={message.card.summary}
               live={Boolean(live)}

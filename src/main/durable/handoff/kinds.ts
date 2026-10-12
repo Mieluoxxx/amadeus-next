@@ -1,9 +1,10 @@
 import type { Extension } from '@earendil-works/pi-durable'
 import { createFilesExtension } from './files.ts'
 import type { HandoffKind } from './docs.ts'
-import { FILES_INSTRUCTIONS, RESEARCH_INSTRUCTIONS, TASK_INSTRUCTIONS, grantedLocations } from './instructions.ts'
+import { FILES_INSTRUCTIONS, REMOTE_INSTRUCTIONS, RESEARCH_INSTRUCTIONS, TASK_INSTRUCTIONS, grantedLocations, remoteLocation } from './instructions.ts'
 import type { HandoffLimits } from './limits.ts'
 import type { PathGuard } from './pathGuard.ts'
+import { createRemoteExtension } from './remote.ts'
 import { createResearchExtension } from './research.ts'
 import { createTaskExtension } from './task.ts'
 
@@ -15,7 +16,7 @@ export type KindSpec = {
   /** 子对话精确选择的扩展，不含 amadeus-handoff（禁止递归委托）。 */
   extension: Extension
   /** 授权路径与私有目录是每个任务自己的，所以 instructions 按任务生成。 */
-  instructions(grant: { paths: readonly string[]; cwd: string }): string
+  instructions(grant: { paths: readonly string[]; cwd: string; target?: string }): string
 }
 
 // 新增类型要同时登记到 pi-tool-constraints §4.2；启用哪些类型在 worker 启动时确定，schema 与 description 随之固定。
@@ -23,15 +24,18 @@ export const KIND_LINES: Record<HandoffKind, string> = {
   research: '- research: look things up on the web, read pages and summarize.',
   files: '- files: read files or directories the user pointed to and answer questions about them (read-only). Needs paths.',
   task: "- task: do things that change something, such as organizing files or running scripts; every write or command needs the user's approval. Needs paths.",
+  remote: '- remote: develop, build, test or run things on one of the remote machines listed under target, without per-step approval. Needs target; workdir is optional.',
 }
 
 /** description 里的顺序、enum 的顺序都按这里。 */
-export const ALL_KINDS: readonly HandoffKind[] = ['research', 'files', 'task']
+export const ALL_KINDS: readonly HandoffKind[] = ['research', 'files', 'task', 'remote']
 
 export type KindDeps = {
   limits: HandoffLimits
   guard: PathGuard
   bashEnv?: () => NodeJS.ProcessEnv
+  /** 没有远程目标时 remote 不启用：schema 与 description 和没有这项能力时逐字节相同。 */
+  remoteTargets?: readonly string[]
 }
 
 export function createKindSpecs(kinds: readonly HandoffKind[], deps: KindDeps): Partial<Record<HandoffKind, KindSpec>> {
@@ -46,6 +50,14 @@ export function createKindSpecs(kinds: readonly HandoffKind[], deps: KindDeps): 
         needsPaths: true,
         extension: createFilesExtension(deps.guard),
         instructions: ({ paths, cwd }) => `${FILES_INSTRUCTIONS}\n${grantedLocations(paths, cwd, { scratch: false })}`,
+      }
+    } else if (kind === 'remote') {
+      if (!deps.remoteTargets?.length) continue
+      specs.remote = {
+        line: KIND_LINES.remote,
+        needsPaths: false,
+        extension: createRemoteExtension(deps.limits.remote),
+        instructions: ({ cwd, target }) => `${REMOTE_INSTRUCTIONS}\n${remoteLocation(target ?? '', cwd)}`,
       }
     } else {
       specs.task = {

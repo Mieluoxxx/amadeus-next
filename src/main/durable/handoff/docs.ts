@@ -1,6 +1,6 @@
 import { defineDoc, type ConversationId, type Tx } from '@earendil-works/pi-durable'
 
-export type HandoffKind = 'research' | 'files' | 'task'
+export type HandoffKind = 'research' | 'files' | 'task' | 'remote'
 export type HandoffStatus = 'queued' | 'running' | 'done' | 'failed' | 'timeout' | 'cancelled' | 'needs_input'
 
 /** handoff_send 的幂等记录；steer 的正文留在这里，由 Reporter 投递给子对话（pi-tool-constraints §3.7）。 */
@@ -26,9 +26,14 @@ export type HandoffItem = {
   child: number
   anchor: number
   reporter: number
-  /** 任务私有目录；会话没有登记 taskRoot 时为空串。 */
+  /** 任务私有目录；会话没有登记 taskRoot 时为空串。remote 是远程机器上的工作目录（受理时取过 realpath）。 */
   cwd: string
   paths: string[]
+  /**
+   * remote 的目标名，受理时钉死：执行环境按它选，崩溃恢复、续接都回到同一台机器；之后改设置里的远程机器也不会让任务换机器。
+   * 本机任务没有这个字段。
+   */
+  target?: string
   status: HandoffStatus
   /** 从 1 开始；每次 handoff_send 续接已结束的任务加一。v1 的条目没有这个字段，initHandoffDocs 打开时补 1。 */
   round: number

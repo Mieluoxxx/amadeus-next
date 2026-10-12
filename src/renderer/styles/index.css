@@ -1155,3 +1155,29 @@ input[type="range"]::-webkit-slider-thumb {
   margin-top: -6px;
 }
 input[type="range"]::-webkit-slider-thumb:hover { background: #E3F2FD; }
+
+/* ── 设置页：远程机器 ── */
+.settings-remote-target { display: grid; gap: 2px; padding: 8px 0; border-top: 1px solid var(--border); }
+.settings-card-header + .settings-remote-target { border-top: 0; }
+.settings-remote-summary { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.settings-remote-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 999px; background: var(--muted); opacity: 0.6; }
+.settings-remote-dot[data-tone='ok'] { background: #97d5b4; opacity: 1; box-shadow: 0 0 0 3px rgba(151, 213, 180, 0.12); }
+.settings-remote-dot[data-tone='failed'] { background: #f0aaa1; opacity: 1; box-shadow: 0 0 0 3px rgba(240, 170, 161, 0.12); }
+.settings-remote-dot[data-tone='checking'] { background: var(--accent); opacity: 1; animation: settings-remote-pulse 1s ease-in-out infinite; }
+@keyframes settings-remote-pulse { 50% { opacity: 0.3; } }
+.settings-remote-name { flex: 0 0 auto; color: var(--text); font-size: 12px; font-weight: 600; }
+.settings-remote-where { flex: 1; min-width: 0; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-remote-buttons { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; }
+.settings-remote-target .settings-card-note { padding: 2px 0 0 15px; }
+.settings-remote-target .settings-card-note[data-tone='ok'] { color: #97d5b4; }
+.settings-remote-target .settings-card-note[data-tone='failed'] { color: #f0aaa1; }
+.settings-remote-editor { display: grid; gap: 8px; margin: 8px 0; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: rgba(3, 23, 29, 0.35); }
+.settings-remote-editor-title { color: var(--text); font-size: 12px; font-weight: 650; }
+.settings-remote-editor .settings-advanced { padding: 2px 0 0; border-top: 0; }
+.settings-remote-editor .settings-advanced[open] > summary { margin-bottom: 8px; }
+.settings-remote-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.settings-remote-fields[data-columns='1'] { grid-template-columns: minmax(0, 1fr); }
+.settings-remote-field { display: grid; gap: 3px; min-width: 0; color: var(--muted); font-size: 10.5px; font-weight: 600; }
+.settings-remote-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.settings-remote-footer { display: flex; padding-top: 8px; }
+.settings-card-header + .settings-remote-footer, .settings-card-header + .settings-remote-editor { padding-top: 0; margin-top: 8px; }

@@ -342,6 +342,29 @@ entry    pi.user（汇报回合：<amadeus_handoff_result>）          子代理
 | 进度 | 子代理对话的事件不经事件桥（工作面板的动作流另行挂子对话监视，§2.4）；任务卡片的数据来自 `app.handoffs`。子代理用 `report_progress`（三类都带）写一行进度备注，落在条目的 `progress`，只给任务卡片与 `handoff_status`，不打扰主人；推给界面的 `task.graph` 对只有 `progress` 变化的更新按 15 秒节流 |
 | 结果 | Reporter 写入 `app.outbox.pending`，由主进程决定何时投递（§4.3） |
 
+### 3.4 远程目标
+
+笔记本是大脑，远程服务器是手：模型循环、durable 存储、记忆、汇报都留在本机，`remote` 委托（工具约束 §4.2）的工具在远程机器上执行。做法参照 Memoh 的 Remote Runtime，差别在连接方向：本机主动 ssh 过去，因为这里笔记本在 NAT 后面，服务器才是可达的一方。
+
+```
+pi-worker ── Harness.env(子对话) ── 条目带 target？
+                 ├ 否 → NodeExecutionEnv（本机）
+                 └ 是 → TargetPool.env(target, cwd) → RemoteExecutionEnv
+                                   │ JSON lines over ssh stdio
+远程机器       amadeus-runner：NodeExecutionEnv + 句柄表
+```
+
+| 项 | 约定 |
+| :--- | :--- |
+| 配置 | 设置页“通用 → 远程机器”，存为 `settings.yaml` 的 `remote_targets: [{ name, ssh, workspace, node }]`；设置页是唯一来源。`ssh` 是一整条连接命令（`ssh -p 2222 -i ~/.ssh/k me@host`，或只写 `~/.ssh/config` 里的主机名），按 shell 引号规则拆成参数直接交给 ssh、不经过本机 shell（`sshArguments`）；必须以主机结尾，不能带远程命令，`-N` / `-W` / `-f` / `-n` 这类不开会话的选项直接拒绝。我们的 `-T -o BatchMode=yes …` 放在用户参数之前：ssh 对同一选项取第一次出现的值，`workspace` 缺省 `~`，`node` 缺省 `node`（nvm 之类只在交互 shell 配 PATH 的机器写绝对路径，要求 ≥ 22.19）。主进程整体校验（`remote/targets.ts` 的 `parseTargets`，有错整体拒绝；加载时丢掉手改坏的条目），经环境变量 `AMADEUS_REMOTE_TARGETS`（JSON）传给 worker，变化触发 worker 重载：目标名进 handoff 的 schema，会话内要稳定。卡片上的“测试连接”是 `remote.check`：worker 里的连接池真连一次（部署 runner、确认工作目录），只认已保存的目标 |
+| 部署 | runner 由 `vite/runner.config.mjs` 打成单文件（`dist/runner/amadeus-runner.mjs`，除 `node:` 外无依赖），按内容哈希命名为 `~/.amadeus/runner/<hash>.mjs`。连接前一次 ssh：文件已在就直接退出，否则从 stdin 写入。两端永远是同一份代码，不需要版本协商 |
+| 启动 | `ssh -T -o BatchMode=yes … <用户的参数与主机> "exec sh -lc 'exec <node> \"$HOME/.amadeus/runner/<hash>.mjs\" --stdio'"`。只用 `sh -c '…'` 这种 bash / zsh / fish 都认的写法；`BatchMode` 意味着必须用密钥或 agent 认证，不会弹密码 |
+| 协议 | `src/main/durable/remote/protocol.ts`。一行一帧：调用 `{id, method, cwd?, handle?, args, aborted?}`、应答 `{id, value \| thrown}`、事件 `{event: output \| watch, call, payload}`、取消 `{cancel}`、握手 `{hello: {protocol, os, arch, home, node}}`。Uint8Array 与 `FileError` / `ExecutionError` 跨 JSON 往返时重建成同一个类。reader / watcher 以句柄表示。握手前的坏行忽略（登录脚本的 echo），之后的坏行断开 |
+| 正确性 | `RemoteExecutionEnv` 通过 pi-durable 的 `createEnvConformance` 全部用例（`test/durable-remote-env.test.mjs`）。失败语义与本地一致：预期内失败是 `Result`，连接断开也折算成 `unknown` 的 `Result`，工具照常把错误交给模型 |
+| 钉死 | 目标在受理时写进 `HandoffItem.target`，env 回调只看它（`remote/route.ts`）。崩溃恢复、`handoff_send` 续接都回到同一台机器；改设置里的远程机器不会让在跑的任务换机器 |
+| 连接 | 每个目标一条连接，worker 内所有会话共用（`remote/pool.ts`）。握手后先对 `workspace` 取 `fileInfo`，是目录才算在线。一条连接是一个 generation：断了就作废，绑在它上面的 env 一律失败，**从不重放**（一次写入不能在两条连接上各执行一次）。Harness 每次用 env 都重新要，新调用自然落在新连接上 |
+| 断线 | 远程 stdin 收到 EOF，runner 取消在途调用、关闭句柄、`cleanup()` 杀掉所有命令。本机：在途调用立即失败；新调用最多等 15 秒重连；最近 10 分钟用过的目标后台按 1 s 起、30 s 封顶的指数退避重连；连续不可达超过 2 分钟，Reporter 把在跑的 remote 任务判为 `target_offline`。checkpoint 与 worker 退出时主动断开，不记为离线 |
+
 ---
 
 ## 4. 回合与话筒
@@ -554,6 +577,7 @@ watchEvents（worker） ─ 文本差量 ─► 清洗器（scrub 记忆和结�
 | :--- | :--- |
 | 主对话 | 没有内置工具、没有执行环境；只有六个自定义工具（`remember`、`forget`、`handoff`、`handoff_send`、`handoff_status`、`handoff_cancel`），都在执行端校验 |
 | 子代理 | 数组形式显式选择扩展；`cwd` 指向任务私有目录；`task` 类型的写入与执行逐次确认（`wrapTool` + `app.approvals`） |
+| 远程目标 | `remote` 委托在远程机器上**不确认、不限路径**（主人的选择），子代理拥有 runner 所在用户的全部权限：远程机器上建议给它开专用用户。本机的环境变量与密钥不进远程（`bash` 继承的是远程登录环境）；ssh 只用 `BatchMode`（排在用户参数前，改不掉）；设置里的 ssh 命令拆成 argv、不经过本机 shell，`node` 只收不需要引号的字符，防止配置拼进远程 shell（§3.4） |
 | 子代理的执行环境 | **`NodeExecutionEnv({ cwd })` 的 `cwd` 不是沙箱**：它只是相对路径的基准，绝对路径直接放行（`env/node.js` 的 `resolvePath`），`..` 照常解析；**`bash` 默认继承 worker 的全部环境变量**（`inheritEnv` 缺省为 true，`tools/bash.js`），其中有 `AMADEUS_JEV_API_KEY` 和代理设置。对策（**P0 即需要**，不等 A5）：① 路径守卫 `pathGuard`：`files` 与 `task` 的所有文件工具共用，限定在任务目录与主人授权的根内，拒绝列表（agentDir、userData、记忆目录、`~/.ssh` 等）优先；② `bash` 的 `prepare` 里设 `inheritEnv = false`，只给白名单变量（`PATH`、`HOME`、`LANG`、代理等）；③ 拒绝列表集中在 `pathGuard.ts`。细节与清单见工具约束 §4.1 |
 | 路径守卫的拒绝范围 | 拒绝列表**以宿主显式传入的根为准**（`PathGuardOptions.deny`）：`DurableRuntime` 总是传入 userData（`sessions` 的父目录）、`sessions`、记忆目录和 agent 目录；环境变量里的同类目录只是兜底（变量改名时兜底会悄悄失效，没有测试能发现）。词法形式与 `realpath` 都要过拒绝列表，`~/notes` 指向 `~/.ssh` 的符号链接不能当入口。**悬空符号链接一律拒绝**：`realpath` 找不到时用 lstat 看名字本身在不在，名字在而目标不在，写入会穿过链接去创建真实目标，而链接自己的路径看上去在授权范围内 |
 | 确认卡完整展示 | 卡片必须展示将要执行或写入的**完整**内容：`bash` 的完整命令（≤ 2000 字符）、`write` 的完整内容（≤ 20000 字符）、`edit` 展开成差异后的全部预览（≤ 20000 字符）。超限**不截断，直接拒绝**，不进确认并让模型拆小重来：只展示前一段，主人批准的就是看不全的内容 |

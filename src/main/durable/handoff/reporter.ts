@@ -13,8 +13,9 @@ import {
 } from '@earendil-works/pi-durable'
 import { ApprovalsDoc, HandoffsDoc, isActive, type Approval, type HandoffItem, type HandoffKind } from './docs.ts'
 import { cleanQuestion, fenceResult, reasonText, type FailureReason } from './fence.ts'
-import type { HandoffLimits } from './limits.ts'
+import { limitsFor, type HandoffLimits } from './limits.ts'
 import { followUpContent, noteRequestIdOf, questionIn, requestIdOf, roundOf, steerContent } from './rounds.ts'
+import type { RemotePool } from './extension.ts'
 import { finishHandoff, type Finish } from './settle.ts'
 
 export const ANCHOR_TASK_NAME = 'amadeus.handoff-anchor'
@@ -215,7 +216,7 @@ async function reportIfNothingPending(runtime: Runtime, context: Context, input:
  * 委托的投递与汇报：wait-slot 排队、deliver 向子对话提交 brief 并监视、report 一个 commit 内写终态与 outbox。
  * 并发、超时、用量都由这里实现（durable 没有内置），数值来自 limits。
  */
-export function createReporterTask(limits: HandoffLimits) {
+export function createReporterTask(limits: HandoffLimits, remote?: Pick<RemotePool, 'offlineSince' | 'lastError'>) {
   async function verdict(
     runtime: Runtime,
     input: ReporterInput,
@@ -224,15 +225,21 @@ export function createReporterTask(limits: HandoffLimits) {
   ): Promise<Outcome | undefined> {
     const item = await findItem(runtime, input.taskId, context)
     if (!item || item.cancelRequested) return { type: 'cancelled' }
-    if (time.activeMs >= limits.activeTimeoutMs) {
-      return { type: 'timeout', reason: 'timeout', limitMs: limits.activeTimeoutMs, detail: `active ${time.activeMs}ms >= ${limits.activeTimeoutMs}ms` }
+    const kindLimits = limitsFor(limits, input.kind)
+    if (time.activeMs >= kindLimits.activeTimeoutMs) {
+      return { type: 'timeout', reason: 'timeout', limitMs: kindLimits.activeTimeoutMs, detail: `active ${time.activeMs}ms >= ${kindLimits.activeTimeoutMs}ms` }
     }
-    if (time.wallMs >= limits.wallTimeoutMs) {
-      return { type: 'timeout', reason: 'timeout', limitMs: limits.wallTimeoutMs, detail: `wall ${time.wallMs}ms >= ${limits.wallTimeoutMs}ms` }
+    if (time.wallMs >= kindLimits.wallTimeoutMs) {
+      return { type: 'timeout', reason: 'timeout', limitMs: kindLimits.wallTimeoutMs, detail: `wall ${time.wallMs}ms >= ${kindLimits.wallTimeoutMs}ms` }
     }
     const childId = input.childId as ConversationId
-    if ((await tokensUsed(runtime, childId, context)) - (time.tokenBase ?? 0) > limits.tokenLimit) return { type: 'failed', reason: 'token_limit' }
+    if ((await tokensUsed(runtime, childId, context)) - (time.tokenBase ?? 0) > kindLimits.tokenLimit) return { type: 'failed', reason: 'token_limit' }
     if (declinedCount(await approvalsOf(runtime, childId, context)) - (time.deniedBase ?? 0) >= limits.denyLimit) return { type: 'failed', reason: 'denied' }
+    // 短暂断线由连接层重连，子代理只会看到个别工具调用失败；一直连不上就别让它对着报错空转到超时。
+    const since = item.target ? remote?.offlineSince(item.target) : undefined
+    if (item.target && since !== undefined && Date.now() - since >= limits.remote.offlineMs) {
+      return { type: 'failed', reason: 'target_offline', detail: remote?.lastError(item.target) ?? `${item.target} is unreachable` }
+    }
     return undefined
   }
 
@@ -281,7 +288,8 @@ export function createReporterTask(limits: HandoffLimits) {
         const { taskId, brief, cwd } = task.input
         const round = task.input.round ?? 1
         const childId = task.input.childId as ConversationId
-        if (cwd) await mkdir(cwd, { recursive: true })
+        // remote 的 cwd 在远程机器上，受理时已确认存在；本机任务的私有目录在这里懒创建。
+        if (cwd && task.input.kind !== 'remote') await mkdir(cwd, { recursive: true })
         const child = await runtime.conversation(childId, context)
         if (!child) return toReport(runtime, context, { type: 'failed', reason: 'faulted', detail: 'child conversation is missing' })
         // 本轮向子对话提交过的输入（开头那条加 handoff_send 的 steer），按 requestId 去重：重启后重放拿到同一个提交，每条只会进子对话一次。

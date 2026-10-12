@@ -656,6 +656,47 @@ test('the delegation model survives a restart', async () => {
   second.app.dispose()
 })
 
+test('remote_targets is a validated list that reaches the worker as JSON, replaces it on change and survives a restart', async () => {
+  const settings = {}
+  const { app, calls } = runtime({}, undefined, {}, { settings })
+  await app.init()
+  const restarts = () => calls.filter(([type]) => type === 'restart-pi').length
+  assert.deepEqual((await app.request('system.get_config')).values.remote_targets, [])
+  assert.equal(app.piEnv().AMADEUS_REMOTE_TARGETS, undefined, 'no machines means no variable')
+  for (const bad of [
+    'mini',
+    [{ name: 'bad name', ssh: 'mini' }],
+    [{ name: 'mini', ssh: '-oProxyCommand=sh' }],
+    [{ name: 'mini', ssh: 'ssh mini uptime' }],
+    [{ name: 'mini', ssh: 'ssh -N mini' }],
+    [{ name: 'mini', ssh: 'ssh "mini' }],
+    [{ name: 'mini', ssh: 'mini', node: 'node; rm -rf ~' }],
+    [{ name: 'mini', ssh: 'mini' }, { name: 'mini', ssh: 'other' }],
+  ]) {
+    assert.equal((await app.request('system.set_config', { values: { remote_targets: bad } })).ok, false, JSON.stringify(bad))
+  }
+  await flush()
+  assert.equal(restarts(), 0, 'a rejected list changes nothing')
+
+  const applied = await app.request('system.set_config', { values: { remote_targets: [{ name: ' mini ', ssh: ' mini ', workspace: '', node: '' }, { name: 'gpu', ssh: 'ssh -p 2222 -i ~/.ssh/gpu me@10.0.0.5', workspace: '~/work', node: '/opt/node/bin/node' }] } })
+  assert.equal(applied.ok, true)
+  const expected = [{ name: 'mini', ssh: 'mini', workspace: '~', node: 'node' }, { name: 'gpu', ssh: 'ssh -p 2222 -i ~/.ssh/gpu me@10.0.0.5', workspace: '~/work', node: '/opt/node/bin/node' }]
+  assert.deepEqual(applied.values.remote_targets, expected, 'trimmed, with defaults filled in')
+  assert.deepEqual(JSON.parse(app.piEnv().AMADEUS_REMOTE_TARGETS), expected)
+  assert.equal('remote_targets' in (await app.request('desktop.settings.get')).values, false, 'a list is not a string field')
+  await flush()
+  assert.equal(restarts(), 1, 'the worker reads targets at fork time')
+  assert.deepEqual(settings.remote_targets, expected)
+  app.dispose()
+
+  // 手改坏的 settings.yaml：坏条目在加载时丢掉。
+  settings.remote_targets = [...expected, { name: 'evil', ssh: 'ssh evil rm -rf /' }]
+  const second = runtime({}, undefined, {}, { settings })
+  second.app.loadPersistedSettings()
+  assert.deepEqual(JSON.parse(second.app.piEnv().AMADEUS_REMOTE_TARGETS), expected)
+  second.app.dispose()
+})
+
 test('report_proactive, memory_enabled and memory_recall are validated settings with documented defaults', async () => {
   const { app } = runtime()
   await app.init()

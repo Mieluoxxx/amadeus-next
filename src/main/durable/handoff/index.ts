@@ -17,7 +17,7 @@ export {
   type Outbox,
   type OutboxItem,
 } from './docs.ts'
-export { DEFAULT_LIMITS, resolveLimits, type HandoffLimits } from './limits.ts'
+export { DEFAULT_LIMITS, limitsFor, resolveLimits, type HandoffLimits, type LimitOverrides, type RemoteLimits } from './limits.ts'
 export {
   AmadeusHandoff,
   HANDOFF_EXTENSION_NAME,
@@ -29,6 +29,7 @@ export {
   handoffExtensions,
   repairPaths,
   type HandoffOptions,
+  type RemotePool,
 } from './extension.ts'
 export { DELEGATION_MODEL_ENV, delegationModelFromEnv, resolveDelegation, type Delegation } from './delegation.ts'
 export { PROGRESS_NOTE_MAX_CHARS, REPORT_PROGRESS_DESCRIPTION, reportProgress } from './progress.ts'
@@ -37,6 +38,7 @@ export { followUpContent, noteRequestIdOf, outboxIdOf, questionIn, requestIdOf, 
 export { AmadeusResearch, RESEARCH_EXTENSION_NAME, createResearchExtension, createWebFetchTool, webFetch } from './research.ts'
 export { FILES_EXTENSION_NAME, createFilesExtension } from './files.ts'
 export { TASK_EXTENSION_NAME, bashEnvironment, createTaskExtension } from './task.ts'
+export { REMOTE_EXTENSION_NAME, createRemoteExtension } from './remote.ts'
 export { createPathGuard, type DenyCategory, type PathGuard, type PathGuardOptions } from './pathGuard.ts'
 export { ANCHOR_TASK_NAME, REPORTER_TASK_NAME } from './reporter.ts'
 export { CARD_MAX_CHARS, cleanQuestion, fenceResult, reasonText, renderReport, type FailureReason } from './fence.ts'

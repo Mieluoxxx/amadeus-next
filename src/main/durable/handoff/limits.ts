@@ -20,6 +20,13 @@ export type HandoffLimits = {
   bashMaxTimeoutSec: number
   /** 子代理 report_progress 推送到界面（task.graph）的最小间隔：期间的多次调用只在间隔结束时推最新一条；条目本身总是最新的。 */
   progressIntervalMs: number
+  /** remote 的上限：远程开发要跑构建和测试，本机任务那一套 5 分钟的预算不够；只覆盖这几项。 */
+  remote: RemoteLimits
+}
+
+export type RemoteLimits = Pick<HandoffLimits, 'activeTimeoutMs' | 'wallTimeoutMs' | 'tokenLimit' | 'bashDefaultTimeoutSec' | 'bashMaxTimeoutSec'> & {
+  /** 目标连续不可达多久判任务失败；短暂断线由连接层重连，子代理只会看到个别工具调用失败。 */
+  offlineMs: number
 }
 
 // 初值待原型调整（pi-tool-constraints §3.2）。
@@ -35,6 +42,14 @@ export const DEFAULT_LIMITS: HandoffLimits = {
   bashDefaultTimeoutSec: 120,
   bashMaxTimeoutSec: 600,
   progressIntervalMs: 15_000,
+  remote: {
+    activeTimeoutMs: 60 * 60_000,
+    wallTimeoutMs: 4 * 60 * 60_000,
+    tokenLimit: 3_000_000,
+    bashDefaultTimeoutSec: 600,
+    bashMaxTimeoutSec: 3600,
+    offlineMs: 2 * 60_000,
+  },
 }
 
 export const BRIEF_MIN_CHARS = 10
@@ -44,6 +59,15 @@ export const MESSAGE_MAX_CHARS = 1500
 export const TITLE_MAX_CHARS = 30
 export const PATHS_MAX = 5
 
-export function resolveLimits(overrides: Partial<HandoffLimits> = {}): HandoffLimits {
-  return { ...DEFAULT_LIMITS, ...overrides }
+export type LimitOverrides = Partial<Omit<HandoffLimits, 'remote'>> & { remote?: Partial<RemoteLimits> }
+
+export function resolveLimits(overrides: LimitOverrides = {}): HandoffLimits {
+  return { ...DEFAULT_LIMITS, ...overrides, remote: { ...DEFAULT_LIMITS.remote, ...overrides.remote } }
+}
+
+/** 某一类任务实际生效的上限：remote 换上自己的超时与用量，其余项（并发、节拍……）全会话共用。 */
+export function limitsFor(limits: HandoffLimits, kind: string): HandoffLimits {
+  if (kind !== 'remote') return limits
+  const { offlineMs: _offline, ...remote } = limits.remote
+  return { ...limits, ...remote }
 }

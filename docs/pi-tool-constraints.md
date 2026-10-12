@@ -902,8 +902,9 @@ type CardData = {
 | `research` | 查资料、读网页、总结 | `amadeus-research` | `web_fetch`、`report_progress`（检索来自 MCP，§4.5） | 无（没有文件与 shell 工具） | 无本地文件 | 5 分钟 |
 | `files` | 读主人指定的文件并回答 | `amadeus-files` | `read`（`wrapTool` 包装）、`list_dir`（自带守卫）、`report_progress` | 无 | `paths` 授权的路径（只读） | 5 分钟 |
 | `task` | 需要动手的事：整理文件、跑脚本 | `amadeus-task` | `read`、`list_dir`、`report_progress`、`bash`、`write`、`edit`（后三者 `wrapTool` 确认） | `bash` / `write` / `edit` 每次需确认 | 私有目录 + `paths`；`bash` 无法限定 | 5 分钟（不含确认等待） |
+| `remote` | 在远程机器上开发、构建、测试、运行 | `amadeus-remote` | built-in `read`、`write`、`edit`、`bash`（只包装缺省超时）、`report_progress` | 无确认（主人的选择） | 远程机器上 runner 用户能碰的一切；`workdir` 只是工作目录 | 60 分钟活跃 / 4 小时墙钟；目标连续不可达 2 分钟判失败 |
 
-`report_progress` 三类都带（§3.7）：它只写本任务条目的 `progress`，不碰文件与网络，不是写操作。新增类型需要在本文登记：用途、扩展、工具白名单、写权限、可访问范围、超时；代码里登记在 `kinds.ts` 的 `KIND_LINES` / `createKindSpecs`。`files` 与 `task` 要求会话已登记 `taskRoot`（§3.1）。
+`report_progress` 各类都带（§3.7）：它只写本任务条目的 `progress`，不碰文件与网络，不是写操作。新增类型需要在本文登记：用途、扩展、工具白名单、写权限、可访问范围、超时；代码里登记在 `kinds.ts` 的 `KIND_LINES` / `createKindSpecs`。`files` 与 `task` 要求会话已登记 `taskRoot`（§3.1）。`remote` 只在设置页配置了远程机器时启用（architecture §3.4）；没有目标时 schema 与 description 与没有这一类时逐字节相同。
 
 ### 4.3 写操作确认
 
@@ -1098,6 +1099,26 @@ Not done or declined: "none" if empty
   - 超时：`timeout` 是有限正数就取 `min(timeout, 600)`，否则取缺省 120（built-in 没有默认超时，卡住的命令会一直占着确认之后的执行）；生效值写进确认卡片的 `preview`，并作为参数交给原 `execute`；
   - 命令超过 2000 字符不进确认，直接拒绝（§4.3）。
 - **`write` / `edit`**：目标路径必须在根集合内（`checkPath`），否则直接返回 `{path} is outside the locations you were given, or cannot be accessed.` 而不弹确认；超长内容不进确认（§4.3）；通过后用 canonical 路径调用原 `execute`。
+
+#### remote
+
+**`REMOTE_INSTRUCTIONS`（逐字）** = `COMMON_INSTRUCTIONS` + 下面几条，再接一行 `Remote machine: "<target>". Working directory: "<cwd>".`：
+
+```text
+- You work on a remote machine, not on the user's computer. Your tools (read, write, edit, bash) act there directly, without asking anyone, so be deliberate.
+- Look around before changing anything: the project layout, how it is built and tested. Prefer the project's own scripts.
+- Keep changes inside the working directory unless the brief says otherwise. Do not delete or overwrite work you did not create, and do not push, publish or deploy unless the brief asks for it.
+- After changing code, build or test it when the project has a way to; report what you ran and the outcome, including failures.
+- Keep the deliverable under about 500 words, in this shape:
+Done: the list of changes and commands that mattered
+Result: what works now, where it is (paths on the remote machine) and how it was verified
+Open issues: what failed or is left, "none" if empty
+```
+
+- **handoff 参数**：`target`（目标名枚举，description 列出每台机器与缺省工作目录）必填；`workdir` 可选，缺省为目标的 `workspace`。两者只在启用 `remote` 时出现在 schema 里，其它类型带上它们直接报错。
+- **受理**：commit 之外经连接池确认 `workdir`（远程展开 `~`、取 realpath、必须是目录）；目标连不上就不受理，回复离线原因。条目记下 `target` 与 realpath 后的 `cwd`；查重哈希把 `target:cwd` 算进去。重放（同一 callId 已登记）不再检查目录，免得目标恰好离线时把已受理的调用报成失败。
+- **工具**：没有确认、没有路径守卫（主人选择全部放开）。`bash` 不覆盖 env，继承远程登录环境：本机的变量（含密钥）不进远程。缺省超时 600 秒、最多 3600 秒。skills 不挂（脚本在本机），MCP 照挂（在本机运行）。
+- **断线**：在途调用失败，不重放；Reporter 每个节拍看目标的离线时长，连续不可达超过 `remote.offlineMs`（2 分钟）按 `failed: target_offline` 收尾（architecture §3.4）。
 
 ---
 

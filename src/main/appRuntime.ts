@@ -10,6 +10,7 @@ import type { PiHost } from './piHost.ts'
 import type { SceneHost } from './sceneHost.ts'
 import type { SpeechBridge } from './speechBridge.ts'
 import { DEFAULT_JEV_MODEL, DEFAULT_JEV_URL } from './jev.ts'
+import { REMOTE_TARGETS_ENV, parseTargets } from './durable/remote/targets.ts'
 import { PresentationText } from '../shared/presentation.ts'
 import { isTurnKey, SCENE_FRAME_RATES, sameTurn, type Calibration, type PlaybackEvent, type SceneFrameRate, type TurnKey, type VoiceEvent } from '../shared/voice.ts'
 
@@ -41,7 +42,7 @@ const DELEGATION_MODEL_PATTERN = /^[^\s/]+\/\S+$/
 // 进行中的回合这么久没有任何 turn.* 事件，就当它的终止事件丢了；没有它 Floor 会一直 responding，重载与汇报都排不上。
 const TURN_WATCHDOG_MS = 120_000
 // worker 被替换期间这些转发方法统一回绝，避免请求落到正在关库的进程上。
-const WORKER_METHODS = /^(session\.(list|create|load|rename|delete)|task\.(cancel|approve)|work\.(list|trace)|memory\.(list|write|delete|accept|reject|clear|status|configure))$/
+const WORKER_METHODS = /^(session\.(list|create|load|rename|delete)|task\.(cancel|approve)|work\.(list|trace)|memory\.(list|write|delete|accept|reject|clear|status|configure)|remote\.check)$/
 
 // 窗口先于 runtime 就绪创建；这些只读本地状态，不必排在 Pi 启动后面。其余方法可能开麦、投递汇报或碰会话，必须等启动完成。
 const PRE_INIT_METHODS = /^(system\.get_config|desktop\.settings\.get|runtime\.status|voice\.playback)$/
@@ -136,6 +137,7 @@ export class AppRuntime {
       JEV_MODEL: deps.env.JEV_MODEL || DEFAULT_JEV_MODEL,
       report_proactive: true,
       delegation_model: '',
+      remote_targets: [],
       skills_mode: 'isolated',
       mcp_mode: 'isolated',
       memory_enabled: true,
@@ -303,6 +305,8 @@ export class AppRuntime {
       }
       case 'memory.configure':
         return this.configureMemory(params)
+      case 'remote.check':
+        return this.forward('remote.check', { target: String(params.target ?? '') })
       case 'scene.ready':
         if (this.sceneReload && (!params.token || params.token === this.sceneToken)) return { ok: false, error: 'Stale scene handshake' }
         this.sceneToken = String(params.token || '')
@@ -706,6 +710,8 @@ export class AppRuntime {
     if (this.config.mcp_mode === 'shared') env.AMADEUS_MCP_MODE = 'shared'
     const delegationModel = String(this.config.delegation_model || '')
     if (delegationModel) env.AMADEUS_DELEGATION_MODEL = delegationModel
+    const { targets } = parseTargets(this.config.remote_targets)
+    if (targets.length) env[REMOTE_TARGETS_ENV] = JSON.stringify(targets)
     return env
   }
 
@@ -751,6 +757,11 @@ export class AppRuntime {
       const model = String(values.delegation_model ?? '').trim()
       if (model && !DELEGATION_MODEL_PATTERN.test(model)) return { ok: false, error: 'Invalid delegation_model: expected provider/model or empty' }
       values.delegation_model = model
+    }
+    if ('remote_targets' in values) {
+      const { targets, errors } = parseTargets(values.remote_targets)
+      if (errors.length) return { ok: false, error: `Invalid remote_targets: ${errors.join('; ')}` }
+      values.remote_targets = targets
     }
     for (const key of ['report_proactive', 'memory_enabled']) {
       if (!(key in values)) continue
@@ -804,7 +815,8 @@ export class AppRuntime {
   private desktopSettings(): Json {
     const snapshot = this.configSnapshot()
     const values = Object.fromEntries(Object.entries(snapshot).flatMap(([key, value]) => {
-      if ([...SECRET_KEYS, 'FISH_VOICE_ID', 'voice_configuration', 'general_configuration', 'asr_backends'].includes(key)) return []
+      // remote_targets 是列表，不走字段式的字符串设置，由设置页的远程机器卡片经 system.set_config 读写。
+      if ([...SECRET_KEYS, 'FISH_VOICE_ID', 'voice_configuration', 'general_configuration', 'asr_backends', 'remote_targets'].includes(key)) return []
       return [[key, String(value ?? '')]]
     }))
     const secrets = Object.fromEntries([...SECRET_KEYS, 'FISH_VOICE_ID'].map(key => [key, { configured: Boolean(this.config[key]), source: 'user', locked: false }]))
@@ -894,6 +906,8 @@ export class AppRuntime {
     for (const [key, value] of Object.entries(stored)) {
       if (key in this.config && !SECRET_KEYS.includes(key)) this.config[key] = value
     }
+    // settings.yaml 可能被手改过；坏条目在这里丢掉，界面与 worker 看到的是同一份列表。
+    this.config.remote_targets = parseTargets(this.config.remote_targets).targets
     if (!this.deps.safeStorage.isEncryptionAvailable()) return
     for (const key of SECRET_KEYS) {
       const encrypted = stored[`${key}_ENCRYPTED`]

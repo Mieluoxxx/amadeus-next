@@ -32,6 +32,21 @@ Done: the list of actions taken
 Result: where the output is
 Not done or declined: "none" if empty`
 
+export const REMOTE_INSTRUCTIONS = `${COMMON_INSTRUCTIONS}
+- You work on a remote machine, not on the user's computer. Your tools (read, write, edit, bash) act there directly, without asking anyone, so be deliberate.
+- Look around before changing anything: the project layout, how it is built and tested. Prefer the project's own scripts.
+- Keep changes inside the working directory unless the brief says otherwise. Do not delete or overwrite work you did not create, and do not push, publish or deploy unless the brief asks for it.
+- After changing code, build or test it when the project has a way to; report what you ran and the outcome, including failures.
+- Keep the deliverable under about 500 words, in this shape:
+Done: the list of changes and commands that mattered
+Result: what works now, where it is (paths on the remote machine) and how it was verified
+Open issues: what failed or is left, "none" if empty`
+
+/** remote 的 instructions 末尾告诉子代理在哪台机器、哪个目录。 */
+export function remoteLocation(target: string, cwd: string): string {
+  return `Remote machine: ${JSON.stringify(target)}. Working directory: ${JSON.stringify(cwd)}.`
+}
+
 /**
  * 子代理只看得到 brief，而授权路径是 handoff 的独立参数，所以随 instructions 下发；不下发的话它只能靠 brief 里碰巧提到的路径。
  * 路径用 JSON 字符串转义，带换行或引号的文件名不会冒充新的一行。

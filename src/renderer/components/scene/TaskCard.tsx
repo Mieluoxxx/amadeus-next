@@ -152,7 +152,7 @@ function ApprovalRecord({ approval, state }: { approval: TaskApproval; state: 'a
   )
 }
 
-export type TaskCardTask = Pick<SceneTask, 'taskId' | 'kind' | 'title'> & {
+export type TaskCardTask = Pick<SceneTask, 'taskId' | 'kind' | 'title' | 'target'> & {
   status: string
   round?: number
   progress?: TaskProgress
@@ -201,7 +201,7 @@ export function TaskCard({
   return (
     <article className="task-card" data-testid="task-card" data-task-id={task.taskId} data-status={task.status}>
       <header className="task-card-head">
-        <span className="task-card-kind">{kindLabel}</span>
+        <span className="task-card-kind">{kindLabel}{task.target ? ` @${task.target}` : ''}</span>
         {round > 1 ? <span className="task-card-round" data-testid="task-card-round">{t('task.round', undefined, { count: round })}</span> : null}
         <span className="task-card-title" title={task.title}>{task.title || task.taskId}</span>
         <span className="task-card-status" data-testid="task-card-status">

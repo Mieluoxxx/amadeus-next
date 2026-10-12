@@ -34,6 +34,8 @@ export type WorkTask = {
   reason?: string
   question?: string
   progress?: { text: string; at: number }
+  /** 仅 remote：执行任务的远程机器。 */
+  target?: string
   toolUses: number
   tokens: number
   /** 最近几个工具或进度动作，只在会话打开、子代理被监视时有。 */
@@ -113,6 +115,7 @@ function normalizeTask(value: unknown, sessionId: string, sessionTitle: string):
     ...(text(item.reason) ? { reason: text(item.reason) } : {}),
     ...(text(item.question) ? { question: text(item.question) } : {}),
     ...(progress && text(progress.text) ? { progress: { text: text(progress.text), at: number(progress.at) ?? 0 } } : {}),
+    ...(text(item.target) ? { target: text(item.target) } : {}),
     toolUses: count(item.toolUses),
     tokens: count(item.tokens),
     recent: normalizeActions(item.recent),

@@ -136,6 +136,8 @@ function createRuntime(): AppRuntime {
           PI_CODING_AGENT_DIR: home.agentDir, AMADEUS_NEXT_PI_CWD: home.cwd,
           AMADEUS_NEXT_PI_AUTH: home.authPath, AMADEUS_NEXT_PI_MODELS: home.modelsPath,
           AMADEUS_NEXT_SESSIONS: path.join(userData, 'sessions'), AMADEUS_MEMORY_DIR: memoryDir,
+          // worker 的代码在打包后的 chunk 里，自己按 import.meta.url 推算不出 dist 的位置，由入口算好传过去。
+          AMADEUS_RUNNER_FILE: path.join(MODULE_DIR, '..', 'runner', 'amadeus-runner.mjs'),
         },
         serviceName: 'Amadeus Pi Runtime',
         stdio: 'ignore',

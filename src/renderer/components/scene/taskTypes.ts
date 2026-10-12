@@ -20,6 +20,8 @@ export type SceneTask = {
   progress?: TaskProgress
   /** 仅 `needs_input`：子代理需要主人回答的问题。 */
   question?: string
+  /** 仅 remote：执行任务的远程机器。 */
+  target?: string
 }
 
 export type ApprovalState = 'pending' | 'allow' | 'deny' | 'expired'
@@ -106,6 +108,7 @@ export function normalizeTasks(items: unknown): SceneTask[] {
     const status = field(value, 'status')
     const progress = normalizeProgress(field(value, 'progress'))
     const question = normalizeQuestion(field(value, 'question'))
+    const target = text(field(value, 'target')).trim()
     tasks.push({
       taskId,
       kind: text(field(value, 'kind')) || 'research',
@@ -115,6 +118,7 @@ export function normalizeTasks(items: unknown): SceneTask[] {
       round: normalizeRound(field(value, 'round')) ?? 1,
       ...(progress ? { progress } : {}),
       ...(question ? { question } : {}),
+      ...(target ? { target } : {}),
     })
   }
   return tasks

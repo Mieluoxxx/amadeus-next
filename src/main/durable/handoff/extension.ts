@@ -15,7 +15,8 @@ import { requestCancel } from './control.ts'
 import { resolveDelegation } from './delegation.ts'
 import { ApprovalsDoc, HandoffsDoc, OutboxDoc, canContinue, isActive, type HandoffItem, type HandoffKind } from './docs.ts'
 import { ALL_KINDS, KIND_LINES, createKindSpecs, type KindSpec } from './kinds.ts'
-import { BRIEF_MAX_CHARS, BRIEF_MIN_CHARS, MESSAGE_MAX_CHARS, PATHS_MAX, TITLE_MAX_CHARS, resolveLimits, type HandoffLimits } from './limits.ts'
+import type { TargetPool } from '../remote/pool.ts'
+import { BRIEF_MAX_CHARS, BRIEF_MIN_CHARS, MESSAGE_MAX_CHARS, PATHS_MAX, TITLE_MAX_CHARS, resolveLimits, type HandoffLimits, type LimitOverrides } from './limits.ts'
 import { createMcpExtension, mcpBlock } from './mcp/extension.ts'
 import type { McpManager } from './mcp/manager.ts'
 import { createPathGuard, type PathGuard, type PathGuardOptions } from './pathGuard.ts'
@@ -130,6 +131,21 @@ type Accepted =
 
 const PATHS_DESCRIPTION = `Files or directories the user explicitly mentioned and allows the subagent to access: absolute paths or starting with ~/, at most ${PATHS_MAX}`
 
+/** handoff 只用到池子的这几项；测试可以换成回环实现。 */
+export type RemotePool = Pick<TargetPool, 'targets' | 'checkDir' | 'offlineSince' | 'lastError'>
+
+const targetDescription = (pool: RemotePool): string =>
+  `Remote machine, only for the remote kind: ${pool.targets.map(each => `${each.name} (default workdir ${each.workspace})`).join('; ')}`
+const WORKDIR_DESCRIPTION = 'Only for the remote kind: an existing directory on the remote machine to work in, absolute or starting with ~/. Defaults to the machine\'s workdir.'
+
+function dirProblem(target: string, check: Exclude<Awaited<ReturnType<RemotePool['checkDir']>>, { ok: true }>): string {
+  switch (check.reason) {
+    case 'offline': return `The remote machine ${target} cannot be reached right now (${check.detail}). Tell the user; do not retry right away.`
+    case 'missing': return `That workdir does not exist on ${target}. Ask the user which directory to use, or omit workdir.`
+    case 'not_directory': return `${check.detail} on ${target} is not a directory.`
+  }
+}
+
 function createHandoffTool(
   limits: HandoffLimits,
   reporter: ReturnType<typeof createReporterTask>,
@@ -137,18 +153,29 @@ function createHandoffTool(
   guard: PathGuard,
   delegationModel: ModelRef | undefined,
   extrasFor: (kind: HandoffKind) => Extras,
+  remote: RemotePool | undefined,
 ) {
   const kinds = ALL_KINDS.filter(kind => specs[kind])
   const takesPaths = kinds.some(kind => specs[kind]?.needsPaths)
-  const base = {
+  const pool = specs.remote ? remote : undefined
+  const fields = {
     kind: StringEnum(kinds as HandoffKind[], { description: 'Subagent kind' }),
     title: Type.String({ description: `One-line title shown to the user, at most ${TITLE_MAX_CHARS} characters` }),
+    paths: Type.Optional(Type.Array(Type.String(), { description: PATHS_DESCRIPTION })),
+    target: Type.Optional(Type.String()),
+    workdir: Type.Optional(Type.String({ description: WORKDIR_DESCRIPTION })),
     brief: Type.String({ description: `Self-contained task description in plain text, at most ${BRIEF_MAX_CHARS} characters` }),
   }
+  const full = Type.Object(fields)
+  // paths 只在启用 files 或 task 时出现，target / workdir 只在启用 remote 时出现：schema 随启用类型变化，会话内逐字节稳定（规则 7）。
   // 长文本 brief 放在最后：模型先填完短字段，长字符串写到末尾也不容易中途跑偏。
-  const withPaths = Type.Object({ kind: base.kind, title: base.title, paths: Type.Optional(Type.Array(Type.String(), { description: PATHS_DESCRIPTION })), brief: base.brief })
-  // paths 只在启用 files 或 task 时出现在 schema 里：schema 随启用类型变化，会话内逐字节稳定（规则 7）。
-  const parameters = (takesPaths ? withPaths : Type.Object(base)) as typeof withPaths
+  const parameters = Type.Object({
+    kind: fields.kind,
+    title: fields.title,
+    ...(takesPaths ? { paths: fields.paths } : {}),
+    ...(pool ? { target: Type.Optional(StringEnum(pool.targets.map(each => each.name), { description: targetDescription(pool) })), workdir: fields.workdir } : {}),
+    brief: fields.brief,
+  }) as unknown as typeof full
 
   const acceptedText = ({ taskId, ahead, queued }: Placement): string =>
     queued
@@ -178,11 +205,29 @@ function createHandoffTool(
         const checked = await checkPaths(args.paths, guard)
         if (!checked.ok) return reply(checked.text, { error: true })
         paths = checked.paths
-      } else if (args.paths !== undefined) return reply('The research kind does not take paths.', { error: true })
+      } else if (args.paths !== undefined) return reply(`The ${kind} kind does not take paths.`, { error: true })
 
       // provider 的 callId 只在单条 assistant 消息内唯一，拼上工具任务 id 才能当跨回合的重放键。
       const callId = `${api.taskId}:${api.callId}`
-      const briefHash = briefHashOf(kind, brief, paths)
+      let target: string | undefined
+      let remoteCwd = ''
+      if (kind === 'remote') {
+        if (!pool || !args.target) return reply(`The remote kind needs target, one of: ${pool?.targets.map(each => each.name).join(', ') ?? 'none'}.`, { error: true })
+        // 重放时目标可能正好离线；已经登记过的调用直接落到下面 commit 里的重放分支，不因此报错。
+        const replayed = (await api.snapshot(HandoffsDoc, ROOT_CONVERSATION_ID, context))?.items.some(item => item.callId === callId)
+        if (replayed) {
+          target = args.target
+        } else {
+          const checked = await pool.checkDir(args.target, args.workdir)
+          if (!checked.ok) return reply(dirProblem(args.target, checked), { error: true })
+          target = args.target
+          remoteCwd = checked.path
+        }
+      } else if (args.target !== undefined || args.workdir !== undefined) {
+        return reply('target and workdir only apply to the remote kind.', { error: true })
+      }
+      // remote 的"同一件事"还要同一台机器、同一个目录。
+      const briefHash = briefHashOf(kind, brief, target ? [`${target}:${remoteCwd}`] : paths)
       // 模型目录与凭据要异步查，不能放进 commit；重放时多查一次无妨，commit 里按 callId 查重。
       const delegation = await resolveDelegation(delegationModel, api, context)
       // 读目录与配置文件不能放进 commit；重放时多读一次无妨，结果只在新建子对话时用到。
@@ -205,7 +250,7 @@ function createHandoffTool(
 
           const seq = handoffs.seq + 1
           const taskId = `t_${String(seq).padStart(2, '0')}`
-          const cwd = handoffs.taskRoot ? path.join(handoffs.taskRoot, taskId) : ''
+          const cwd = target ? remoteCwd : handoffs.taskRoot ? path.join(handoffs.taskRoot, taskId) : ''
           // files / task 的工具都靠任务私有目录建出执行环境；会话没有登记 taskRoot 就无从启动。
           if (spec.needsPaths && !cwd) return { type: 'unavailable' }
           // Anchor 是子对话的归属者；Reporter 与它同为 background，不受主对话 abort 影响。
@@ -214,7 +259,7 @@ function createHandoffTool(
           const child = await tx.createConversation({ ownership: { kind: 'task', taskId: anchor } })
           await configure(tx, child.id, {
             extensions: [spec.extension, ...extras.extensions],
-            instructions: spec.instructions({ paths, cwd }) + (extras.text ? `\n\n${extras.text}` : ''),
+            instructions: spec.instructions({ paths, cwd, ...(target ? { target } : {}) }) + (extras.text ? `\n\n${extras.text}` : ''),
             ...(cwd ? { cwd } : {}),
             ...(delegation.model ? { model: delegation.model } : {}),
             ...(delegation.thinkingLevel ? { thinkingLevel: delegation.thinkingLevel } : {}),
@@ -236,6 +281,7 @@ function createHandoffTool(
             reporter: reporterId,
             cwd,
             paths,
+            ...(target ? { target } : {}),
             status: 'queued',
             round: 1,
             createdAt: Date.now(),
@@ -399,7 +445,7 @@ const handoffCancel = defineTool({
 })
 
 export type HandoffOptions = {
-  limits?: Partial<HandoffLimits>
+  limits?: LimitOverrides
   /** 子代理可用的 skill 目录；缺省不挂 skills。 */
   skills?: SkillsOptions
   /** 子代理可用的 MCP server；缺省不挂 MCP。 */
@@ -411,16 +457,19 @@ export type HandoffOptions = {
   bashEnv?: () => NodeJS.ProcessEnv
   /** 委托专用模型（AMADEUS_DELEGATION_MODEL）；缺省与对话模型相同，不可用时回退并在 failure.detail 里记一笔。 */
   delegationModel?: ModelRef
+  /** 远程目标（设置页的 remote_targets）；没有或为空时不启用 remote。 */
+  remote?: RemotePool
 }
 
 function assemble(options: HandoffOptions) {
   const limits = resolveLimits(options.limits)
-  const reporter = createReporterTask(limits)
+  const reporter = createReporterTask(limits, options.remote)
   const guard = createPathGuard(options.guard)
   const specs = createKindSpecs(options.kinds ?? ALL_KINDS, {
     limits,
     guard,
     ...(options.bashEnv ? { bashEnv: options.bashEnv } : {}),
+    ...(options.remote ? { remoteTargets: options.remote.targets.map(each => each.name) } : {}),
   })
   const skills = options.skills ? createSkillsExtension(options.skills) : undefined
   const mcp = options.mcp ? createMcpExtension(options.mcp, limits) : undefined
@@ -428,7 +477,8 @@ function assemble(options: HandoffOptions) {
   const extrasFor = (kind: HandoffKind): Extras => {
     const extensions: Extension[] = []
     const blocks: string[] = []
-    if (skills && options.skills) {
+    // skill 的脚本在本机，远程子代理跑不了，挂上只会误导它。
+    if (skills && options.skills && kind !== 'remote') {
       const found = discoverSkills(options.skills)
       if (found.length) {
         extensions.push(skills)
@@ -447,7 +497,7 @@ function assemble(options: HandoffOptions) {
   // 任务定义随扩展注册，按名字解析，与哪个对话选择了本扩展无关——子对话不选它也不影响 Reporter 运行。
   const main = defineExtension({
     name: HANDOFF_EXTENSION_NAME,
-    tools: [createHandoffTool(limits, reporter, specs, guard, options.delegationModel, extrasFor), createHandoffSendTool(limits, reporter), handoffStatus, handoffCancel],
+    tools: [createHandoffTool(limits, reporter, specs, guard, options.delegationModel, extrasFor, options.remote), createHandoffSendTool(limits, reporter), handoffStatus, handoffCancel],
     tasks: [AnchorTask, reporter],
   })
   return { main, kindExtensions: [...ALL_KINDS.flatMap(kind => specs[kind]?.extension ?? []), ...(skills ? [skills] : []), ...(mcp ? [mcp] : [])] }

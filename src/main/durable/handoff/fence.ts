@@ -10,6 +10,7 @@ export type FailureReason =
   | 'token_limit'
   | 'denied'
   | 'lost'
+  | 'target_offline'
 
 const REASON_TEXT: Record<Exclude<FailureReason, 'timeout'>, string> = {
   model_error: 'the subagent could not reach the model',
@@ -20,6 +21,7 @@ const REASON_TEXT: Record<Exclude<FailureReason, 'timeout'>, string> = {
   token_limit: 'the subagent exceeded its usage limit and was stopped',
   denied: 'actions that needed the user\'s approval were declined too many times',
   lost: 'the task was lost unexpectedly',
+  target_offline: 'the remote machine stayed unreachable, so the task was stopped',
 }
 
 /** 围栏里的"原因"不含内部细节；原始错误文本另放 failure.detail。 */
