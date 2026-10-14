@@ -1,257 +1,142 @@
+<div align="center">
+
+<img src="docs/logo.png" width="120" alt="Amadeus logo"/>
+
 # Amadeus Next
 
-This is the standalone TypeScript/Electron project for the Amadeus scene shell.
-All application source, build configuration, tests, and local runtime resources
-live in this project; building and running it does not require the legacy Salieri
-repository.
+**住在显像管里的红莉栖：会说话、有表情、记得你，还能替你把活干完。**
 
-It keeps the existing room scene and uses the white-coat A/B E-mote model for the
-foreground monitor character instead of video frames. It embeds the native Pi
-SDK in an Electron utility process, uses Apple Speech for macOS recognition, and
-streams Fish Audio PCM and word timestamps over its WebSocket TTS API. It does not start the legacy
-Python backend.
+<a href="https://github.com/Mieluoxxx/amadeus-next/releases"><img src="https://img.shields.io/github/v/release/Mieluoxxx/amadeus-next?include_prereleases&label=release&labelColor=191a1d&color=b94b43" alt="release"/></a>
+<img src="https://img.shields.io/badge/macOS-Apple_Silicon-444449?labelColor=191a1d&logo=apple" alt="macOS Apple Silicon"/>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-444449?labelColor=191a1d" alt="AGPL-3.0"/></a>
 
-Pi reads its own model and credential configuration from the normal Pi agent
-directory; Amadeus does not add a provider registry around it.
+</div>
+
+<p align="center">
+  <img src="docs/screenshots/main.jpg" width="900" alt="Amadeus Next 主界面：实验室桌面上的 CRT 显示器里，白大褂的红莉栖抱着手臂站着，下方是对话输入框"/>
+</p>
+
+Amadeus Next 是一个 macOS 桌面应用。它把《命运石之门》里的 Amadeus 搬到你的桌面上：
+红莉栖待在未来道具研究所的旧显示器里，你可以直接开口跟她说话，她用自己的声音回答，
+口型和表情跟着语音一起动。
+
+她不只是陪聊。查资料、读文件、改代码、登上远程服务器跑命令，这些活她会交给后台的
+子代理去做，自己继续陪你说话；做完了再回来告诉你结果。
+
+## 功能一览
+
+### 开口就能聊
+
+- **语音对话**：macOS 原生语音识别听你说话，Fish Audio 流式合成她的声音，首包就开播，不用等整段生成完。
+- **连续对话模式**：说完一句自动提交；她回答时话筒自动让位，说完再继续听。
+- **随时打断**：生成、合成、播放任何阶段都可以停下来。
+- **文字也行**：语音不方便时直接打字，语音出错也不影响文字聊天。
+
+### 有表情的红莉栖
+
+- **E-mote 动态立绘**：白大褂红莉栖，眨眼、口型、表情都是实时驱动，不是视频帧。
+- **口型跟着真实播放走**：嘴型按实际播出的音频能量开合，静音、缓冲、播完都会合上。
+- **表情和台词对齐**：模型可以在台词里埋表情标记，借助 Fish 的逐词时间戳，表情在说到那句话时才切换。
+- **CRT 场景**：研究所房间、显像管弯曲、字幕框、氛围光层，还有桌上的辉光管世界线变动率计。
+
+### 交给她去办
+
+红莉栖自己不碰工具，她把活委托给专门的子代理，在后台并行执行：
+
+| 子代理 | 能做什么 |
+| :--- | :--- |
+| **调研** | 联网检索、抓取网页、整理资料 |
+| **文件** | 只读访问你授权的目录 |
+| **任务** | 在本机读写文件、执行命令；每次写操作都要你确认 |
+| **远程** | 通过 SSH 在你的服务器上开发、构建、测试 |
+
+- **工作面板**：谁在跑、跑了多久、调用了多少次工具、花了多少 token，点开能看到完整时间线。
+- **可续接、可追问**：结果不满意就让她接着同一个任务再来一轮；子代理缺信息时会通过她来问你。
+- **Skills 与 MCP**：子代理能使用你配置的 skills 和 MCP server。
+- **委托专用模型**：主对话用快模型保证响应速度，后台任务可以换成更强的模型。
+
+### 她记得你
+
+- **长期记忆**：让她记住或忘掉某件事；她觉得值得记的内容会先作为提议，等你确认后才真正写入。
+- **记忆就是 Markdown**：存在本地，你可以直接打开编辑、备份。
+- **会话自动命名**：每段对话按话题自动起标题，方便回头翻找。
+- **崩溃不丢**：对话、任务、汇报都持久化在本地，重启后后台任务接着跑，没送达的汇报会补上。
+
+### 设置
+
+在设置页切换对话模型与思考档位、配置 Fish Audio 音色、管理远程机器、设置网络代理、
+查看和确认长期记忆、安装角色资源。API 密钥由系统钥匙串加密保存。
+
+## 快速开始
+
+### 1. 安装
+
+从 [Releases](https://github.com/Mieluoxxx/amadeus-next/releases) 下载
+`Amadeus-<版本>-arm64.dmg`，拖进「应用程序」。
+
+> [!NOTE]
+> 目前只提供 Apple Silicon 版本，安装包没有签名。首次打开如果被系统拦截，
+> 在「系统设置 → 隐私与安全性」里点「仍要打开」。
+
+### 2. 配置模型
+
+Amadeus 的对话由 [Pi](https://github.com/earendil-works/pi) 驱动，直接读取 Pi 的模型与凭据配置
+（`~/.pi/agent/`）。配好 Pi 后，在设置页「模型配置」里选择要用的模型。
+
+### 3. 配置语音
+
+在设置页「语音配置」里填入 [Fish Audio](https://fish.audio) 的 API Key 和音色 ID。
+默认使用 Fish 的免费模型 `s2.1-pro-free`。
+
+### 4. 安装角色资源
+
+E-mote 角色模型属于原版权方，**不随应用分发**。请自行准备 `emote.zip`，
+在设置页「通用 → 角色资源」点「从 emote.zip 安装」。没有角色资源时应用照常可用，
+只是显示器里没有红莉栖。
+
+首次对话时 macOS 会请求麦克风和语音识别权限。
+
+## 从源码构建
+
+需要 Node.js 24 与 Xcode 命令行工具（编译语音识别助手）。
 
 ```bash
 npm ci
-npm run assets:emote -- /path/to/amadeus-next-emote
-npm start
+npm run dev            # 开发模式，支持热更新
+npm start              # 构建并运行
+./build_app.sh         # 打包 dmg
 ```
 
-Run these commands from this project's directory. For development, use `npm run
-dev`. Pass the asset source explicitly for the one-time import. Once imported,
-runtime loading is offline and no longer depends on that checkout. Model baking
-is plain TypeScript, so no platform needs Rust, Cargo, or a prebuilt loader
-binary. Without model resources the window still opens and offers import/retry
-instead of failing startup.
+架构、热更新机制、故障诊断与测试说明见 [docs/development.md](docs/development.md)
+和 [docs/architecture.md](docs/architecture.md)。
 
-To create the macOS arm64 zip, run `npm run package:mac:zip`. The generated app is
-unsigned until a Developer ID certificate is supplied.
+## 致谢
 
-Runtime resources live under `resources/`, which the macOS app bundles as
-`amadeus-assets`: room images, ambient layers, subtitle frame, renderer scripts,
-retained texture decoders, and CRT geometry. Development reads that directory
-directly, so no external asset path is needed once the directory is populated.
+Amadeus Next 源自 [**Code-Amadeus/Amadeus**](https://github.com/Code-Amadeus/Amadeus)。
+它的场景设计、美术资源和「让 Amadeus 真正走到桌面上」的想法，是这个项目的起点。
+感谢 Amadeus 的所有贡献者 ♡
 
-The E-mote model packs and runtime under `resources/emote/` are developer-local
-and excluded from packaging (see `resources/THIRD_PARTY_NOTICES.md`). The scene's
-import action copies an unzipped `emote/` directory into the application's own
-`userData/emote/`. After the window opens, a utility process bakes the model into
-`userData/emote-cache/` on demand — see `docs/emote-loader-integration.md`.
+**也推荐你去试试 [Amadeus](https://github.com/Code-Amadeus/Amadeus)！** 它是一个更完整的实时多模态桌面
+Agent：支持 Windows / macOS / Linux，可以用本地模型推理（CUDA、ROCm、Apple MPS），
+提供 Live2D 角色、桌面主题、插件体系和 Provider 工作台。想在 Windows 上用、
+想全部本地跑，或者想要更多可玩性，Amadeus 都是很好的选择。
+→ [项目主页](https://github.com/Code-Amadeus/Amadeus) · [官网](https://code-amadeus.github.io/) · [演示视频](https://www.bilibili.com/video/BV1783G6hEYY/)
 
-Some of those media are deliberately not tracked by Git (the ambient layers,
-the subtitle frame, and the whole character pack), so **a fresh clone must be
-given the asset payload before a complete scene can run**. See
-`resources/README.md` for what is missing and how the runtime degrades without
-it. The scene/settings components, localization, and styles are owned locally
-under `src/renderer/`.
+同时感谢这些项目：
 
-The Fish credentials can be configured in the environment (`FISH_API_KEY`,
-`FISH_VOICE_ID`, and optionally `FISH_API_MODEL`) or in the scene settings.
-The Fish model selector includes `s2.1-pro-free`, `s2-pro`, and `s1`. The
-default is `s2.1-pro-free`, Fish's free model, subject to its fair-use limits;
-an existing selection is kept.
+- [Pi](https://github.com/earendil-works/pi)：Agent 运行时与持久化
+- [Fish Audio](https://fish.audio)：语音合成
+- [FreeMote](https://github.com/Project-AZUSA/FreeMote)：E-mote 运行时
+- [Electron](https://www.electronjs.org/)、[React](https://react.dev/)、[PixiJS](https://pixijs.com/)
 
-The app uses a separate Electron user-data store, so it starts with its own
-session history and never rewrites the legacy `sessions/` data.
+## 许可证与声明
 
-## Hot updates and component reloads
+Amadeus Next 的第一方代码、文档与原创品牌素材以
+[GNU Affero General Public License v3.0](LICENSE)（AGPL-3.0）发布。
+第三方组件保留各自的许可条款，详见
+[resources/THIRD_PARTY_NOTICES.md](resources/THIRD_PARTY_NOTICES.md)。
 
-`npm run dev` starts Vite with React Fast Refresh and watches the main, Pi worker,
-preload, scene, native speech helper, and local scene resources. Only successful
-builds request a reload; changes are coalesced and routed to the smallest owner:
-
-| Change | Applied by |
-|---|---|
-| React / CSS | Vite HMR |
-| Pi worker code | Replace the utility process after the active turn finishes |
-| Scene code, AudioWorklet, images, character pack, CRT geometry | Re-read resources and replace only the scene iframe after playback drains |
-| Preload code | Reload the window, keeping the main process and Pi alive |
-| Swift / speech Info.plist | Recompile and replace only the speech helper |
-| Main-process code | Checkpoint Pi, exit with code 75, and let the development launcher restart Electron |
-
-Use `npm run dev -- --port=5207` for another port, or add `--server-only` to run
-the development server and build watchers without launching Electron. Production
-does not accept development restart commands.
-
-On macOS, polling is enabled by default for both the Vite server and its build
-watchers because unavailable native file events can prevent the initial build
-from writing output. Set `CHOKIDAR_USEPOLLING=0` to opt into native file events,
-or `CHOKIDAR_USEPOLLING=1` to enable polling on other platforms. `test:dev` uses
-the same defaults as `dev` and honors this override.
-
-Settings apply through the existing runtime IPC, not through a process restart.
-Fish credentials/model/voice apply to the next synthesis; calibration changes
-apply during playback. Recognition language restarts only the recognition task.
-The Models page selects the current Pi session's model and thinking level while
-Pi is idle, using the SDK registry rather than a second provider configuration.
-
-The Overview page holds one `Network proxy` field. The address is used by Fish
-speech (as a CONNECT tunnel) and by Pi (through its worker environment, which
-requires the worker to be replaced — no other component is touched). Empty means
-direct connections; only `http://` and `https://` addresses are accepted, and an
-invalid value is rejected without being stored. Fish always tunnels the address;
-`NO_PROXY` is honored only inside Pi's transport.
-
-Resource reload and component recovery are internal runtime mechanisms, not
-user-facing settings. The runtime retains `runtime.reload` and `runtime.status`
-IPC for infrastructure and integration checks; development watchers trigger the
-appropriate reload automatically. The settings page exposes no maintenance panel
-or manual recovery buttons.
-Environment variables remain startup inputs; changing a shell's environment does
-not change an already running app.
-
-Reload waits for both the Pi turn and audible playback to finish. New chat
-requests are rejected with a visible explanation while maintenance is pending;
-they are never silently replayed. Abort remains available. A replacement Pi must
-complete its initialization handshake before the previous process is retired;
-startup failure keeps the previous worker. Invalid scene geometry keeps the
-previous snapshot. A lost scene stops speech/microphone capture but lets the
-existing Pi turn finish as text. Audio processor failures rebuild audio locally
-on the next turn.
-
-Full Pi transcripts (including tools, model choice and thinking level) now live
-under `<Electron userData>/pi-sessions/<chat-id>.jsonl`, with private file permissions.
-The desktop also remembers the selected chat across restarts. Old desktop history
-arrays remain readable, but historical tool context from the former in-memory
-worker cannot be reconstructed retroactively. No automatic recovery re-executes
-an interrupted tool or prompt.
-
-`AMADEUS_NEXT_PROJECT_ROOT` selects another resource root with the same layout.
-The former `AMADEUS_NEXT_CHARACTER_ROOT` foreground frame-pack override is no
-longer used. Missing E-mote resources produce a visible diagnostic. See
-`resources/README.md` for provisioning and the non-commercial licensing boundary.
-
-## Character and voice ownership
-
-The main process owns Pi/ASR/Fish connections and the active conversation turn.
-The scene owns audio playback and native character timelines. React forwards typed
-messages through a validated MessageChannel; it does not schedule animation.
-Every turn has a session ID, turn ID, and generation. Switching sessions or
-stopping invalidates old audio and callbacks. Scene replacement has its own
-handshake token and does not require replacing the conversation.
-
-`src/scene/index.ts` forwards activity, expression cues and actual playback
-energy to `src/scene/emote.ts`. FreeMote owns native expression timelines and
-blinking; audio energy drives `face_talk` (0–5), closing on silence, buffering,
-drain and cancellation. Pixi still owns the room, CRT polygon and subtitles.
-All four Kurisu AB/C ordinary-clothes/white-coat packs are copied locally. The
-desk character still uses `kurisu_ab_white`, explicitly selecting B (crossed
-arms); A/B share a source pack. The verified adapter translates `cw` alpha
-keyframes to legacy opacity, and the renderer maintains all custom visibility
-bindings each frame so unused sleeves stay hidden without hiding the body.
-The runtime and loader binary are verified against pinned SHA-256 checks; the
-loader owns PSB compatibility conversion. Model input contents and the loader
-fingerprint invalidate baked caches. Model directory and file names are ASCII
-on disk; neither the parser nor the model uses a symlink to another repository.
-
-This change replaces **only the foreground monitor character**. The legacy
-scenario stills are now served as the idle artwork in
-`resources/assets/idle/` (tracked, shipped with the app); only
-`resources/emote/` remains developer-local and excluded from packaging.
-
-Pi can annotate a phrase with `[EMO preset=smile]`. The incremental parser strips
-valid annotations before display and synthesis, preserves literal code, and
-binds cues to text offsets. Fish's `/v1/tts/live/with-timestamp` supplies the
-alignment. Playback starts as soon as PCM arrives; late corrections never replay audio or
-rewind expressions. If normalized text cannot be matched, the current/default
-expression continues rather than inventing an alignment.
-
-AudioWorklet reports the samples actually consumed, including buffering and
-final drain. Mouth energy is measured there, not at network receipt. The old
-receive-side WASM meter and separate React audio queue have been removed.
-Calibration values `mouth_gain` (8), `mouth_silence_threshold` (0.08), and
-`voice_sync_offset_ms` (0) are persisted through the existing settings API.
-
-Continuous microphone mode submits final recognition once, pauses during the
-reply, and resumes only after both Pi and playback complete. Errors keep text
-chat available and show a visible explanation.
-
-## Fish failure diagnostics
-
-Fish failures carry a readable cause/action plus a structured `diagnostic` on
-both `voice.event` errors and `tts.error`. `provider`, `phase`, and `code` are
-always present. HTTP status, network code, WebSocket close code, protocol event,
-and bounded `Retry-After` seconds are included when actually observed.
-Classification lives in `src/main/fishErrors.ts`; it does not infer a cause from
-an arbitrary HTTP body or silently retry a synthesis request.
-
-| Failure evidence | Distinction / suggested action |
-|---|---|
-| Missing key, non-string settings, invalid header characters, constructor failure | Configuration errors; fix the local value rather than restarting Pi |
-| HTTP 400 / 422 | Invalid request parameters; check model, voice and format |
-| HTTP 401 | Authentication rejected; check the API key |
-| HTTP 402 | Payment requirement; check API credits/billing, not just website membership; does not prove the exact balance |
-| HTTP 403 | Account/model access denied |
-| HTTP 404 / 405 | Wrong endpoint or method |
-| HTTP 407 | Proxy authentication, distinct from Fish authentication |
-| HTTP 408 / 504 | Server request timeout / gateway upstream timeout |
-| HTTP 413 / 415 / 426 | Request too large / unsupported format / upgrade required |
-| HTTP 429 | Rate or concurrency limit; expose valid `Retry-After` without automatically retrying |
-| HTTP 500 / 502 / 503 | Internal service error / bad gateway / service unavailable |
-| Other 2xx / 3xx / unknown HTTP | Missing WebSocket upgrade / redirect not followed with credentials / unclassified rejection |
-| `ENOTFOUND` / `EAI_AGAIN` | Missing DNS resolution / temporary resolver failure |
-| Refused, reset, broken pipe, unreachable, timed out | Separate network codes and actions; preserve the phase even after the socket enters `CLOSING` |
-| Expired, not-yet-valid, revoked, hostname mismatch, untrusted certificate, other TLS negotiation | Separate TLS failures; never disable certificate verification |
-| Invalid Upgrade/Accept header, subprotocol or extensions; invalid WebSocket frames | Opening-protocol versus frame-protocol failures |
-| Failed `start`, `text`, or `stop` write | `send_failed` with the specific event and phase; synchronous throws and async write failures do not kill text chat |
-| Invalid MessagePack / event envelope / PCM / finish reason | `decode_failed` / `invalid_event` / `invalid_audio` / `invalid_finish` |
-| Fish `error` event or `finish(reason=error)` | `service_error`, not a connection failure; include only a credential-redacted, control-character-stripped server message (max 320 characters) |
-| No audio after input ends / audio received but no finish | `first_audio_timeout` / `completion_timeout`, after 30s of inactivity; each audio event resets this deadline |
-| Close 1000 without Fish finish | Not success: `closed_without_finish` |
-| Close 1001–1009, 1011–1013, 1015 | Distinguish peer shutdown, missing/abnormal close, protocol/data/policy/size rejection, server failure/restart/overload, and TLS failure |
-| Other close codes | Preserve the code and redacted reason; do not invent authentication or billing diagnoses |
-
-For example, a payment rejection is tagged
-`{"provider":"fish","phase":"handshake","code":"payment_required","httpStatus":402}`.
-The four phases are `configuration`, `handshake`, `synthesis`, and `completion`.
-Long model/tool pauses before text input ends are not treated as Fish timeouts.
-Unknown event names are ignored for protocol forward compatibility. Intentional
-abort, stale sockets and late callbacks do not produce another failure.
-HTTP bodies/headers and raw network exception messages are never forwarded.
-Remote Fish failures stop speech but do not destroy a healthy local AudioWorklet
-or get echoed back as an unrelated playback failure. Text chat remains available.
-
-## Verification
-
-```bash
-npm run typecheck
-npm test
-npm run build
-npm run test:electron
-npm run test:dev
-```
-
-The Electron acceptance check uses isolated user-data and Pi directories, a local
-fake model server, and generated PCM. It exercises the production IPC/MessageChannel,
-Pi model selection and context restoration across worker replacement, safe reload
-ordering, scene handshakes, live calibration, actual audio playback and processor
-recovery. It makes no paid API calls and does not open the microphone.
-The development acceptance check copies source into a temporary project and verifies
-selective rebuild notifications, React HMR, and failed-build retention without
-editing the working tree.
-`npm run test:scene` serves the scene separately for visual inspection.
-
-Live Fish synthesis requires configured credentials; live Apple Speech still
-requires macOS microphone/speech authorization and actual speech input.
-
-## License, affiliation and commercial status
-
-Amadeus first-party code, documentation, modifications and recorded original
-brand assets are released under the Apache License 2.0 (see `LICENSE`).
-Third-party components keep their own terms; see
-`resources/THIRD_PARTY_NOTICES.md`.
-
-Amadeus is an unofficial community fan project. It is **not affiliated with,
-endorsed by, or connected to** MAGES., Nitroplus or 5pb., nor with any other
-rights holder of the Steins;Gate franchise. Character names, models, artwork and
-animation belong to their respective owners and are used here for personal,
-non-commercial experiment.
-
-The project is maintained as a hobby and is **not operated as a commercial
-activity**: no fee is charged for the software, and the maintainers offer no
-commercial support, hosting or distribution. The Apache-2.0 grant covers
-first-party code and documentation only. It grants no right to character, model,
-voice or other third-party material, and is not a substitute for one.
+Amadeus Next 是非官方的同人爱好项目，与 MAGES.、Nitroplus、5pb.
+及《命运石之门》系列的任何权利方**均无关联，也未获其认可**。角色名称、模型、美术与动画归各自权利人所有，
+本项目仅作个人、非商业的实验用途。本项目不收费，不提供商业支持、托管或分发服务。
+AGPL-3.0 只覆盖第一方代码与文档，不授予角色、模型、语音等第三方素材的任何权利。
