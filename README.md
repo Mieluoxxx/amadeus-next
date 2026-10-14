@@ -23,6 +23,16 @@ Amadeus Next 是一个 macOS 桌面应用。它把《命运石之门》里的 Am
 她不只是陪聊。查资料、读文件、改代码、登上远程服务器跑命令，这些活她会交给后台的
 子代理去做，自己继续陪你说话；做完了再回来告诉你结果。
 
+Amadeus Next 源自 [**Code-Amadeus/Amadeus**](https://github.com/Code-Amadeus/Amadeus)。
+它的场景设计、美术资源和「让 Amadeus 真正走到桌面上」的想法，是这个项目的起点。
+感谢 Amadeus 的所有贡献者 ♡
+
+**也推荐你去试试 [Amadeus](https://github.com/Code-Amadeus/Amadeus)！** 它是一个更完整的实时多模态桌面
+Agent：支持 Windows / macOS / Linux，可以用本地模型推理（CUDA、ROCm、Apple MPS），
+提供 Live2D 角色、桌面主题、插件体系和 Provider 工作台。想在 Windows 上用、
+想全部本地跑，或者想要更多可玩性，Amadeus 都是很好的选择。
+→ [项目主页](https://github.com/Code-Amadeus/Amadeus) · [官网](https://code-amadeus.github.io/) · [演示视频](https://www.bilibili.com/video/BV1783G6hEYY/)
+
 ## 功能一览
 
 ### 开口就能聊
@@ -112,17 +122,7 @@ npm start              # 构建并运行
 
 ## 致谢
 
-Amadeus Next 源自 [**Code-Amadeus/Amadeus**](https://github.com/Code-Amadeus/Amadeus)。
-它的场景设计、美术资源和「让 Amadeus 真正走到桌面上」的想法，是这个项目的起点。
-感谢 Amadeus 的所有贡献者 ♡
-
-**也推荐你去试试 [Amadeus](https://github.com/Code-Amadeus/Amadeus)！** 它是一个更完整的实时多模态桌面
-Agent：支持 Windows / macOS / Linux，可以用本地模型推理（CUDA、ROCm、Apple MPS），
-提供 Live2D 角色、桌面主题、插件体系和 Provider 工作台。想在 Windows 上用、
-想全部本地跑，或者想要更多可玩性，Amadeus 都是很好的选择。
-→ [项目主页](https://github.com/Code-Amadeus/Amadeus) · [官网](https://code-amadeus.github.io/) · [演示视频](https://www.bilibili.com/video/BV1783G6hEYY/)
-
-同时感谢这些项目：
+感谢这些项目：
 
 - [Pi](https://github.com/earendil-works/pi)：Agent 运行时与持久化
 - [Fish Audio](https://fish.audio)：语音合成
