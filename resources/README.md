@@ -69,9 +69,9 @@ does not migrate that separate scenario layer into Next. The packaged app ships
 no `emote/` runtime or model packs; the idle scenario stills, other assets and the
 retained texture decoders are copied unchanged.
 
-The imported runtime is **CC BY-NC-SA 4.0**; the parser is a separate **Apache-2.0** project; character assets retain
+The imported runtime is **CC BY-NC-SA 4.0**; the parser is first-party code under **AGPL-3.0**; character assets retain
 their original rights. The FreeMote runtime and models are developer-local and
-excluded from packaging; the Apache-2.0 parser and its notices are shipped. See
+excluded from packaging; the AGPL-3.0 parser and its notices are shipped. See
 `LICENSES/FreeMote-NOTICE.md` before redistribution.
 This is a local non-commercial compatibility preview: the old 3.9 runtime uses
 `all_parts / 全体構造`, not all original top-level composition effects. Its heap

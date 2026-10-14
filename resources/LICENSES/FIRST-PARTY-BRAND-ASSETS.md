@@ -6,7 +6,7 @@ following checked-in assets are their original works:
 - `scene/room/background.png` (formerly `assets/images/amadeus_desktop_wallpaper.png`)
 
 They are included in the Amadeus source release as first-party brand assets
-under the repository root `LICENSE` (Apache License 2.0). This record does not
+under the repository root `LICENSE` (GNU AGPL v3.0). This record does not
 cover character art, model packs, ambient derivatives, scenario images,
 reference voices, model weights, or any other separately inventoried external
 asset.

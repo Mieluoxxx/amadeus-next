@@ -1,8 +1,9 @@
 # Third-party notices
 
 Amadeus first-party code, documentation, modifications, and recorded original
-brand assets are published under the Apache License 2.0 (see the repository root
-`LICENSE`). That license does not replace or narrow third-party rights.
+brand assets are published under the GNU Affero General Public License v3.0
+(AGPL-3.0; see the repository root `LICENSE`). That license does not replace
+or narrow third-party rights.
 Publishing components in the same repository does not change their existing
 MIT, Apache-2.0, CC-BY-NC-SA, or proprietary terms.
 
@@ -18,7 +19,7 @@ rights holder of the Steins;Gate franchise.
 
 The project is maintained as a hobby and is **not operated as a commercial
 activity**. No fee is charged for the software, and the maintainers offer no
-commercial support, hosting or distribution. The Apache-2.0 grant covers
+commercial support, hosting or distribution. The AGPL-3.0 grant covers
 first-party code and documentation only; it grants no right to character, model,
 voice or other third-party material, and is not a substitute for one.
 
