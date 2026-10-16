@@ -62,13 +62,7 @@ const EN = {
 
 
 
-  'settings.label.asr_mode': 'Recognition backend',
-  // 独立后端选项国际化前缀，防止不同注册表使用同名 ID（如 openai_compatible）时文案相互覆盖。
-  'settings.asrBackend.qwen3_asr': 'Qwen3-ASR (local)',
-  'settings.asrBackend.sense_voice': 'SenseVoice (local)',
-  'settings.asrBackend.openai_compatible': 'OpenAI-compatible transcription (remote)',
-  'settings.asrBackend.mimo': 'MiMo ASR model (Xiaomi, remote)',
-
+          
 
 
 
@@ -86,8 +80,7 @@ const EN = {
   'settings.note.no_user_settings': 'No user-managed connection settings.',
   'settings.note.no_active_connection': 'No active connection is selected.',
 
-  'settings.other_voice_backends': 'Other synthesis backends',
-  'settings.advanced': 'Advanced (live calibration)',
+    'settings.advanced': 'Advanced (live calibration)',
 
 
 
@@ -274,8 +267,7 @@ const EN = {
   'memory.source.manual': 'Added by you', 'memory.source.explicit': 'You asked to remember', 'memory.source.extracted': 'Inferred from chat',
   'memory.save_error': 'Memory update failed: {error}',
 
-  'settings.subagent.title': 'Subagents', 'settings.subagent.note': 'Background tasks are handed to a subagent, which reports back when done. Subagents use skills from ~/.amadeus/skills and MCP servers from ~/.amadeus/mcp.json (web search comes from an MCP server such as Exa); shared also uses ~/.agents/skills, ~/.pi/agent/skills and ~/.pi/agent/mcp.json.',
-  'settings.capability_mode.isolated': 'Isolated (Amadeus only)', 'settings.capability_mode.shared': 'Shared with this computer',
+  'settings.translation.title': 'Japanese translation', 'settings.subagent.title': 'Subagents', 'settings.capability_mode.isolated': 'Isolated (Amadeus only)', 'settings.capability_mode.shared': 'Shared with this computer',
   'settings.delegation_model.same': 'Same as chat model',
   'settings.remote.title': 'Remote machines',
   'settings.remote.name': 'Name', 'settings.remote.ssh': 'SSH command', 'settings.remote.workspace': 'Workdir', 'settings.remote.node': 'Node',
@@ -284,7 +276,6 @@ const EN = {
   'settings.remote.test': 'Test', 'settings.remote.testing': 'Connecting…',
   'settings.remote.ok': 'Connected: {path} ({os}/{arch}, Node {node})', 'settings.remote.failed': 'Cannot connect: {error}',
   'settings.character.title': 'Character assets',
-  'settings.character.note': 'The E-mote model packs are distributed separately from this app. Installing emote.zip unpacks it into the app\'s own data folder; the scene uses it from the next load on, and you can install a newer pack the same way at any time.',
   'settings.character.choose': 'Install from emote.zip', 'settings.character.installing': 'Installing…',
   'settings.character.installed': 'Installed. The scene uses this pack from now on.', 'settings.character.failed': 'Install failed: {error}',
 
@@ -303,13 +294,11 @@ const ZH: Messages = {
 
   'settings.security.available': '密钥受操作系统保护', 'settings.security.unavailable': '系统密钥加密不可用',
 
-'settings.label.asr_mode': '识别后端', 'settings.asrBackend.qwen3_asr': 'Qwen3-ASR（本地）', 'settings.asrBackend.sense_voice': 'SenseVoice（本地）', 'settings.asrBackend.openai_compatible': 'OpenAI 兼容转写（远程）', 'settings.asrBackend.mimo': '小米 ASR 模型（远程）',
 
 
 
 
-
-  'settings.note.no_user_settings': '没有用户管理的连接设置。', 'settings.note.no_active_connection': '当前没有选中的活动连接。', 'settings.other_voice_backends': '其他语音合成后端', 'settings.advanced': '高级（实时校准）',
+  'settings.note.no_user_settings': '没有用户管理的连接设置。', 'settings.note.no_active_connection': '当前没有选中的活动连接。', 'settings.advanced': '高级（实时校准）',
 
   'settings.placeholder.secret_replace': '已配置——输入以替换', 'settings.placeholder.secret_empty': '未配置', 'settings.action.save': '保存', 'settings.action.clear': '清除', 'settings.action.on': '开', 'settings.action.off': '关',
 
@@ -392,8 +381,7 @@ const ZH: Messages = {
   'memory.source.manual': '你添加的', 'memory.source.explicit': '你要求记住的', 'memory.source.extracted': '从对话中推断的',
   'memory.save_error': '记忆更新失败：{error}',
 
-  'settings.subagent.title': '子代理', 'settings.subagent.note': '后台任务交给子代理执行，完成后向你汇报。子代理使用 ~/.amadeus/skills 里的 skills 与 ~/.amadeus/mcp.json 里的 MCP 服务（网页搜索也来自 MCP，例如 Exa）；选择共享时还会使用 ~/.agents/skills、~/.pi/agent/skills 与 ~/.pi/agent/mcp.json。',
-  'settings.capability_mode.isolated': '隔离（仅 Amadeus）', 'settings.capability_mode.shared': '与本机共享',
+  'settings.translation.title': '日语翻译', 'settings.subagent.title': '子代理', 'settings.capability_mode.isolated': '隔离（仅 Amadeus）', 'settings.capability_mode.shared': '与本机共享',
   'settings.delegation_model.same': '与对话模型相同',
   'settings.remote.title': '远程机器',
   'settings.remote.name': '名称', 'settings.remote.ssh': 'SSH 命令', 'settings.remote.workspace': '工作目录', 'settings.remote.node': 'Node',
@@ -402,7 +390,6 @@ const ZH: Messages = {
   'settings.remote.test': '测试', 'settings.remote.testing': '连接中…',
   'settings.remote.ok': '已连接：{path}（{os}/{arch}，Node {node}）', 'settings.remote.failed': '无法连接：{error}',
   'settings.character.title': '角色资源',
-  'settings.character.note': 'E-mote 模型包与应用分开分发。安装 emote.zip 会把它解压进应用自己的数据目录，场景从下次加载起使用它；以后可以用同样的方式换成更新的包。',
   'settings.character.choose': '从 emote.zip 安装', 'settings.character.installing': '正在安装…',
   'settings.character.installed': '安装完成，场景从现在起使用这个包。', 'settings.character.failed': '安装失败：{error}',
 
@@ -421,9 +408,7 @@ const JA: Messages = {
 
   'settings.security.available': '秘密情報は OS により保護されています', 'settings.security.unavailable': 'OS の秘密情報暗号化を利用できません',
 
-'settings.label.asr_mode': '認識バックエンド', 'settings.asrBackend.qwen3_asr': 'Qwen3-ASR（ローカル）', 'settings.asrBackend.sense_voice': 'SenseVoice（ローカル）', 'settings.asrBackend.openai_compatible': 'OpenAI 互換文字起こし（リモート）', 'settings.asrBackend.mimo': 'MiMo ASR モデル（Xiaomi・リモート）',
-
-  'settings.note.no_user_settings': 'ユーザー管理の接続設定はありません。', 'settings.note.no_active_connection': '選択中のアクティブな接続はありません。', 'settings.other_voice_backends': 'その他の音声合成バックエンド', 'settings.advanced': '詳細設定（リアルタイム調整）',
+  'settings.note.no_user_settings': 'ユーザー管理の接続設定はありません。', 'settings.note.no_active_connection': '選択中のアクティブな接続はありません。', 'settings.advanced': '詳細設定（リアルタイム調整）',
   'settings.saving_label': '保存中…', 'settings.placeholder.secret_replace': '設定済み — 入力して置換', 'settings.placeholder.secret_empty': '未設定', 'settings.action.save': '保存', 'settings.action.clear': 'クリア', 'settings.action.on': 'オン', 'settings.action.off': 'オフ',
   'settings.label.interface_language': 'インターフェース言語', 'settings.label.current_model': '現在のモデルプロファイル',
   'settings.option.english': 'English', 'settings.option.chinese': '简体中文', 'settings.option.japanese': '日本語',
@@ -500,8 +485,7 @@ const JA: Messages = {
   'memory.source.manual': 'あなたが追加', 'memory.source.explicit': '覚えるよう依頼', 'memory.source.extracted': '会話から推定',
   'memory.save_error': '記憶の更新に失敗しました：{error}',
 
-  'settings.subagent.title': 'サブエージェント', 'settings.subagent.note': 'バックグラウンドのタスクはサブエージェントが実行し、完了後に報告します。サブエージェントは ~/.amadeus/skills のスキルと ~/.amadeus/mcp.json の MCP サーバーを使います（ウェブ検索も Exa などの MCP サーバー経由）。共有にすると ~/.agents/skills、~/.pi/agent/skills、~/.pi/agent/mcp.json も使います。',
-  'settings.capability_mode.isolated': '分離（Amadeus のみ）', 'settings.capability_mode.shared': 'このコンピューターと共有',
+  'settings.translation.title': '日本語翻訳', 'settings.subagent.title': 'サブエージェント', 'settings.capability_mode.isolated': '分離（Amadeus のみ）', 'settings.capability_mode.shared': 'このコンピューターと共有',
   'settings.delegation_model.same': '会話モデルと同じ',
   'settings.remote.title': 'リモートマシン',
   'settings.remote.name': '名前', 'settings.remote.ssh': 'SSH コマンド', 'settings.remote.workspace': '作業ディレクトリ', 'settings.remote.node': 'Node',
@@ -510,7 +494,6 @@ const JA: Messages = {
   'settings.remote.test': 'テスト', 'settings.remote.testing': '接続中…',
   'settings.remote.ok': '接続済み：{path}（{os}/{arch}、Node {node}）', 'settings.remote.failed': '接続できません：{error}',
   'settings.character.title': 'キャラクター素材',
-  'settings.character.note': 'E-mote モデルパックは本体とは別に配布されます。emote.zip をインストールするとアプリのデータフォルダに展開され、次回のシーン読み込みから使われます。新しいパックも同じ手順で入れ替えられます。',
   'settings.character.choose': 'emote.zip からインストール', 'settings.character.installing': 'インストール中…',
   'settings.character.installed': 'インストールしました。以降このパックが使われます。', 'settings.character.failed': 'インストールに失敗しました：{error}',
 
@@ -523,28 +506,28 @@ type SettingCopy = Record<'group' | 'field' | 'description' | 'groupDescription'
 
 const ZH_SETTINGS: SettingCopy = {
   group: {
-    asr_local: 'Apple Speech（本地）', speech_synthesis: 'Fish Audio 实时合成', display: '显示', network: '网络', memory: '长期记忆（Jev）', delegation: '委托',
+    asr_local: 'Apple Speech（本地）', speech_synthesis: 'Fish Audio 实时合成', display: '显示', network: '网络', memory: '长期记忆（Jev）', translation: '日语翻译', delegation: '委托',
   },
   field: {
     asr_language: '识别语言', FISH_API_KEY: 'Fish Audio API 密钥', FISH_VOICE_ID: 'Fish 声音 ID', FISH_API_MODEL: 'Fish 模型',
     mouth_gain: '嘴型增益', mouth_silence_threshold: '静音阈值', voice_sync_offset_ms: '音画同步偏移（毫秒）', network_proxy: '网络代理',
     scene_frame_rate: '场景帧率（FPS）',
     JEV_API_URL: 'Jev API 地址', JEV_API_KEY: 'Jev API 密钥', JEV_MODEL: 'Jev 模型',
-    report_proactive: '主动汇报', delegation_model: '委托模型', skills_mode: 'Skills', mcp_mode: 'MCP 服务',
+    report_proactive: '主动汇报', delegation_model: '委托模型', translation_model: '翻译模型', skills_mode: 'Skills', mcp_mode: 'MCP 服务',
   },
   description: {}, groupDescription: {}, status: {}, option: {},
 }
 
 const JA_SETTINGS: SettingCopy = {
   group: {
-    asr_local: 'Apple Speech（ローカル）', speech_synthesis: 'Fish Audio リアルタイム合成', display: '表示', network: 'ネットワーク', memory: '長期記憶（Jev）', delegation: '委任',
+    asr_local: 'Apple Speech（ローカル）', speech_synthesis: 'Fish Audio リアルタイム合成', display: '表示', network: 'ネットワーク', memory: '長期記憶（Jev）', translation: '日本語翻訳', delegation: '委任',
   },
   field: {
     asr_language: '認識言語', FISH_API_KEY: 'Fish Audio API キー', FISH_VOICE_ID: 'Fish ボイス ID', FISH_API_MODEL: 'Fish モデル',
     mouth_gain: '口の動きのゲイン', mouth_silence_threshold: '無音しきい値', voice_sync_offset_ms: '音声同期オフセット（ミリ秒）', network_proxy: 'ネットワークプロキシ',
     scene_frame_rate: 'シーンのフレームレート（FPS）',
     JEV_API_URL: 'Jev API エンドポイント', JEV_API_KEY: 'Jev API キー', JEV_MODEL: 'Jev モデル',
-    report_proactive: '能動的な報告', delegation_model: '委任モデル', skills_mode: 'スキル', mcp_mode: 'MCP サーバー',
+    report_proactive: '能動的な報告', delegation_model: '委任モデル', translation_model: '翻訳モデル', skills_mode: 'スキル', mcp_mode: 'MCP サーバー',
   },
   description: {}, groupDescription: {}, status: {}, option: {},
 }

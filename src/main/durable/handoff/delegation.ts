@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord'
 import { getSupportedThinkingLevels, type ModelThinkingLevel } from '@earendil-works/pi-ai'
 import type { ModelRef, ToolExecutionApi } from '@earendil-works/pi-durable'
 
-/** 设置页的 delegation_model（`provider/model`，空 = 与对话模型相同）经这个环境变量传给 worker，变化触发 worker 重载。 */
+/** 设置页的 delegation_model（`provider/model`，空 = 与对话模型相同）经这个环境变量传给 worker，变化经 config.apply 热更新。 */
 export const DELEGATION_MODEL_ENV = 'AMADEUS_DELEGATION_MODEL'
 
 /** 模型 id 里可以有斜杠（如 openrouter 的 `anthropic/claude-…`），所以只在第一个斜杠处切。格式不对一律当作没设置。 */

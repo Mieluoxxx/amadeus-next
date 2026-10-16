@@ -1,7 +1,7 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import type { AssistantMessage, Message } from '@earendil-works/pi-ai'
 import type { Conversation, Cursor, EntryRecord } from '@earendil-works/pi-durable'
-import { PresentationText } from '../../shared/presentation.ts'
+import { legacyScript } from '../../shared/presentation.ts'
 import { CARD_MAX_CHARS, roundOf, type DeliveredReport, type HandoffItem } from './handoff/index.ts'
 import { isMemoryEntry, isMemoryMessage } from './memory/index.ts'
 import { TagScrubber } from './scrub.ts'
@@ -120,18 +120,18 @@ export type HistoryInput = {
 /**
  * entries → 界面消息（architecture §4.4）：
  * - `pi.user` 是用户气泡，`entryId` 在 delivered 里的（或围栏文本尚未补记 entryId 的）是汇报卡片；
- * - `pi.assistant` 同一次输入之后的多条合并为一个气泡，经 PresentationText 取 display 通道，与实时字幕一致；
+ * - `pi.assistant` 同一次输入之后的多条合并为一个气泡；导演配音之前的旧回答带双语标签，还原成其中的中文；
  * - `aborted` / `error` 的 assistant 条目、system / tool / compaction / 记忆条目一律不显示。
  */
 export async function readHistory(root: Conversation, input: HistoryInput): Promise<HistoryMessage[]> {
   const reports = reportEntries(input.delivered)
   const messages: HistoryMessage[] = []
-  let run: { first: number; scrubber: TagScrubber; presenter: PresentationText; display: string; turnId: string | undefined } | undefined
+  let run: { first: number; scrubber: TagScrubber; raw: string; turnId: string | undefined } | undefined
   let turnId: string | undefined
 
   const close = () => {
     if (!run) return
-    const text = (run.display + run.presenter.push(run.scrubber.push('', true), true).display).trim()
+    const text = legacyScript(run.raw + run.scrubber.push('', true)).trim()
     if (text) messages.push({ id: String(run.first), role: 'assistant', text, ...(run.turnId ? { turnId: run.turnId } : {}) })
     run = undefined
   }
@@ -159,9 +159,9 @@ export async function readHistory(root: Conversation, input: HistoryInput): Prom
       messages.push({ id: String(entry.id), role: 'user', text, ...(turnId ? { turnId } : {}) })
     } else if (entry.kind === 'pi.assistant' && message?.role === 'assistant') {
       if (message.stopReason === 'aborted' || message.stopReason === 'error') continue
-      run ??= { first: entry.id, scrubber: new TagScrubber(), presenter: new PresentationText(), display: '', turnId }
+      run ??= { first: entry.id, scrubber: new TagScrubber(), raw: '', turnId }
       // 和实时链路一样先经清洗器：写成文本的工具调用、复述的内部围栏都不该在重新加载后冒出来。
-      run.display += run.presenter.push(run.scrubber.push(assistantText(message))).display
+      run.raw += run.scrubber.push(assistantText(message))
     }
   }
   close()

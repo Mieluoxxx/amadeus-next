@@ -12,6 +12,7 @@ import { AmadeusHandoff, ApprovalsDoc, HandoffsDoc, OutboxDoc, renderReport } fr
 import { AnchorTask } from '../src/main/durable/handoff/reporter.ts'
 import { ProcessLock, processStartTime } from '../src/main/durable/processLock.ts'
 import { DurableRuntime } from '../src/main/durable/runtime.ts'
+import { TargetPool } from '../src/main/durable/remote/pool.ts'
 import { TOOL_TEXT_TAGS, TagScrubber, toolTextIn } from '../src/main/durable/scrub.ts'
 import { TOOL_TEXT_NOTICE } from '../src/main/durable/toolText.ts'
 import { SessionIndex } from '../src/main/durable/sessionIndex.ts'
@@ -482,6 +483,24 @@ test('tool calls written as text in earlier answers are not replayed to the mode
     await f.chat(runtime, 'one', 't2', '你好')
     assert.doesNotMatch(seen.at(-1), /<remember>/, 'Later requests no longer carry the text-form call')
     assert.match(seen.at(-1), /记下了/, 'The rest of that answer stays')
+  } finally { await f.cleanup() }
+})
+
+test('answers in the old bilingual-tag format reach the model as plain Chinese, so it does not copy the format', async () => {
+  const f = fixture()
+  const runtime = await f.create()
+  const seen = []
+  const router = async context => {
+    seen.push(JSON.stringify(context.messages.filter(message => message.role === 'assistant')))
+    return fauxAssistantMessage(seen.length === 1 ? '[EMO preset=smile]<zh>早。</zh><jp>おはよう。</jp>' : '嗯。')
+  }
+  f.faux.setResponses(Array.from({ length: 4 }, () => router))
+  try {
+    await f.call(runtime, 'session.create', { sessionId: 'one', title: '' })
+    await f.chat(runtime, 'one', 't1', '早上好')
+    await f.chat(runtime, 'one', 't2', '你好')
+    assert.match(seen.at(-1), /早。/)
+    assert.doesNotMatch(seen.at(-1), /<zh>|<jp>|おはよう|EMO/)
   } finally { await f.cleanup() }
 })
 
@@ -1709,6 +1728,50 @@ test('the work panel sees every delegation: live child actions, the full trace, 
     assert.deepEqual((await f.call(runtime, 'task.all', {})).sessions, [], 'deleting the session drops its records')
   } finally {
     release.resolve()
+    await f.cleanup()
+  }
+})
+
+test('config.apply writes the managed settings into the environment, reports what changed, and ignores everything else', async () => {
+  const f = fixture()
+  const seen = []
+  const runtime = await f.create({ onSettings: changed => seen.push([...changed].sort()) })
+  const keys = ['AMADEUS_DELEGATION_MODEL', 'AMADEUS_TRANSLATION_MODEL', 'PATH_NOT_MANAGED']
+  const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]))
+  try {
+    delete process.env.AMADEUS_DELEGATION_MODEL
+    process.env.AMADEUS_TRANSLATION_MODEL = 'old/model'
+    const first = await f.call(runtime, 'config.apply', { env: { AMADEUS_DELEGATION_MODEL: 'a/b', AMADEUS_TRANSLATION_MODEL: '', PATH_NOT_MANAGED: 'x' } })
+    assert.deepEqual(first.changed.sort(), ['AMADEUS_DELEGATION_MODEL', 'AMADEUS_TRANSLATION_MODEL'])
+    assert.equal(process.env.AMADEUS_DELEGATION_MODEL, 'a/b')
+    assert.equal('AMADEUS_TRANSLATION_MODEL' in process.env, false, 'an empty value removes the variable')
+    assert.equal(process.env.PATH_NOT_MANAGED, saved.PATH_NOT_MANAGED, 'only the settings keys are touched')
+    assert.deepEqual((await f.call(runtime, 'config.apply', { env: { AMADEUS_DELEGATION_MODEL: 'a/b' } })).changed, [], 'the same value is not a change')
+    assert.deepEqual(seen, [['AMADEUS_DELEGATION_MODEL', 'AMADEUS_TRANSLATION_MODEL']])
+  } finally {
+    for (const key of keys) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key] }
+    await f.cleanup()
+  }
+})
+
+test('changing the remote machines rebuilds the handoff schema in place, without a restart', async () => {
+  const f = fixture()
+  const pool = new TargetPool({ targets: [], connector: async () => { throw new Error('not used') }, log: () => {} })
+  const runtime = await f.create({ remote: pool })
+  const saved = process.env.AMADEUS_REMOTE_TARGETS
+  const handoff = () => runtime.registry.snapshot().extension('amadeus-handoff').tools.find(tool => tool.name === 'handoff')
+  try {
+    assert.equal('target' in handoff().parameters.properties, false, 'no machines, no remote kind')
+    const targets = [{ name: 'gpu', ssh: 'gpu', workspace: '~/work', node: 'node' }]
+    await f.call(runtime, 'config.apply', { env: { AMADEUS_REMOTE_TARGETS: JSON.stringify(targets) } })
+    assert.deepEqual(pool.targets, targets)
+    assert.deepEqual(handoff().parameters.properties.target.enum, ['gpu'])
+    assert.ok(handoff().parameters.properties.kind.enum.includes('remote'))
+    await f.call(runtime, 'config.apply', { env: { AMADEUS_REMOTE_TARGETS: '' } })
+    assert.equal('target' in handoff().parameters.properties, false)
+  } finally {
+    if (saved === undefined) delete process.env.AMADEUS_REMOTE_TARGETS; else process.env.AMADEUS_REMOTE_TARGETS = saved
+    pool.close()
     await f.cleanup()
   }
 })

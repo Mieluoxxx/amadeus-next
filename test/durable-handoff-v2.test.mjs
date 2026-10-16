@@ -170,8 +170,8 @@ async function firstRound(t, text = '帮我查一下东京明天的天气') {
   await deliverAndSettle(t, 't_01')
 }
 
-const SENT_NEW_ROUND = 'Message sent to t_01; it continues as round 2. The result will come back to the conversation automatically; do not wait for it. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.'
-const SENT_STEER = 'Message sent to t_01; the subagent will take it into its current work. The result will come back to the conversation automatically. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.'
+const SENT_NEW_ROUND = 'Message sent to t_01; it continues as round 2. The result will come back to the conversation automatically; do not wait for it. Now tell the user in a line or two; never guess the result.'
+const SENT_STEER = 'Message sent to t_01; the subagent will take it into its current work. The result will come back to the conversation automatically. Now tell the user in a line or two; never guess the result.'
 
 test('handoff_send continues a finished task: round 2 reports again and the subagent still sees round 1', async () => {
   const t = await open({ handlers: { child: context => answer(userTexts(context).length === 1 ? '结论：晴。' : '补充：各区差异不大。') } })
@@ -267,7 +267,7 @@ test('handoff_send to a queued task reaches the subagent after its brief, once t
     await say(t.root, '查乙')
     await until(async () => (await itemOf(t.harness, 't_02'))?.status === 'queued', 't_02 queued behind t_01')
     assert.equal((await say(t.root, '发给t_02：别忘了价格')).status, 'done')
-    assert.deepEqual((await toolTexts(t.root)).slice(-1), ['Message sent to t_02; the subagent will take it into its current work. The result will come back to the conversation automatically. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.'])
+    assert.deepEqual((await toolTexts(t.root)).slice(-1), ['Message sent to t_02; the subagent will take it into its current work. The result will come back to the conversation automatically. Now tell the user in a line or two; never guess the result.'])
     assert.equal(t.calls.child.length, 1, 'the queued task has not started')
     assert.equal((await itemOf(t.harness, 't_02')).messages.length, 1)
 
@@ -484,7 +484,7 @@ test('a question can be cancelled: the task becomes cancelled and its unsent que
     await say(t.root, '帮我查一下东京明天的天气')
     await reportFor(t.harness, t.root, 't_01', 'needs_input report')
     assert.equal((await say(t.root, '取消t_01')).status, 'done')
-    assert.deepEqual((await toolResults(t.root)).at(-1), { text: 't_01 was waiting for an answer and is now cancelled; it will not report back. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.', isError: false })
+    assert.deepEqual((await toolResults(t.root)).at(-1), { text: 't_01 was waiting for an answer and is now cancelled; it will not report back. Now tell the user in a line or two; never guess the result.', isError: false })
     const item = await itemOf(t.harness)
     assert.deepEqual([item.status, item.question], ['cancelled', undefined])
     assert.deepEqual((await outboxOf(t.harness)).pending, [], 'the report asking for input is withdrawn')
@@ -660,7 +660,7 @@ test('the new tool descriptions, in full', () => {
   assert.equal(
     HANDOFF_SEND_DESCRIPTION,
     `Send a message to a task you delegated earlier: to correct or extend one that is still running, to ask for more after its result arrived (another angle, more detail, a fix), or to answer a question it asked (status needs_input).
-The subagent keeps everything it has seen, so the message only needs what is new. Write it as plain prose, at most 1500 characters, with no subtitle or speech formatting, expression cues or interjections.
+The subagent keeps everything it has seen, so the message only needs what is new. Write it as plain prose, at most 1500 characters, with no interjections or emoji.
 A running task takes the message into its current work. A finished task starts a new round and its new result comes back to the conversation automatically. A cancelled task cannot be continued; delegate it again with handoff.
 Call it before writing any reply; once it returns, tell the user in a line or two.`,
   )

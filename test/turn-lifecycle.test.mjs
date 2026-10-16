@@ -9,7 +9,7 @@ import { SpeechBridge } from '../src/main/speechBridge.ts'
 import { ageOf, isActiveStatus, isOpenStatus, normalizeApproval, normalizeCard, normalizeTasks } from '../src/renderer/components/scene/taskTypes.ts'
 
 function runtime(env = {}, clock = { value: Date.now() }, emote = {}, state = {}) {
-  const calls = [], submits = [], delivers = [], timers = new Map()
+  const calls = [], submits = [], delivers = [], directs = [], tts = [], timers = new Map()
   let piEvent
   let timerId = 0
   // Fake clock so the conversation-idle timer can be stepped without waiting.
@@ -66,6 +66,11 @@ function runtime(env = {}, clock = { value: Date.now() }, emote = {}, state = {}
             if (worker.currentId === params.sessionId) worker.currentId = ''
             calls.push(['worker-delete', params.sessionId])
             return { type: 'done' }
+          case 'voice.direct':
+            // 配音导演的替身：日语就是带前缀的中文，便于断言哪句配了、哪句降级。
+            directs.push(params)
+            if (state.direct) return state.direct(params)
+            return { type: 'done', lines: params.lines.map(line => ({ id: line.id, jp: `JP:${line.zh}`, emotion: 'smile' })) }
           case 'chat.submit':
             submits.push(params)
             return { type: 'done', requestId: `turn:${params.turnId}` }
@@ -81,7 +86,7 @@ function runtime(env = {}, clock = { value: Date.now() }, emote = {}, state = {}
       dispose() {}
     },
     SpeechBridge: class { start(locale) { calls.push(['listen', locale]); return { ok: true } }; stop() { calls.push(['stop-listening']) }; finish(manual) { calls.push(['finish-listening', manual]); return { ok: true } }; dispose() { calls.push(['dispose-speech']) } },
-    FishTts: class { configured = true; constructor(_config, emit) { emitFish = emit }; start() {}; push() {}; finish() {}; abort() {} },
+    FishTts: class { configured = true; constructor(_config, emit) { emitFish = emit }; start() { tts.push('<start>') }; push(text) { tts.push(text) }; finish() { tts.push('<finish>') }; abort() {} },
   }
   const settings = state.settings ?? {}
   const app = new AppRuntime({
@@ -125,7 +130,9 @@ function runtime(env = {}, clock = { value: Date.now() }, emote = {}, state = {}
   const idleTimers = () => [...timers.values()].filter(timer => timer.ms === 180_000)
   // A running reply that streams something every minute; without events the watchdog would end it after 2 minutes.
   const stayBusy = ms => { for (let left = ms; left > 0; left -= 60_000) { advance(Math.min(60_000, left)); piTurn(0).tool('wait', false) } }
-  return { app, calls, submits, delivers, timers, idleTimers, stayBusy, advance, worker, piTurn, reportTurn, emitPi, emitFish: event => emitFish(event) }
+  // 设置变化经 config.apply 热更新到 worker，不再重启它。
+  const applies = () => calls.filter(([type, command]) => type === 'pi-control' && command === 'config.apply').map(([, , params]) => params.env)
+  return { app, calls, applies, submits, delivers, directs, tts, timers, idleTimers, stayBusy, advance, worker, piTurn, reportTurn, emitPi, emitFish: event => emitFish(event) }
 }
 
 const flush = () => new Promise(resolve => setImmediate(resolve))
@@ -193,7 +200,7 @@ test('ASR waits one second after playback drain; repeated or stale events cannot
   await app.request('asr.start')
   await app.request('chat.send', { text: 'hello', turn_id: 'first' })
   const first = calls.find(([method, value]) => method === 'voice.event' && value.type === 'begin')[1]
-  piTurn(0).text('Hello [EMO preset=smile]there')
+  piTurn(0).text('Hello there')
   piTurn(0).done('unused')
   await flush()
   advance(5000)
@@ -524,8 +531,8 @@ test('Fish failure diagnostics reach both error channels while text chat continu
   assert.equal(calls.findLast(([type]) => type === 'chat.complete')[1].full_text, 'Text remains available')
 })
 
-test('the network proxy setting is validated, persisted, and replaces only the Pi worker', async () => {
-  const { app, calls } = runtime()
+test('the network proxy setting is validated, persisted, and applied to the running worker', async () => {
+  const { app, calls, applies } = runtime()
   await app.init()
   const stored = () => calls.filter(([type]) => type === 'desktop.settings.update')
   assert.equal((await app.request('system.set_config', { values: { network_proxy: 'socks5://127.0.0.1:1080' } })).ok, false)
@@ -541,17 +548,18 @@ test('the network proxy setting is validated, persisted, and replaces only the P
   assert.equal(env.NODE_USE_ENV_PROXY, '1')
   assert.equal(env.HTTP_PROXY, 'http://127.0.0.1:7890')
   assert.equal(env.HTTPS_PROXY, 'http://127.0.0.1:7890')
-  // The worker reads the address from its environment, so it is replaced at the
-  // next safe boundary instead of being reconfigured in place.
   await flush()
-  assert.equal(calls.some(([type]) => type === 'restart-pi'), true)
+  assert.deepEqual([applies().at(-1).NODE_USE_ENV_PROXY, applies().at(-1).HTTP_PROXY], ['1', 'http://127.0.0.1:7890'])
+  assert.equal(calls.some(([type]) => type === 'restart-pi'), false, 'the worker swaps its dispatcher in place')
   // Clearing the address is a valid change too and reaches the same path.
   assert.equal((await app.request('system.set_config', { values: { network_proxy: '' } })).ok, true)
   assert.equal(app.piEnv().HTTP_PROXY, undefined)
+  await flush()
+  assert.deepEqual([applies().at(-1).NODE_USE_ENV_PROXY, applies().at(-1).HTTP_PROXY], ['', ''], 'every managed key is sent, so a cleared one is removed')
 })
 
 test('Jev endpoint, key, and model are user settings that reach only the Pi worker', async () => {
-  const { app, calls } = runtime()
+  const { app, calls, applies } = runtime()
   await app.init()
   assert.equal(app.piEnv().AMADEUS_JEV_API_KEY, undefined, 'without a key the worker skips Jev entirely')
   assert.equal((await app.request('system.set_config', { values: { JEV_API_URL: 'ftp://example.com' } })).ok, false)
@@ -560,7 +568,8 @@ test('Jev endpoint, key, and model are user settings that reach only the Pi work
   assert.equal(applied.values.JEV_API_KEY, undefined, 'the key must never be echoed to the renderer')
   assert.deepEqual(app.piEnv(), { AMADEUS_JEV_URL: 'https://api.typesafe.ai/v1/systemone', AMADEUS_JEV_MODEL: 'jev-latest', AMADEUS_JEV_API_KEY: 'secret-key' })
   await flush()
-  assert.equal(calls.some(([type]) => type === 'restart-pi'), true)
+  assert.equal(applies().at(-1).AMADEUS_JEV_API_KEY, 'secret-key')
+  assert.equal(calls.some(([type]) => type === 'restart-pi'), false)
   // Blank fields fall back to the free OpenCode Zen endpoint rather than an unusable empty value.
   await app.request('system.set_config', { values: { JEV_API_URL: '', JEV_MODEL: '' } })
   assert.equal(app.piEnv().AMADEUS_JEV_URL, 'https://api.typesafe.ai/v1/systemone')
@@ -587,8 +596,8 @@ test('the Jev client posts typed questions and returns answers by question id', 
   await assert.rejects(systemOne(config, 'hello', {}), error => error.message === 'Jev request failed: HTTP 401')
 })
 
-test('skills_mode and mcp_mode default to isolated, reach the worker only when shared, and replace the worker when they change', async () => {
-  const { app, calls } = runtime()
+test('skills_mode and mcp_mode default to isolated, reach the worker only when shared, and are applied in place when they change', async () => {
+  const { app, calls, applies } = runtime()
   await app.init()
   const { values } = await app.request('system.get_config')
   assert.deepEqual([values.skills_mode, values.mcp_mode], ['isolated', 'isolated'])
@@ -603,17 +612,33 @@ test('skills_mode and mcp_mode default to isolated, reach the worker only when s
   assert.equal((await app.request('desktop.settings.update', { values: { skills_mode: 'shared' } })).ok, true)
   assert.deepEqual(app.piEnv(), { AMADEUS_SKILLS_MODE: 'shared' })
   await flush()
-  assert.equal(calls.filter(([type]) => type === 'restart-pi').length, 1, 'the worker reads these at fork time')
+  assert.deepEqual([applies().length, applies()[0].AMADEUS_SKILLS_MODE], [1, 'shared'])
+  assert.equal(calls.some(([type]) => type === 'restart-pi'), false)
   await app.request('system.set_config', { values: { mcp_mode: 'shared' } })
   assert.deepEqual(app.piEnv(), { AMADEUS_SKILLS_MODE: 'shared', AMADEUS_MCP_MODE: 'shared' })
   await app.request('system.set_config', { values: { skills_mode: 'isolated', mcp_mode: 'isolated' } })
   assert.deepEqual(app.piEnv(), {})
 })
 
-test('delegation_model is validated, reaches only the Pi worker environment, and replaces the worker when it changes', async () => {
-  const { app, calls } = runtime()
+test('translation_model is validated, reaches the worker as its own variable, and is applied in place when it changes', async () => {
+  const { app, calls, applies } = runtime()
   await app.init()
-  const restarts = () => calls.filter(([type]) => type === 'restart-pi').length
+  const group = async () => (await app.request('system.get_config')).values.general_configuration.find(each => each.id === 'translation')
+  assert.equal(app.piEnv().AMADEUS_TRANSLATION_MODEL, undefined, 'empty means the chat model')
+  assert.deepEqual((await group()).fields.map(field => [field.key, field.value]), [['translation_model', '']])
+  assert.equal((await app.request('system.set_config', { values: { translation_model: 'flash' } })).ok, false)
+  assert.equal((await app.request('desktop.settings.update', { values: { translation_model: ' deepseek/deepseek-flash ' } })).ok, true)
+  assert.equal(app.piEnv().AMADEUS_TRANSLATION_MODEL, 'deepseek/deepseek-flash')
+  assert.equal(app.piEnv().AMADEUS_DELEGATION_MODEL, undefined, 'it does not leak into the delegation model')
+  await flush()
+  assert.equal(applies().at(-1).AMADEUS_TRANSLATION_MODEL, 'deepseek/deepseek-flash')
+  assert.equal(calls.some(([type]) => type === 'restart-pi'), false)
+})
+
+test('delegation_model is validated, reaches only the Pi worker environment, and is applied in place when it changes', async () => {
+  const { app, calls, applies } = runtime()
+  await app.init()
+  const restarts = () => applies().length
   const delegation = async () => (await app.request('system.get_config')).values.general_configuration.find(group => group.id === 'delegation')
   assert.equal(app.piEnv().AMADEUS_DELEGATION_MODEL, undefined, 'empty means the chat model, so the worker gets nothing')
   assert.deepEqual((await delegation()).fields.map(field => [field.key, field.value]), [['report_proactive', true], ['delegation_model', ''], ['skills_mode', 'isolated'], ['mcp_mode', 'isolated']])
@@ -630,7 +655,7 @@ test('delegation_model is validated, reaches only the Pi worker environment, and
   assert.equal(app.piEnv().AMADEUS_DELEGATION_MODEL, 'openrouter/anthropic/claude-x:free', 'a model id may itself contain slashes')
   assert.equal((await delegation()).fields[1].value, 'openrouter/anthropic/claude-x:free')
   await flush()
-  assert.equal(restarts(), 1, 'the worker reads it at fork time, so it is replaced')
+  assert.equal(restarts(), 1, 'the running worker gets it')
 
   // Saving the same value again is not a change.
   await app.request('system.set_config', { values: { delegation_model: 'openrouter/anthropic/claude-x:free' } })
@@ -641,6 +666,22 @@ test('delegation_model is validated, reaches only the Pi worker environment, and
   assert.equal(app.piEnv().AMADEUS_DELEGATION_MODEL, undefined, 'back to the chat model')
   await flush()
   assert.equal(restarts(), 2, 'clearing it is a change too')
+  assert.equal(applies().at(-1).AMADEUS_DELEGATION_MODEL, '', 'cleared, not left at the old value')
+  assert.equal(calls.some(([type]) => type === 'restart-pi'), false)
+})
+
+test('a worker that cannot apply settings is replaced, but a worker that is not running is left to pick them up at fork', async () => {
+  const { app, calls, worker } = runtime()
+  await app.init()
+  const restarts = () => calls.filter(([type]) => type === 'restart-pi').length
+  worker.fail.set('config.apply', 'worker_exit')
+  await app.request('system.set_config', { values: { delegation_model: 'a/b' } })
+  await flush()
+  assert.equal(restarts(), 0, 'the next fork reads the new environment anyway')
+  worker.fail.set('config.apply', 'failed')
+  await app.request('system.set_config', { values: { delegation_model: 'a/c' } })
+  await flush()
+  assert.equal(restarts(), 1, 'half-applied settings are not trusted')
 })
 
 test('the delegation model survives a restart', async () => {
@@ -656,11 +697,11 @@ test('the delegation model survives a restart', async () => {
   second.app.dispose()
 })
 
-test('remote_targets is a validated list that reaches the worker as JSON, replaces it on change and survives a restart', async () => {
+test('remote_targets is a validated list that reaches the worker as JSON, is applied in place and survives a restart', async () => {
   const settings = {}
-  const { app, calls } = runtime({}, undefined, {}, { settings })
+  const { app, calls, applies } = runtime({}, undefined, {}, { settings })
   await app.init()
-  const restarts = () => calls.filter(([type]) => type === 'restart-pi').length
+  const restarts = () => applies().length
   assert.deepEqual((await app.request('system.get_config')).values.remote_targets, [])
   assert.equal(app.piEnv().AMADEUS_REMOTE_TARGETS, undefined, 'no machines means no variable')
   for (const bad of [
@@ -685,7 +726,8 @@ test('remote_targets is a validated list that reaches the worker as JSON, replac
   assert.deepEqual(JSON.parse(app.piEnv().AMADEUS_REMOTE_TARGETS), expected)
   assert.equal('remote_targets' in (await app.request('desktop.settings.get')).values, false, 'a list is not a string field')
   await flush()
-  assert.equal(restarts(), 1, 'the worker reads targets at fork time')
+  assert.equal(restarts(), 1, 'the running worker gets the targets')
+  assert.equal(calls.some(([type]) => type === 'restart-pi'), false)
   assert.deepEqual(settings.remote_targets, expected)
   app.dispose()
 
@@ -867,10 +909,10 @@ test('a turn is submitted to the worker and its events drive subtitles, completi
   const result = await app.request('chat.send', { text: '你好', turn_id: 't1' })
   assert.deepEqual(result, { ok: true, session_id: 'one', turn_id: 't1' })
   assert.deepEqual(submits.map(({ sessionId, turnId, text }) => ({ sessionId, turnId, text })), [{ sessionId: 'one', turnId: 't1', text: '你好' }])
-  piTurn().text('<zh>你好</zh>')
+  piTurn().text('你好')
   piTurn().tool('remember', false)
-  piTurn().text('<zh>，红莉栖</zh>')
-  piTurn().done('<zh>你好</zh><zh>，红莉栖</zh>')
+  piTurn().text('，红莉栖')
+  piTurn().done('你好，红莉栖')
   await flush()
   const tokens = calls.filter(([type]) => type === 'chat.token').map(([, value]) => value.token)
   assert.equal(tokens.at(-1), '你好，红莉栖')
@@ -879,6 +921,41 @@ test('a turn is submitted to the worker and its events drive subtitles, completi
   const activities = calls.filter(([type, value]) => type === 'voice.event' && value.type === 'activity').map(([, value]) => value.activity)
   assert.deepEqual(activities.slice(0, 3), ['thinking', 'tool', 'idle'])
   assert.equal(calls.filter(([type, value]) => type === 'voice.event' && value.type === 'begin').length, 1)
+})
+
+test('with speech, the Chinese reply is directed line by line into Japanese speech with aligned subtitles', async () => {
+  const { app, calls, directs, tts, piTurn } = runtime()
+  await app.init()
+  await app.request('scene.ready')
+  await app.request('chat.send', { text: '你在吗', turn_id: 't1' })
+  piTurn().text('在的。你')
+  piTurn().text('又熬夜了？\n```sh\nls\n```\n')
+  piTurn().done()
+  await flush()
+  assert.deepEqual(directs.map(request => request.lines.map(line => line.zh)), [['在的。'], ['你又熬夜了？']], 'the code block is never sent to the director')
+  assert.equal(directs[0].heard, '你在吗')
+  assert.equal(calls.findLast(([type]) => type === 'chat.token')[1].token, '在的。你又熬夜了？\n```sh\nls\n```\n', 'the chat bubble keeps the original Chinese')
+  // 表情没变时不再补语气标签，否则整段都会被压成同一种语调。
+  assert.deepEqual(tts, ['<start>', '[happy]JP:在的。', 'JP:你又熬夜了？', '<finish>'])
+  const texts = calls.filter(([type, value]) => type === 'voice.event' && value.type === 'text').map(([, value]) => value.value)
+  assert.deepEqual(texts.map(value => value.subtitles), [[{ offset: 0, text: '在的。' }], [{ offset: 6, text: '你又熬夜了？' }]])
+  assert.deepEqual(texts.map(value => value.cues), [[{ offset: 0, emotion: 'smile' }], []])
+})
+
+test('lines the director cannot voice are spoken in Chinese, and speech ends only after the last line is released', async () => {
+  let release
+  const direct = () => new Promise(resolve => { release = () => resolve({ type: 'done', lines: [] }) })
+  const { app, tts, piTurn } = runtime({}, undefined, {}, { direct })
+  await app.init()
+  await app.request('scene.ready')
+  await app.request('chat.send', { text: '在吗' })
+  piTurn().text('**在**。')
+  piTurn().done()
+  await flush()
+  assert.deepEqual(tts, [], 'nothing is finished while a line is still being directed')
+  release()
+  await flush()
+  assert.deepEqual(tts, ['<start>', '在。', '<finish>'])
 })
 
 test('turn.done carries the whole reply only as a fallback when no text event arrived', async () => {
@@ -1199,7 +1276,7 @@ test('a report turn that gets no turn event for two minutes is aborted, so the f
   assert.deepEqual([interrupted.kind, interrupted.turn_id], ['report', delivers[0].turnId])
   await flush()
   assert.equal(calls.some(([type, command]) => type === 'pi-control' && command === 'reload'), true, 'the queued reload runs once the floor is free')
-  reportTurn().done('<zh>迟到了</zh>')
+  reportTurn().done('迟到了')
   assert.equal(calls.some(([type]) => type === 'chat.complete'), false, 'a terminating event that shows up late is ignored')
 })
 
@@ -1429,8 +1506,8 @@ test('a subagent report waits for the running turn, then speaks as its own assis
   delivers[0].resolve({ type: 'done', status: 'started', card: card('t_01') })
   await flush()
   assert.deepEqual(calls.find(([type]) => type === 'task.report')[1], { sessionId: 'one', turnId: delivers[0].turnId, taskId: 't_01', title: '任务 t_01', status: 'done', summary: '查到了' })
-  reportTurn().text('<zh>查到了</zh>')
-  reportTurn().done('<zh>查到了</zh>')
+  reportTurn().text('查到了')
+  reportTurn().done('查到了')
   await flush()
   const complete = calls.findLast(([method]) => method === 'chat.complete')[1]
   assert.deepEqual([complete.full_text, complete.kind, complete.turn_id], ['查到了', 'report', delivers[0].turnId])
@@ -1560,11 +1637,11 @@ test('the owner speaking over a report interrupts it and the report is not repea
   assert.equal(delivers.length, 1)
   delivers[0].resolve({ type: 'done', status: 'started', card: card('t_01') })
   await flush()
-  reportTurn().text('<zh>查到了，明天</zh>')
+  reportTurn().text('查到了，明天')
   await app.request('chat.send', { text: '等一下' })
   assert.ok(calls.some(([type, id]) => type === 'abort' && id === 'one'))
   assert.deepEqual(calls.find(([type, value]) => type === 'chat.interrupted' && value.kind === 'report')[1].text, '查到了，明天')
-  reportTurn().done('<zh>查到了，明天</zh>')
+  reportTurn().done('查到了，明天')
   piTurn().done('嗯？')
   await flush()
   advance(60_000)

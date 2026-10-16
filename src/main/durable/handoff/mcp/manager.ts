@@ -51,7 +51,7 @@ const describe = (error: unknown): string => {
  * 配置在每次受理委托时重读；某个 server 的配置变了，旧连接关掉，下次用时按新配置重连。
  */
 export class McpManager {
-  private readonly options: McpManagerOptions
+  private options: McpManagerOptions
   private servers: McpServer[] = []
   private readonly connections = new Map<string, Connection>()
 
@@ -61,6 +61,12 @@ export class McpManager {
 
   private env(): NodeJS.ProcessEnv {
     return this.options.env?.() ?? process.env
+  }
+
+  /** 设置页切换了 MCP 来源：换一组配置文件，不再出现或配置变了的 server 立即断开。 */
+  setFiles(files: readonly McpConfigFile[]): void {
+    this.options = { ...this.options, files }
+    this.refresh()
   }
 
   refresh(): { servers: readonly McpServer[]; errors: readonly string[] } {

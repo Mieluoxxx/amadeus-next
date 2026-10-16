@@ -27,7 +27,7 @@ import {
 } from '../src/main/durable/handoff/index.ts'
 import { defaultTransport } from '../src/main/durable/handoff/mcp/manager.ts'
 import { RESEARCH_INSTRUCTIONS } from '../src/main/durable/handoff/instructions.ts'
-import { capabilitiesFromEnv } from '../src/main/durable/worker.ts'
+import { capabilitiesFromEnv, refreshCapabilities } from '../src/main/durable/worker.ts'
 import { normalizeApproval } from '../src/renderer/components/scene/taskTypes.ts'
 
 const MODEL = { provider: 'faux', modelId: 'faux-1' }
@@ -260,6 +260,23 @@ test('capabilitiesFromEnv: nothing without the amadeus home; isolated unless a m
     const shared = capabilitiesFromEnv({ AMADEUS_HOME_DIR: dirs.home, AMADEUS_PI_SHARED_DIR: dirs.sharedDir, AMADEUS_SKILLS_MODE: 'Shared', AMADEUS_MCP_MODE: 'shared' }, () => {})
     assert.deepEqual(shared.skills.roots.map(root => root.source), ['amadeus', 'agents', 'pi'])
     assert.equal(shared.skills.roots[2].dir, path.join(dirs.sharedDir, 'skills'))
+  })
+})
+
+test('refreshCapabilities switches skill roots and MCP config files in place', async () => {
+  await withLayout(async dirs => {
+    const env = { AMADEUS_HOME_DIR: dirs.home, AMADEUS_PI_SHARED_DIR: dirs.sharedDir }
+    const capabilities = capabilitiesFromEnv(env, () => {})
+    const skills = capabilities.skills
+    const files = []
+    capabilities.mcp.setFiles = list => files.push(list.length)
+    refreshCapabilities(capabilities, { ...env, AMADEUS_SKILLS_MODE: 'shared', AMADEUS_MCP_MODE: 'shared' })
+    assert.equal(capabilities.skills, skills, 'the same object, so installed extensions see the change')
+    assert.deepEqual(skills.roots.map(root => root.source), ['amadeus', 'agents', 'pi'])
+    assert.deepEqual(files, [2])
+    refreshCapabilities(capabilities, env)
+    assert.deepEqual(skills.roots.map(root => root.source), ['amadeus'])
+    assert.deepEqual(files, [2, 1])
   })
 })
 

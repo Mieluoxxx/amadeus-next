@@ -11,7 +11,12 @@ import type { SceneHost } from './sceneHost.ts'
 import type { SpeechBridge } from './speechBridge.ts'
 import { DEFAULT_JEV_MODEL, DEFAULT_JEV_URL } from './jev.ts'
 import { REMOTE_TARGETS_ENV, parseTargets } from './durable/remote/targets.ts'
-import { PresentationText } from '../shared/presentation.ts'
+import { VOICE_FOR_EMOTION, type PresentedText } from '../shared/presentation.ts'
+import type { Emotion } from '../shared/character.ts'
+import { PROXY_KEYS, WORKER_SETTING_KEYS } from '../shared/workerSettings.ts'
+import { TRANSLATION_MODEL_ENV, type DirectedLine, type DirectionRequest } from '../shared/direction.ts'
+import { VoiceDirector, type Spoken } from './voice/director.ts'
+import { ScriptSplitter, plainText } from './voice/splitter.ts'
 import { isTurnKey, SCENE_FRAME_RATES, sameTurn, type Calibration, type PlaybackEvent, type SceneFrameRate, type TurnKey, type VoiceEvent } from '../shared/voice.ts'
 
 type Json = Record<string, unknown>
@@ -23,7 +28,12 @@ type ActiveTurn = TurnKey & {
   drained: boolean
   speech: boolean
   text: string
-  parser: PresentationText
+  script: ScriptSplitter
+  /** 回合开始时要配音才有；中途 TTS 出错也留着，配好的台词照样作为字幕放行。 */
+  director: VoiceDirector | null
+  /** 已送进 TTS 的日语长度，字幕与表情的偏移以它为准。 */
+  spoken: number
+  emotion?: Emotion
   receivedText: boolean
   synthesisStarted: boolean
   /** 最近一次收到本回合 turn.* 事件（或回合开始）的时刻，看门狗据此判断是否沉默太久。 */
@@ -125,10 +135,7 @@ export class AppRuntime {
     this.config = {
       llm_provider: 'pi',
       presentation_locale: 'zh-CN',
-      asr_backend: 'apple_speech',
       asr_language: 'zh-CN',
-      tts_backend: 'fish_stream',
-      tts_mode: 'stream',
       FISH_API_KEY: deps.env.FISH_API_KEY || '',
       FISH_API_MODEL: deps.env.FISH_API_MODEL || 's2.1-pro-free',
       FISH_VOICE_ID: deps.env.FISH_VOICE_ID || '',
@@ -137,6 +144,7 @@ export class AppRuntime {
       JEV_MODEL: deps.env.JEV_MODEL || DEFAULT_JEV_MODEL,
       report_proactive: true,
       delegation_model: '',
+      translation_model: '',
       remote_targets: [],
       skills_mode: 'isolated',
       mcp_mode: 'isolated',
@@ -148,7 +156,7 @@ export class AppRuntime {
       scene_frame_rate: 30,
       network_proxy: '',
     }
-    this.pi = deps.createPi(() => this.piEnv(), event => this.onPiEvent(event))
+    this.pi = deps.createPi(() => this.workerEnv(), event => this.onPiEvent(event))
     this.floor = new Floor({
       clock: deps.clock,
       gates: () => ({
@@ -700,7 +708,15 @@ export class AppRuntime {
 
   // ---- 设置 ----
 
-  // Pi 子进程在启动时从环境变量加载代理、Jev、委托模型与子代理能力来源，故这些变更都需重建 worker。
+  /**
+   * worker 消费的全部设置，一个不少：fork 时作为环境变量，之后变了经 config.apply 原样下发。
+   * 代理没设置时沿用继承来的同名变量（与以往一致）；其余只认设置页，继承来的同名变量不能悄悄生效。
+   */
+  private workerEnv(): Record<string, string> {
+    const set = this.piEnv()
+    return Object.fromEntries(WORKER_SETTING_KEYS.map(key => [key, set[key] ?? ((PROXY_KEYS as readonly string[]).includes(key) ? this.deps.env[key] ?? '' : '')]))
+  }
+
   private piEnv(): Record<string, string> {
     const proxy = String(this.config.network_proxy || '').trim()
     const env: Record<string, string> = proxy ? { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: proxy, HTTPS_PROXY: proxy } : {}
@@ -710,6 +726,8 @@ export class AppRuntime {
     if (this.config.mcp_mode === 'shared') env.AMADEUS_MCP_MODE = 'shared'
     const delegationModel = String(this.config.delegation_model || '')
     if (delegationModel) env.AMADEUS_DELEGATION_MODEL = delegationModel
+    const translationModel = String(this.config.translation_model || '')
+    if (translationModel) env[TRANSLATION_MODEL_ENV] = translationModel
     const { targets } = parseTargets(this.config.remote_targets)
     if (targets.length) env[REMOTE_TARGETS_ENV] = JSON.stringify(targets)
     return env
@@ -753,10 +771,11 @@ export class AppRuntime {
     for (const key of ['skills_mode', 'mcp_mode']) {
       if (key in values && !CAPABILITY_MODES.includes(String(values[key]))) return { ok: false, error: `Invalid ${key}: expected one of ${CAPABILITY_MODES.join(', ')}` }
     }
-    if ('delegation_model' in values) {
-      const model = String(values.delegation_model ?? '').trim()
-      if (model && !DELEGATION_MODEL_PATTERN.test(model)) return { ok: false, error: 'Invalid delegation_model: expected provider/model or empty' }
-      values.delegation_model = model
+    for (const key of ['delegation_model', 'translation_model']) {
+      if (!(key in values)) continue
+      const model = String(values[key] ?? '').trim()
+      if (model && !DELEGATION_MODEL_PATTERN.test(model)) return { ok: false, error: `Invalid ${key}: expected provider/model or empty` }
+      values[key] = model
     }
     if ('remote_targets' in values) {
       const { targets, errors } = parseTargets(values.remote_targets)
@@ -774,11 +793,10 @@ export class AppRuntime {
     }
     const previousLanguage = this.config.asr_language
     const previousProactive = this.config.report_proactive
-    const previousPiEnv = JSON.stringify(this.piEnv())
+    const previousWorkerEnv = JSON.stringify(this.workerEnv())
     Object.assign(this.config, values)
     this.persistSettings()
-    // 代理、Jev 与子代理配置变更仅在子进程边界热重启，避免破坏正在进行的语音合成与场景渲染。
-    if (JSON.stringify(this.piEnv()) !== previousPiEnv) this.queueReload({ targets: ['pi-worker'] }, false)
+    if (JSON.stringify(this.workerEnv()) !== previousWorkerEnv) this.applyWorkerSettings()
     if (this.floor.listeningEnabled && this.config.asr_language !== previousLanguage) {
       this.floor.stopMic()
       this.floor.pump()
@@ -791,6 +809,17 @@ export class AppRuntime {
     }
     if ('scene_frame_rate' in values) this.emit('voice.event', { type: 'frame-rate', fps: this.sceneFrameRate() })
     return { ok: true, values: this.configSnapshot() }
+  }
+
+  /**
+   * 热更新，不重启 worker。worker 不在（没起来、正在被替换）时不用管：下次 fork 读的就是新值。
+   * 其它失败说明 worker 那边的设置停在半路，退回到替换 worker，保证它和设置页一致。
+   */
+  private applyWorkerSettings(): void {
+    this.pi.request('config.apply', { env: this.workerEnv() }).catch(error => {
+      if (['closed', 'worker_exit'].includes(codeOf(error)) || this.disposed) return
+      this.queueReload({ targets: ['pi-worker'] }, false)
+    })
   }
 
   /** 开关和召回模式热生效，不经 piEnv（architecture §5）：主进程持久化，worker 每次就绪后再补发。 */
@@ -816,7 +845,7 @@ export class AppRuntime {
     const snapshot = this.configSnapshot()
     const values = Object.fromEntries(Object.entries(snapshot).flatMap(([key, value]) => {
       // remote_targets 是列表，不走字段式的字符串设置，由设置页的远程机器卡片经 system.set_config 读写。
-      if ([...SECRET_KEYS, 'FISH_VOICE_ID', 'voice_configuration', 'general_configuration', 'asr_backends', 'remote_targets'].includes(key)) return []
+      if ([...SECRET_KEYS, 'FISH_VOICE_ID', 'voice_configuration', 'general_configuration', 'remote_targets'].includes(key)) return []
       return [[key, String(value ?? '')]]
     }))
     const secrets = Object.fromEntries([...SECRET_KEYS, 'FISH_VOICE_ID'].map(key => [key, { configured: Boolean(this.config[key]), source: 'user', locked: false }]))
@@ -827,7 +856,6 @@ export class AppRuntime {
     const publicConfig = Object.fromEntries(Object.entries(this.config).filter(([key]) => !SECRET_KEYS.includes(key)))
     return {
       ...publicConfig,
-      asr_backends: [{ id: 'apple_speech', label: 'Apple Speech', deployment: 'native' }],
       voice_configuration: [
         {
           id: 'asr_local',
@@ -870,6 +898,12 @@ export class AppRuntime {
           id: 'network', label: 'Network', configured: true,
           fields: [
             { key: 'network_proxy', label: 'Network proxy', type: 'text', value: String(this.config.network_proxy || ''), editable: true },
+          ],
+        },
+        {
+          id: 'translation', label: 'Translation', configured: true,
+          fields: [
+            { key: 'translation_model', label: 'Translation model', type: 'text', value: String(this.config.translation_model || ''), editable: true },
           ],
         },
         {
@@ -1039,13 +1073,22 @@ export class AppRuntime {
 
   private key(turn: TurnKey): TurnKey { return { sessionId: turn.sessionId, turnId: turn.turnId, generation: turn.generation } }
 
-  private beginTurn(sessionId: string, turnId: string, kind: TurnKind): ActiveTurn {
+  private beginTurn(sessionId: string, turnId: string, kind: TurnKind, heard?: string): ActiveTurn {
+    const speech = this.tts.configured && this.sceneReady
     const turn: ActiveTurn = {
-      sessionId, turnId, generation: ++this.generation, kind, piDone: false, drained: false,
-      speech: this.tts.configured && this.sceneReady, text: '', parser: new PresentationText(), receivedText: false, synthesisStarted: false,
+      sessionId, turnId, generation: ++this.generation, kind, piDone: false, drained: !speech,
+      speech, text: '', script: new ScriptSplitter(), director: null, spoken: 0, receivedText: false, synthesisStarted: false,
       lastEventAt: this.deps.clock.now(),
     }
-    turn.drained = !turn.speech
+    if (speech) {
+      turn.director = new VoiceDirector({
+        direct: request => this.direct(request),
+        release: lines => this.speak(turn, lines),
+        drained: () => this.endSpeech(turn),
+        ...(heard ? { heard } : {}),
+        report: error => console.error('[amadeus-next] voice direction failed:', message(error)),
+      })
+    }
     this.activeTurn = turn
     this.armWatchdog(turn)
     this.markActivity()
@@ -1054,15 +1097,55 @@ export class AppRuntime {
     return turn
   }
 
-  private present(turn: ActiveTurn, value: ReturnType<PresentationText['push']>): void {
+  /** 主模型的中文原样进聊天气泡；要配音时切句交给导演，日语和字幕等导演配好再按序发给场景。 */
+  private present(turn: ActiveTurn, delta: string, final = false): void {
     if (this.activeTurn !== turn) return
-    turn.text += value.display
-    this.emit('chat.token', { session_id: turn.sessionId, turn_id: turn.turnId, kind: turn.kind, token: turn.text })
-    this.voice({ ...this.key(turn), type: 'text', value })
-    if (turn.speech && value.speech) {
+    if (delta) {
+      turn.text += delta
+      this.emit('chat.token', { session_id: turn.sessionId, turn_id: turn.turnId, kind: turn.kind, token: turn.text })
+    }
+    if (!turn.director) {
+      if (delta) this.voice({ ...this.key(turn), type: 'text', value: { text: '', speech: '', cues: [], subtitles: [], display: delta } })
+      return
+    }
+    for (const segment of turn.script.push(delta, final)) if (segment.speak) turn.director.push(segment.text)
+    if (final) turn.director.finish()
+  }
+
+  private async direct(request: DirectionRequest): Promise<DirectedLine[]> {
+    const reply = await this.pi.request('voice.direct', request as unknown as Json)
+    return Array.isArray(reply.lines) ? reply.lines as DirectedLine[] : []
+  }
+
+  private speak(turn: ActiveTurn, lines: Spoken[]): void {
+    if (this.activeTurn !== turn) return
+    for (const line of lines) {
+      const subtitle = plainText(line.zh)
+      // 导演没配出来的句子用中文念：字幕和声音仍然对得上，总比整句沉默、字幕跳过去好。
+      const said = line.jp ?? subtitle
+      const offset = turn.spoken
+      const changed = line.emotion !== undefined && line.emotion !== turn.emotion
+      if (changed) turn.emotion = line.emotion
+      // 语气只在表情变化时按表情补：每句都补会把整段压成同一种语调。
+      const cue = line.voice ? `[${line.voice}]` : changed ? VOICE_FOR_EMOTION[line.emotion!] ?? '' : ''
+      turn.spoken += said.length
+      const value: PresentedText = {
+        text: said, speech: cue + said, display: subtitle,
+        cues: changed ? [{ offset, emotion: line.emotion! }] : [],
+        subtitles: [{ offset, text: subtitle }],
+      }
+      this.voice({ ...this.key(turn), type: 'text', value })
+      if (!turn.speech) continue
       if (!turn.synthesisStarted) { this.tts.start(this.key(turn)); turn.synthesisStarted = true }
       this.tts.push(value.speech)
     }
+  }
+
+  /** 导演放行完最后一句，TTS 才能收尾；在这之前收尾会截掉还没配好的台词。 */
+  private endSpeech(turn: ActiveTurn): void {
+    if (this.activeTurn !== turn || !turn.speech) return
+    if (turn.synthesisStarted) this.tts.finish()
+    else this.voice({ ...this.key(turn), type: 'input-ended' })
   }
 
   private sendChat(params: Json): Json {
@@ -1078,7 +1161,7 @@ export class AppRuntime {
     this.cancelTurn()
     this.floor.preempt()
     this.currentSessionId = sessionId
-    const turn = this.beginTurn(sessionId, turnId, 'user')
+    const turn = this.beginTurn(sessionId, turnId, 'user', text)
     void this.submit(turn, text)
     // 延迟命名：首次发送消息才落时间戳，避免产生大量无内容的幽灵会话。
     const known = this.workerSessions.get(sessionId)
@@ -1164,9 +1247,13 @@ export class AppRuntime {
     switch (event.name) {
       case 'turn.text':
         turn.receivedText = true
-        this.present(turn, turn.parser.push(String(event.delta || '')))
+        this.present(turn, String(event.delta || ''))
         return
       case 'turn.tool':
+        if (event.done !== true && turn.director) {
+          for (const segment of turn.script.flush()) turn.director.push(segment.text)
+          turn.director.pause()
+        }
         this.voice({ ...this.key(turn), type: 'activity', activity: event.done === true ? 'thinking' : 'tool' })
         return
       case 'turn.done':
@@ -1184,15 +1271,13 @@ export class AppRuntime {
   }
 
   private finishTurn(turn: ActiveTurn, fullText: string): void {
-    if (!turn.receivedText && fullText) this.present(turn, turn.parser.push(fullText))
-    this.present(turn, turn.parser.finish())
+    if (!turn.receivedText && fullText) this.present(turn, fullText)
+    this.present(turn, '', true)
     turn.piDone = true
     this.disarmWatchdog()
     this.markActivity()
     this.emit('chat.complete', { session_id: turn.sessionId, turn_id: turn.turnId, kind: turn.kind, full_text: turn.text })
     this.voice({ ...this.key(turn), type: 'activity', activity: 'idle' })
-    if (turn.speech && turn.synthesisStarted) this.tts.finish()
-    else if (turn.speech) this.voice({ ...this.key(turn), type: 'input-ended' })
     this.floor.pump()
   }
 
@@ -1212,6 +1297,7 @@ export class AppRuntime {
   /** 回合提前结束：停掉语音，文本不再继续。 */
   private endTurn(turn: ActiveTurn): void {
     this.disarmWatchdog()
+    turn.director?.abort()
     this.tts.abort()
     turn.piDone = true
     turn.drained = true
@@ -1251,6 +1337,7 @@ export class AppRuntime {
   private cancelTurn(): void {
     const turn = this.activeTurn
     this.activeTurn = null
+    turn?.director?.abort()
     this.disarmWatchdog()
     this.markActivity()
     this.tts.abort()

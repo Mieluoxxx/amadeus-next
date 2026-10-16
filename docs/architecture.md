@@ -43,7 +43,7 @@
 ┌───────────────┴──────────────────────────────▼───────────┐
 │ 主进程 AppRuntime                                          │
 │  ├─ Floor 话筒仲裁（§4）：由回合 / ASR / 重载标志推导状态      │
-│  ├─ 呈现管线：PresentationText → 字幕 + FishTts + 表情     │
+│  ├─ 呈现管线：切句 → 配音导演 → 字幕 + FishTts + 表情      │
 │  ├─ SpeechBridge（Apple Speech helper）                    │
 │  └─ PiHost：worker 命令通道 + 事件订阅 + 自动重拉           │
 └───────────────▲──────────────────────────────┬───────────┘
@@ -356,7 +356,7 @@ pi-worker ── Harness.env(子对话) ── 条目带 target？
 
 | 项 | 约定 |
 | :--- | :--- |
-| 配置 | 设置页“通用 → 远程机器”，存为 `settings.yaml` 的 `remote_targets: [{ name, ssh, workspace, node }]`；设置页是唯一来源。`ssh` 是一整条连接命令（`ssh -p 2222 -i ~/.ssh/k me@host`，或只写 `~/.ssh/config` 里的主机名），按 shell 引号规则拆成参数直接交给 ssh、不经过本机 shell（`sshArguments`）；必须以主机结尾，不能带远程命令，`-N` / `-W` / `-f` / `-n` 这类不开会话的选项直接拒绝。我们的 `-T -o BatchMode=yes …` 放在用户参数之前：ssh 对同一选项取第一次出现的值，`workspace` 缺省 `~`，`node` 缺省 `node`（nvm 之类只在交互 shell 配 PATH 的机器写绝对路径，要求 ≥ 22.19）。主进程整体校验（`remote/targets.ts` 的 `parseTargets`，有错整体拒绝；加载时丢掉手改坏的条目），经环境变量 `AMADEUS_REMOTE_TARGETS`（JSON）传给 worker，变化触发 worker 重载：目标名进 handoff 的 schema，会话内要稳定。卡片上的“测试连接”是 `remote.check`：worker 里的连接池真连一次（部署 runner、确认工作目录），只认已保存的目标 |
+| 配置 | 设置页“通用 → 远程机器”，存为 `settings.yaml` 的 `remote_targets: [{ name, ssh, workspace, node }]`；设置页是唯一来源。`ssh` 是一整条连接命令（`ssh -p 2222 -i ~/.ssh/k me@host`，或只写 `~/.ssh/config` 里的主机名），按 shell 引号规则拆成参数直接交给 ssh、不经过本机 shell（`sshArguments`）；必须以主机结尾，不能带远程命令，`-N` / `-W` / `-f` / `-n` 这类不开会话的选项直接拒绝。我们的 `-T -o BatchMode=yes …` 放在用户参数之前：ssh 对同一选项取第一次出现的值，`workspace` 缺省 `~`，`node` 缺省 `node`（nvm 之类只在交互 shell 配 PATH 的机器写绝对路径，要求 ≥ 22.19）。主进程整体校验（`remote/targets.ts` 的 `parseTargets`，有错整体拒绝；加载时丢掉手改坏的条目），经环境变量 `AMADEUS_REMOTE_TARGETS`（JSON）传给 worker，变化经 `config.apply` 热更新：连接池保留没变的机器、断开删掉或改过的，handoff 扩展随之重建（目标名在它的 schema 里），已打开会话的下一次请求就用新 schema。卡片上的“测试连接”是 `remote.check`：worker 里的连接池真连一次（部署 runner、确认工作目录），只认已保存的目标 |
 | 部署 | runner 由 `vite/runner.config.mjs` 打成单文件（`dist/runner/amadeus-runner.mjs`，除 `node:` 外无依赖），按内容哈希命名为 `~/.amadeus/runner/<hash>.mjs`。连接前一次 ssh：文件已在就直接退出，否则从 stdin 写入。两端永远是同一份代码，不需要版本协商 |
 | 启动 | `ssh -T -o BatchMode=yes … <用户的参数与主机> "exec sh -lc 'exec <node> \"$HOME/.amadeus/runner/<hash>.mjs\" --stdio'"`。只用 `sh -c '…'` 这种 bash / zsh / fish 都认的写法；`BatchMode` 意味着必须用密钥或 agent 认证，不会弹密码 |
 | 协议 | `src/main/durable/remote/protocol.ts`。一行一帧：调用 `{id, method, cwd?, handle?, args, aborted?}`、应答 `{id, value \| thrown}`、事件 `{event: output \| watch, call, payload}`、取消 `{cancel}`、握手 `{hello: {protocol, os, arch, home, node}}`。Uint8Array 与 `FileError` / `ExecutionError` 跨 JSON 往返时重建成同一个类。reader / watcher 以句柄表示。握手前的坏行忽略（登录脚本的 echo），之后的坏行断开 |
@@ -513,11 +513,21 @@ pi-worker 事件桥
 
 ```text
 watchEvents（worker） ─ 文本差量 ─► 清洗器（scrub 记忆和结果标签、写成文本的工具调用）─► 端口事件 turn.text
-主进程 ─► PresentationText ─► 字幕（chat.token）+ FishTts + 表情
+主进程 ─► 聊天气泡（chat.token，中文原文）
+       └► ScriptSplitter 切句 ─► VoiceDirector 攒批 ─► worker voice.direct（导演模型）─► 日语 + 表情 + 语气
+                                                                     └► FishTts + 字幕（中文）+ 表情，按句对齐
 ```
 
+**为什么由导演配音**（2026-10-16 起，取代主模型自己写 `<zh>…</zh><jp>…</jp>` 与 `[EMO …]`）：原设计让主模型在一条流里同时守人设、双语成对、表情、语气、可念性五套协议，还要先写译文再写原文；格式错误频繁，长期处在"写标签"状态也让它把工具调用写成正文。现在主模型只写中文（规则在 `durable/role.ts` 的 PROTOCOL，用户改不掉），日语口吻写在 `VOICE.md`，只给导演看。
+
+- 切句（`src/main/voice/splitter.ts`）：按句末标点与换行切；第一句满 12 字遇逗号就送，抢开口时间；代码块与表格只显示不配音。
+- 调度（`src/main/voice/director.ts`）：没有请求在跑时来一句送一句，有请求在跑时攒批（3 句或 60 字），最多两批并发，结果按序放行；主模型调工具时手头半句立即送出。导演放行完最后一句，TTS 才收尾。
+- 导演（`src/main/durable/voice.ts`）：默认用对话模型、不开思考；设置页的翻译模型（`translation_model`）可以换成更快的模型。回复是 JSON，按 id 一一对应，表情与语气只认枚举。
+- 降级：导演失败或漏句时，那几句直接用中文念，字幕与声音仍然对得上；一个回合只记一次日志。
+- 旧会话：带双语标签的旧回答在发请求前（`toolText.ts` 的 beforeRequest）和界面历史里都还原成中文，免得模型照着旧格式写；旧的 PRESENTATION.md 不再读取。
+
 - 事件桥在 worker 内长期订阅已打开会话的主对话；用 `submission` 事件里的 `requestId`（`turn:` / `report:` 前缀）把 durable 的 run 对应到主进程的 `TurnKey`。
-- 文本按 `partialIntervalMs` 的批次到达，不是逐 token；`PresentationText` 对分片大小没有假设。
+- 文本按 `partialIntervalMs` 的批次到达，不是逐 token；切句器对分片大小没有假设。
 
 **durable 事件 → 端口事件**（源码核实：`dist/harness/events.js`）。同一个批次里，`run_end` 排在 `submission` **之前**，`run_start` 排在 `submission` **之后**，所以按批处理：先扫一遍本批的 `submission` 记录，再处理其余事件。
 
@@ -544,11 +554,22 @@ watchEvents（worker） ─ 文本差量 ─► 清洗器（scrub 记忆和结�
 
 **界面历史**（`session.load` 的 `messages`）：
 - 来源是根对话的 `entries({ order: "ascending" })` 分页读取，**不用 `viewState()`**：`viewState()` 只含压缩头之后的活动上下文，历史会缺。
-- `pi.user` → 用户气泡；`entryId` 在 `delivered` 里的 → `card`（`{ taskId, title, status, summary, round, progress?, question? }`，较早轮次的卡片从当时的汇报文本还原）。`pi.assistant` → 取 text 块，同一个 run 内的多条合并为一个气泡，**经 `PresentationText` 取 `display` 通道**，并且先过一次清洗器（写成文本的工具调用与内部围栏不进历史，与实时链路是同一只）——原因：模型原文带 `<zh>` / `<jp>` 与 `[EMO ...]` 标签，实时的 `chat.token` 也是 `display`，历史必须一致。
+- `pi.user` → 用户气泡；`entryId` 在 `delivered` 里的 → `card`（`{ taskId, title, status, summary, round, progress?, question? }`，较早轮次的卡片从当时的汇报文本还原）。`pi.assistant` → 取 text 块，同一个 run 内的多条合并为一个气泡，先过一次清洗器（写成文本的工具调用与内部围栏不进历史，与实时链路是同一只），再把旧格式的 `<zh>` / `<jp>` 与 `[EMO ...]` 还原成中文——实时的 `chat.token` 是中文原文，历史必须一致。
 - `stopReason` 为 `aborted`、`error` 的 assistant 条目不显示：与现状一致（被打断的半截回答从来不进历史），也与 durable 一致（这类消息不进模型上下文，模型下一轮看不到它）。`pi.system`、`pi.tool-result`、`pi.compaction`、`amadeus.*` 不显示。
 - `id` 取 `entryId`（权威 id）；`turnId` 只给进行中的回合，历史条目不带。渲染进程的 `reconcileLoadedMessages` 靠它避免重复。
 
 ---
+
+## 设置的热更新
+
+（2026-10-16 起）设置页里由 worker 消费的设置——代理、Jev、skills / MCP 来源、委托模型、翻译模型、远程机器——统一以环境变量传递（键表在 `src/shared/workerSettings.ts`）。fork 时作为初值；之后主进程在设置变化时把整份快照经 `config.apply` 下发，worker 写进 `process.env` 并刷新启动时缓存的部分，不再重启 worker：
+
+- 每次使用时现读 `process.env` 的（Jev、翻译模型、委托模型、bash 与 MCP 的白名单变量、`fetchGuard` 的代理判断）写完即生效；
+- 代理：worker 的 `fetch` 统一走 npm undici，`installProxy` 按当前 env 换全局 dispatcher（Node 的 `NODE_USE_ENV_PROXY` 只在启动时读一次）；
+- skills / MCP 来源：原地改 skill 目录与 MCP 配置文件，配置变了的 MCP 连接立即断开；
+- 远程机器：`TargetPool.configure` 后重建 handoff 扩展，registry 按名字原地替换。
+
+`config.apply` 失败时：worker 不在（`closed` / `worker_exit`）就什么也不做，下次 fork 读的就是新值；其它失败说明设置停在半路，退回到替换 worker。
 
 ## 5. 记忆
 
@@ -564,7 +585,7 @@ watchEvents（worker） ─ 文本差量 ─► 清洗器（scrub 记忆和结�
 | 注入方式 | 自定义条目；重新冻结用 `replace` + `omit`（已核实） |
 | 重放、基线 | 由 durable 条目和 `app.memory-baseline` 承担 |
 | 设置页编辑 | 主进程 → worker 的 `memory.*` 命令 → MemoryStore；进行中的会话下一轮写入增量条目。`memory.open-folder` 由主进程自己处理（`shell.openPath`），不转发 |
-| 开关与召回模式 | 命令 `memory.configure`，热生效；主进程持久化，worker 每次 `ready` 后由主进程补发一次。**不经 `piEnv()`**：环境变量只在 fork 时读，改一次就要重建 worker（`setConfig` 会按 `piEnv()` 的差异触发 `pi-worker` 重载） |
+| 开关与召回模式 | 命令 `memory.configure`，热生效；主进程持久化，worker 每次 `ready` 后由主进程补发一次。**不经 `piEnv()`**：它们有自己的命令，worker 每次就绪后由主进程补发 |
 | 账本 | `rejections`、`audit` 不可重建（§0 原则 3），备份与"清空记忆"都要把它们算进去 |
 | 读取 | 只靠注入，不提供读取类工具 |
 | 删除会话 | 会话目录整体删除，注入记录随之消失；核心记忆 Markdown 不受影响 |
@@ -761,7 +782,7 @@ A2 和 A3 可以并行。
 | 新建会话 | 立即写入列表 | 懒创建：发第一条消息时才建目录与库；从未使用的空会话在下次启动时清掉 |
 | 会话标题 | 首条消息后写时间戳标题，之后不再变 | 首条消息后是占位标题；第 1 次主人发言后自动起名 `MMDD｜话题`，之后每 5 次刷新一次；主人改过的名字不再被覆盖（§2.3） |
 | 旧会话 | 可继续 | 不再出现：`amadeus-next-sessions.json` 与旧 jsonl 都不再读取（2026-10-11 删掉只读通道，§12 #2） |
-| 界面历史 | `SessionStore` 存的字幕文本 | 从 durable 条目重建，assistant 文本经 `PresentationText` 取字幕通道 |
+| 界面历史 | `SessionStore` 存的字幕文本 | 从 durable 条目重建，assistant 文本即中文原文（旧格式还原成中文） |
 | worker 内存 | — | 与 `pi-coding-agent` 同进程时仅多约 +4MB（TypeBox 已被加载；README 的 23MB 不适用于本项目）；每个空闲会话库另加约 0.3MB 与 3 个 fd |
 | 打断 | `session.abort()`，被打断的半截回答不进历史 | `conversation.abort()`：撤回排队输入，半截回答落成 `stopReason: "aborted"` 的 assistant 条目；它不进模型上下文，界面历史也不显示（与现状一致） |
 | worker 崩溃 | 当前回合报错；下一条命令才惰性重拉 | 主动重拉；遗留 run 被中止；子代理与汇报不丢 |

@@ -1,12 +1,13 @@
 import type { Message } from '@earendil-works/pi-ai'
 import { GenerationTask, hook, type ConversationId, type HookRegistration } from '@earendil-works/pi-durable'
+import { legacyScript } from '../../shared/presentation.ts'
 import { TagScrubber, toolTextIn } from './scrub.ts'
 
 /** 纠正消息的开头；历史据此把它藏起来，不当作主人的发言。 */
 export const TOOL_TEXT_NOTICE = '[System note: tool call written as text]'
 
 const notice = (tag: string): string => `${TOOL_TEXT_NOTICE}
-Your last reply wrote <${tag}> as text. Text tags never run anything, and that part was hidden from the user. If you meant to use a tool, call it now through tool calling. Do not repeat what you already said; after the call, add at most one short line in the usual subtitle and speech format.`
+Your last reply wrote <${tag}> as text. Text tags never run anything, and that part was hidden from the user. If you meant to use a tool, call it now through tool calling. Do not repeat what you already said; after the call, add at most one short line.`
 
 export const isToolTextNotice = (message: Message | undefined): boolean => {
   if (message?.role !== 'user') return false
@@ -19,20 +20,23 @@ const scrubbed = (text: string): string => { const scrubber = new TagScrubber();
 
 /**
  * 历史里写成文本的工具调用会原样回放给模型，变成自我示范：一次泄漏之后它会照着继续写（实际会话里 handoff、remember 先后都这样丢了）。
- * 所以发请求前从 assistant 正文里剔掉它们，只改本次请求、不改存储；变换是确定的，缓存前缀不受影响。
- * 纠正后的那次重试保留上一条回答原文，否则模型看不到自己写了什么。
+ * 导演配音之前的旧回答带 `<zh>/<jp>` 双语标签，同理会把模型带回旧格式，所以一并还原成纯中文。
+ * 只改本次请求、不改存储；变换是确定的，缓存前缀不受影响。纠正后的那次重试保留上一条回答原文，否则模型看不到自己写了什么。
  */
-function withoutToolText(messages: readonly Message[], keep: Message | undefined): readonly Message[] | undefined {
+function rewriteHistory(messages: readonly Message[], keep: Message | undefined): readonly Message[] | undefined {
   let changed = false
   const result = messages.map(message => {
     if (message.role !== 'assistant' || message === keep) return message
-    if (!message.content.some(block => block.type === 'text' && toolTextIn(block.text))) return message
-    changed = true
-    const content = message.content.flatMap(block => {
-      if (block.type !== 'text' || !toolTextIn(block.text)) return [block]
-      const text = scrubbed(block.text)
+    let touched = false
+    const content = message.content.flatMap((block): typeof message.content => {
+      if (block.type !== 'text') return [block]
+      const text = legacyScript(toolTextIn(block.text) ? scrubbed(block.text) : block.text)
+      if (text === block.text) return [block]
+      touched = true
       return text.trim() ? [{ ...block, text }] : []
     })
+    if (!touched) return message
+    changed = true
     return { ...message, content }
   })
   return changed ? result : undefined
@@ -53,7 +57,7 @@ export function toolTextHook(): HookRegistration {
       const notice = isToolTextNotice(last)
       if (notice) retried.set(api.conversationId, true)
       else retried.delete(api.conversationId)
-      const messages = withoutToolText(request.messages, notice ? reversed.find(message => message.role === 'assistant') : undefined)
+      const messages = rewriteHistory(request.messages, notice ? reversed.find(message => message.role === 'assistant') : undefined)
       return messages ? { messages } : undefined
     },
     onYield: (answer, api) => {

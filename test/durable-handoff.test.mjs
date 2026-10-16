@@ -164,7 +164,7 @@ test('P4: handoff is called first and the model speaks after it returns; the mai
     assert.equal(calls.main.length, 1)
     assert.equal(calls.after.length, 1, 'Like read or bash: the tool result comes back and the model answers after it')
     assert.deepEqual(toolNames(calls.main[0]).sort(), ['handoff', 'handoff_cancel', 'handoff_send', 'handoff_status'])
-    assert.deepEqual(await toolResultTexts(root), ['Accepted as t_01. The result will come back to the conversation automatically; do not wait for it and do not submit it again. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.'])
+    assert.deepEqual(await toolResultTexts(root), ['Accepted as t_01. The result will come back to the conversation automatically; do not wait for it and do not submit it again. Now tell the user in a line or two; never guess the result.'])
 
     // 子代理仍在运行时主对话照常聊天；子代理没有委托工具，也就不能递归委托。
     assert.equal((await say(root, '你在吗')).status, 'done')
@@ -239,7 +239,7 @@ test('P6: aborting the main conversation leaves the child running; handoff_cance
     assert.equal((await itemOf(harness)).status, 'running')
 
     assert.equal((await say(root, '算了，不用查了')).status, 'done')
-    assert.deepEqual((await toolResultTexts(root)).at(-1), 'Cancellation of t_01 requested; it will stop shortly and will not report back. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.')
+    assert.deepEqual((await toolResultTexts(root)).at(-1), 'Cancellation of t_01 requested; it will stop shortly and will not report back. Now tell the user in a line or two; never guess the result.')
     await until(async () => (await itemOf(harness)).status === 'cancelled', 'cancelled')
     const submission = await submissionByRequest(harness, item.child, 'handoff:t_01')
     assert.equal(submission.status, 'unanswered')
@@ -345,7 +345,7 @@ test('P5b: killing the process right after the handoff commit and restarting cre
       assert.deepEqual(await toolResultTexts(second.root), [], 'the tool result was never written')
       second.harness.resume()
       assert.equal((await (await second.harness.submission(turn.id, ctx)).wait(ctx)).status, 'done')
-      assert.deepEqual(await toolResultTexts(second.root), ['Accepted as t_01. The result will come back to the conversation automatically; do not wait for it and do not submit it again. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.'])
+      assert.deepEqual(await toolResultTexts(second.root), ['Accepted as t_01. The result will come back to the conversation automatically; do not wait for it and do not submit it again. Now tell the user in a line or two; never guess the result.'])
       await until(async () => (await pendingReports(second.harness, second.root.id, ctx)).length === 1, 'report after restart')
       await sleep(100)
       const handoffs = await handoffsOf(second.harness)
@@ -689,9 +689,9 @@ test('concurrency: the third task queues until a slot frees; cancelling a queued
     harness.resume()
     for (const name of ['甲', '乙', '丙']) await say(root, `查${name}`)
     assert.deepEqual((await toolResultTexts(root)).slice(0, 3), [
-      'Accepted as t_01. The result will come back to the conversation automatically; do not wait for it and do not submit it again. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.',
-      'Accepted as t_02. The result will come back to the conversation automatically; do not wait for it and do not submit it again. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.',
-      'Accepted as t_03; 2 task(s) are ahead of it, so it will start shortly. The result will come back to the conversation automatically. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.',
+      'Accepted as t_01. The result will come back to the conversation automatically; do not wait for it and do not submit it again. Now tell the user in a line or two; never guess the result.',
+      'Accepted as t_02. The result will come back to the conversation automatically; do not wait for it and do not submit it again. Now tell the user in a line or two; never guess the result.',
+      'Accepted as t_03; 2 task(s) are ahead of it, so it will start shortly. The result will come back to the conversation automatically. Now tell the user in a line or two; never guess the result.',
     ])
     await until(() => calls.child.length === 2, 'two children running')
     await sleep(150)
@@ -752,7 +752,7 @@ test('handoff validation, replay by callId, and brief deduplication', async () =
     assert.match(text(await handoff(ok, 'call-A', 1)), /^Accepted as t_01\./)
     // 不同调用、同 kind 与 brief：查重。provider 的 callId 在别的回合里重复时，工具任务 id 不同，不会被当成重放。
     const duplicate = await handoff({ ...ok, title: '换个标题', brief: `\n  ${ok.brief.replace(' ', ' \n  ')}  ` }, 'call-A', 2)
-    assert.equal(text(duplicate), 'The same task is already in progress (t_01); it was not submitted again. Now tell the user in a line or two, in the usual subtitle and speech format; never guess the result.')
+    assert.equal(text(duplicate), 'The same task is already in progress (t_01); it was not submitted again. Now tell the user in a line or two; never guess the result.')
     assert.equal(duplicate.control, undefined)
     assert.equal((await handoffsOf(harness)).items.length, 1)
     assert.equal((await handoffsOf(harness)).seq, 1)

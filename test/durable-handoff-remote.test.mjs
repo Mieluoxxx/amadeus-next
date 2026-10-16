@@ -257,3 +257,21 @@ test('a short outage reconnects and later tool calls use the new connection', ()
   assert.equal(pool.offlineSince('dev'), undefined)
   assert.ok(loop.state.connects >= 2)
 }))
+
+test('reconfiguring the pool keeps unchanged machines connected and drops removed or edited ones', () => withRemote(async ({ dirs, pool, loop }) => {
+  const dev = { name: 'dev', ssh: 'dev', workspace: dirs.workspace, node: 'node' }
+  const other = { name: 'other', ssh: 'other', workspace: dirs.workspace, node: 'node' }
+  pool.configure([dev, other])
+  await pool.env('dev', dirs.workspace)
+  await pool.env('other', dirs.workspace)
+  assert.equal(loop.state.connects, 2)
+  pool.configure([{ ...other, node: '/opt/node' }, dev])
+  assert.deepEqual(pool.targets.map(target => target.name), ['other', 'dev'], 'the order follows the settings')
+  await pool.env('dev', dirs.workspace)
+  assert.equal(loop.state.connects, 2, 'an unchanged machine keeps its connection')
+  await pool.env('other', dirs.workspace)
+  assert.equal(loop.state.connects, 3, 'an edited machine reconnects with its new settings')
+  pool.configure([dev])
+  assert.equal(pool.has('other'), false)
+  assert.match((await pool.checkDir('other', undefined)).detail, /not configured/)
+}))

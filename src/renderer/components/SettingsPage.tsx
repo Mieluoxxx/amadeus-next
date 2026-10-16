@@ -9,15 +9,8 @@ interface Props {
   subscribe: (method: string, fn: (p: Record<string, unknown>) => void) => () => void
 }
 
-// Which settings card holds each remote recognizer. They differ in protocol — the
-// OpenAI-compatible slot posts multipart to /audio/transcriptions, while MiMo posts
-// input_audio to /chat/completions — so one shared card cannot describe both.
-const ASR_SETTINGS_GROUP: Record<string, string> = {
-  openai_compatible: 'asr_remote',
-  mimo: 'asr_mimo',
-}
-
 const DELEGATION_MODEL_KEY = 'delegation_model'
+const TRANSLATION_MODEL_KEY = 'translation_model'
 // 子代理相关的字段在界面上归到模型配置页，按此顺序展示。
 const SUBAGENT_KEYS = [DELEGATION_MODEL_KEY, 'report_proactive', 'skills_mode', 'mcp_mode']
 const CAPABILITY_MODE_KEYS = ['skills_mode', 'mcp_mode']
@@ -362,8 +355,8 @@ export default function SettingsPage({ send, subscribe }: Props) {
   const voiceConfiguration = asConfigurationGroups(config.voice_configuration)
   const generalConfiguration = asConfigurationGroups(config.general_configuration)
   const memoryGroups = generalConfiguration.filter(group => group.id === 'memory')
-  // 委托模型的候选就是对话用的那份模型列表；主进程只知道当前值，所以下拉在这里补全。
-  const delegationOptions = (current: string): ComboOption[] => {
+  // 委托模型和翻译模型的候选就是对话用的那份模型列表；主进程只知道当前值，所以下拉在这里补全。
+  const modelOptions = (current: string): ComboOption[] => {
     const options: ComboOption[] = [{ value: '', label: t('settings.delegation_model.same') }, ...piModels]
     // 已保存的模型不在列表里（凭据被移除、列表还没回来）时保留它，否则下拉框会悄悄显示成"与对话模型相同"。
     if (current && !piModels.some(option => (typeof option === 'string' ? option : option.value) === current)) options.push({ value: current, label: current })
@@ -374,48 +367,22 @@ export default function SettingsPage({ send, subscribe }: Props) {
   const subagentFields = SUBAGENT_KEYS.flatMap(key => {
     const field = generalFields.find(item => item.key === key)
     if (!field) return []
-    if (key === DELEGATION_MODEL_KEY) return [{ ...field, type: 'select' as const, options: delegationOptions(String(field.value ?? '')) }]
+    if (key === DELEGATION_MODEL_KEY) return [{ ...field, type: 'select' as const, options: modelOptions(String(field.value ?? '')) }]
     // 主进程只下发取值；选项文案按界面语言在这里补。
     if (CAPABILITY_MODE_KEYS.includes(key)) return [{ ...field, options: (['isolated', 'shared'] as const).map(value => ({ value, label: t(`settings.capability_mode.${value}`) })) }]
     return [field]
   })
+  // 翻译模型和对话模型是一类选择，归到模型配置页。
+  const translationField = generalFields.find(field => field.key === TRANSLATION_MODEL_KEY)
   const generalGroups = generalConfiguration
     .filter(group => group.id !== 'memory')
-    .map(group => ({ ...group, fields: group.fields.filter(field => !SUBAGENT_KEYS.includes(field.key)) }))
-  const asrBackendId = val('asr_backend', 'qwen3_asr')
-  const asrBackends = Array.isArray(config.asr_backends)
-    ? config.asr_backends as Array<{ id: string; label: string; deployment?: string }>
-    : []
-  // Remote backends each own a card; anything else falls back on the registry's
-  // own deployment field, so an unrecognised remote plugin still lands somewhere.
-  // The embedded fallback covers the first render, before `asr_backends` arrives.
-  const asrGroupId = ASR_SETTINGS_GROUP[asrBackendId]
-    ?? (asrBackends.find(backend => backend.id === asrBackendId)?.deployment === 'remote'
-      ? 'asr_remote'
-      : 'asr_local')
-  // Labels come from a dedicated prefix: the shared `settings.option.*` namespace
-  // is also read by the TTS backend select, which reuses two of these ids.
-  const asrBackendOptions: ComboOption[] = (asrBackends.length
-    ? asrBackends.map(backend => backend.id)
-    : ['qwen3_asr', 'sense_voice', 'openai_compatible', 'mimo']
-  ).map(id => ({ value: id, label: translateDynamic(locale, 'settings.asrBackend', id, id) }))
-  // Runs on this machine for every backend, the remote API included, so it never
-  // follows the selected recognizer.
-  const captureGroups = voiceConfiguration.filter(group => group.id === 'conversation_asr')
-  const activeAsrGroups = voiceConfiguration.filter(group => group.id === asrGroupId)
-  const wakeGroups = voiceConfiguration.filter(group => ['wake_asr', 'acoustic_pipeline'].includes(group.id))
-  const activeOutputGroups = voiceConfiguration.filter(group => (
-    group.id === 'speech_synthesis'
-    || (['tts_embedded_v3', 'tts_remote', 'tts_mimo', 'voice_reference_profile'].includes(group.id) && group.active)
-  ))
-  const otherOutputGroups = voiceConfiguration.filter(group => (
-    ['tts_embedded_v3', 'tts_remote', 'tts_mimo', 'voice_reference_profile'].includes(group.id)
-    && !group.active
-  ))
+    .map(group => ({ ...group, fields: group.fields.filter(field => !SUBAGENT_KEYS.includes(field.key) && field.key !== TRANSLATION_MODEL_KEY) }))
+  const asrGroups = voiceConfiguration.filter(group => group.id === 'asr_local')
+  const outputGroups = voiceConfiguration.filter(group => group.id === 'speech_synthesis')
   const needsSetup: Record<SectionId, boolean> = {
     general: generalGroups.some(group => !groupOk(group)),
     models: false,
-    voice: [...activeAsrGroups, ...captureGroups, ...wakeGroups, ...activeOutputGroups].some(group => !groupOk(group)),
+    voice: [...asrGroups, ...outputGroups].some(group => !groupOk(group)),
     // Jev 缺省时记忆判定静默跳过，属于可选增强，不在标签上提示需要设置。
     memory: false,
   }
@@ -472,7 +439,6 @@ export default function SettingsPage({ send, subscribe }: Props) {
           </Card>
           <RemoteTargetsCard targets={remoteTargets} onSave={saveTargets} send={send} reloading={reloading} />
           <Card title={t('settings.character.title')}>
-            <p className="settings-card-note">{t('settings.character.note')}</p>
             <button type="button" className="crt-button" data-variant="primary" disabled={emoteBusy} onClick={() => void installEmote()}>
               {emoteBusy ? t('settings.character.installing') : t('settings.character.choose')}
             </button>
@@ -495,9 +461,13 @@ export default function SettingsPage({ send, subscribe }: Props) {
               </Row>
             ) : null}
           </Card>
+          {translationField ? (
+            <Card title={t('settings.translation.title')}>
+              <StartupFieldRow field={{ ...translationField, type: 'select', options: modelOptions(String(translationField.value ?? '')) }} desktop={desktop} onSave={handleStartupSave} />
+            </Card>
+          ) : null}
           {subagentFields.length ? (
             <Card title={t('settings.subagent.title')}>
-              <p className="settings-card-note">{t('settings.subagent.note')}</p>
               {subagentFields.map(field => <StartupFieldRow key={field.key} field={field} desktop={desktop} onSave={handleStartupSave} />)}
             </Card>
           ) : null}
@@ -508,25 +478,11 @@ export default function SettingsPage({ send, subscribe }: Props) {
           <>
           <div className="settings-subsection" data-subsection="asr">
             <h3 className="settings-subheading">{t('settings.section.asr')}</h3>
-            {/* A one-entry backend list is not a choice; the active recognizer's card already names it. */}
-            {asrBackendOptions.length > 1 ? (
-              <Card>
-                <Row label={t('settings.label.asr_mode')}>
-                  <ComboSelect label={t('settings.label.asr_mode')} value={asrBackendId} onChange={value => void handleChange('asr_backend', value)} options={asrBackendOptions} />
-                </Row>
-              </Card>
-            ) : null}
-            <GroupCards groups={[...activeAsrGroups, ...captureGroups, ...wakeGroups]} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
+            <GroupCards groups={asrGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
           </div>
           <div className="settings-subsection" data-subsection="tts">
             <h3 className="settings-subheading">{t('settings.section.tts')}</h3>
-            <GroupCards groups={activeOutputGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_active_connection')} />
-            {otherOutputGroups.length ? (
-              <details className="settings-advanced settings-card">
-                <summary>{t('settings.other_voice_backends')}</summary>
-                <GroupCards groups={otherOutputGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_user_settings')} />
-              </details>
-            ) : null}
+            <GroupCards groups={outputGroups} desktop={desktop} onSave={handleStartupSave} empty={t('settings.note.no_active_connection')} />
           </div>
           </>
         ))}

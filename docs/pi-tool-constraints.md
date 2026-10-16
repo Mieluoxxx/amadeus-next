@@ -809,7 +809,7 @@ Write one line of at most 200 characters. Call it when you move on to a new step
 
 #### 委托专用模型
 
-设置项 `delegation_model`（`provider/model`，空 = 与对话模型相同）。worker 启动时经环境变量 `AMADEUS_DELEGATION_MODEL` 读入（变化触发 pi-worker 重载，因为扩展在 worker 启动时构造）：`delegationModelFromEnv(env)` 只在第一个斜杠处切（模型 id 里可以有斜杠），格式不对一律当作没设置；`DurableRuntime` 构造时用它填 `HandoffOptions.delegationModel`（显式传入的优先），再经 `createHandoffExtensions` 交给 `handoff`。
+设置项 `delegation_model`（`provider/model`，空 = 与对话模型相同）。经环境变量 `AMADEUS_DELEGATION_MODEL` 传入，变化经 `config.apply` 热更新（2026-10-16 起，不再重载 pi-worker）：`delegationModelFromEnv(env)` 只在第一个斜杠处切（模型 id 里可以有斜杠），格式不对一律当作没设置；`DurableRuntime` 把它包成函数填进 `HandoffOptions.delegationModel`（显式传入的优先），`handoff` 每次受理现读。
 
 `handoff` 在 commit 之前（异步，不能放进 commit）调用 `resolveDelegation`：模型必须在目录里（`models.getModel`）且有凭据（在 `models.getAvailable()` 里）才用，可用则创建子对话时 `configure` 该模型；主对话的思考档位该模型不支持时改用 `medium`（没有则取其第一个档位），支持则沿用复制来的档位。不可用，或检查本身出错，一律回退到对话模型（任务归属的子对话创建时复制主对话的 agent），并在条目的 `failure` 写一条备注（`reason: 'model_fallback'`，`detail` 为下面三句之一）。这条 `failure` 不表示任务失败：任务照常进行，状态不变；任务结束为 `done` 时备注保留；结束为 `failed` / `timeout` 时备注并入新的 `detail`（`<备注>; <原因>`）；新一轮开始时也保留。`detail` 只给任务卡片展开，不进围栏。续接的新一轮沿用同一个子对话，也就沿用同一个模型。
 
@@ -1126,7 +1126,7 @@ Open issues: what failed or is left, "none" if empty
 
 代码在 `handoff/skills.ts`、`handoff/mcp/{config,manager,extension}.ts`，挂载在 `extension.ts` 的 `extrasFor`，开关解析在 `durable/worker.ts` 的 `capabilitiesFromEnv`。
 
-- **来源与开关**：设置页「子代理」卡片的 `skills_mode` / `mcp_mode`，各自 `isolated`（默认）或 `shared`；值为 `shared` 时 `piEnv()` 才输出 `AMADEUS_SKILLS_MODE` / `AMADEUS_MCP_MODE`，`fork` 时总被显式设置（空串 = 隔离），继承来的同名变量不生效；变化即重建 worker。另传 `AMADEUS_HOME_DIR`（`~/.amadeus`）与 `AMADEUS_PI_SHARED_DIR`（`~/.pi/agent` 或 `AMADEUS_PI_CREDENTIALS_DIR`）；没有 `AMADEUS_HOME_DIR` 时两项都不挂。
+- **来源与开关**：设置页「子代理」卡片的 `skills_mode` / `mcp_mode`，各自 `isolated`（默认）或 `shared`；值为 `shared` 时 `piEnv()` 才输出 `AMADEUS_SKILLS_MODE` / `AMADEUS_MCP_MODE`，`fork` 时总被显式设置（空串 = 隔离），继承来的同名变量不生效；变化经 `config.apply` 原地刷新 skill 目录与 MCP 配置文件，不重建 worker。另传 `AMADEUS_HOME_DIR`（`~/.amadeus`）与 `AMADEUS_PI_SHARED_DIR`（`~/.pi/agent` 或 `AMADEUS_PI_CREDENTIALS_DIR`）；没有 `AMADEUS_HOME_DIR` 时两项都不挂。
 
 | | 隔离 | 共享（按优先级） |
 | :--- | :--- | :--- |

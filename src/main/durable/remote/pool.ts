@@ -50,6 +50,8 @@ type Slot = {
   lastUsed: number
   attempt: number
   retry?: ReturnType<typeof setTimeout>
+  /** 设置里删掉或改过的目标：还在路上的连接落地后直接关掉，也不再重连。 */
+  dropped?: true
 }
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error))
@@ -134,16 +136,38 @@ export class TargetPool {
    * 这次断开不记为离线，否则恢复后的 Reporter 会把一段计划内的停机当成目标掉线。
    */
   close(): void {
-    for (const slot of this.slots.values()) {
-      if (slot.retry) clearTimeout(slot.retry)
-      slot.retry = undefined
-      slot.lastUsed = 0
-      if (slot.connection) this.retired.add(slot.connection)
-      slot.connection?.close()
-      slot.link?.close()
-      slot.connection = undefined
-      slot.link = undefined
+    for (const slot of this.slots.values()) this.disconnect(slot)
+  }
+
+  /**
+   * 设置页改了远程机器：没变的目标保留连接，删掉或改过的断开（在跑的远程命令随之失败），新目标等用到时再连。
+   * 顺序跟设置走，handoff 的 target 列表按它生成。
+   */
+  configure(targets: readonly RemoteTarget[]): void {
+    const previous = new Map(this.slots)
+    this.slots.clear()
+    for (const target of targets) {
+      const slot = previous.get(target.name)
+      if (slot && JSON.stringify(slot.target) === JSON.stringify(target)) {
+        this.slots.set(target.name, slot)
+        previous.delete(target.name)
+      } else this.slots.set(target.name, { target, lastUsed: 0, attempt: 0 })
     }
+    for (const slot of previous.values()) {
+      slot.dropped = true
+      this.disconnect(slot)
+    }
+  }
+
+  private disconnect(slot: Slot): void {
+    if (slot.retry) clearTimeout(slot.retry)
+    slot.retry = undefined
+    slot.lastUsed = 0
+    if (slot.connection) this.retired.add(slot.connection)
+    slot.connection?.close()
+    slot.link?.close()
+    slot.connection = undefined
+    slot.link = undefined
   }
 
   /** 远程路径一律 POSIX；`~` 按 runner 报告的 home 展开，本机的 path 模块在 Windows 上会拼出反斜杠，所以用 posix。 */
@@ -205,6 +229,11 @@ export class TargetPool {
       link.close()
       throw new Error(`workspace ${target.workspace} on ${target.name} is not a usable directory${info.ok ? '' : `: ${info.error.message}`}`)
     }
+    if (slot.dropped) {
+      connection.close()
+      link.close()
+      throw new Error(`remote target ${target.name} is no longer configured`)
+    }
     slot.connection = connection
     slot.link = link
     slot.offlineSince = undefined
@@ -227,7 +256,7 @@ export class TargetPool {
   }
 
   private scheduleRetry(slot: Slot): void {
-    if (slot.retry || slot.connecting) return
+    if (slot.retry || slot.connecting || slot.dropped) return
     if (this.now() - slot.lastUsed > RETRY_WINDOW_MS) return
     const base = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** slot.attempt)
     slot.attempt += 1

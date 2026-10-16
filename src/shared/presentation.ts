@@ -16,12 +16,15 @@ const VOICE_TAG = /^\[[a-z][a-z' -]{0,39}\]/i
 const VOICE_TAG_PREFIX = /^\[[a-z' -]{0,40}$/i
 const VOICE_TAGS = /\[[a-z][a-z' -]{0,39}\](?!\()/gi
 // 模型只标了表情时按表情补一个语气；neutral 不补，否则长回复每句都会被压成同一种平淡语调。
-const VOICE_FOR_EMOTION: Partial<Record<Emotion, string>> = {
+export const VOICE_FOR_EMOTION: Partial<Record<Emotion, string>> = {
   smile: '[happy]', thinking: '[hesitant]', serious: '[serious]', sad: '[sad]',
   shy: '[embarrassed]', surprise: '[surprised]', angry: '[angry]',
 }
 
-/** 流式双语分词器：隔离中文字幕与日文口播内容，并维持跨分片代码块状态。 */
+/**
+ * 旧格式的解码器：导演配音之前，模型自己写 `<zh>…</zh><jp>…</jp>` 和 `[EMO …]`。
+ * 现在只用来把旧会话的回答还原成纯中文——界面历史要显示它，发给模型的历史也要换掉，否则模型会照着旧格式继续写。
+ */
 export class PresentationText {
   private pending = ''
   private code = ''
@@ -147,6 +150,15 @@ export class PresentationText {
   }
 
   finish(): PresentedText { return this.push('', true) }
+}
+
+const LEGACY = /<\/?(?:zh|jp)>|\[EMO\b/i
+
+/** 只有确实带旧标签的文本才过解码器：新回答是普通 Markdown，解码器会误吞 `[x]` 之类的方括号。 */
+export function legacyScript(text: string): string {
+  if (!LEGACY.test(text)) return text
+  const parser = new PresentationText()
+  return parser.push(text).display + parser.finish().display
 }
 
 export type AlignmentChunk = {

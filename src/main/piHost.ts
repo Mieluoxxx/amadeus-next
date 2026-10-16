@@ -18,6 +18,8 @@ export class PiError extends Error {
 const DEFAULT_TIMEOUT_MS = 60_000
 const COMMAND_TIMEOUTS: Record<string, number> = {
   'chat.submit': 15_000,
+  // worker 自己 8 秒放弃；这里多留一点，让它的错误先回来。
+  'voice.direct': 10_000,
   'report.deliver': 15_000,
   'session.delete': 30_000,
   checkpoint: 30_000,

@@ -31,6 +31,9 @@ import {
 import type { TargetPool } from './remote/pool.ts'
 import { createMemoryService, type MemoryService, type MemoryServiceOptions, type PrepareOptions } from './memory/index.ts'
 import { isRecallMode } from './memory/types.ts'
+import { direct, directorPrompt, normalizeRequest, voiceModel } from './voice.ts'
+import { targetsFromEnv } from './remote/targets.ts'
+import { applySettingsEnv, type WorkerSettingKey } from '../../shared/workerSettings.ts'
 import { WorkLedger } from './workLedger.ts'
 
 type Json = Record<string, unknown>
@@ -57,8 +60,10 @@ export type DurableRuntimeOptions = {
   settings?: Partial<HarnessSettings>
   handoff?: HandoffOptions
   /** 远程目标池（设置页的 remote_targets）；不设就没有 remote 委托。 */
-  remote?: RemotePool & Pick<TargetPool, 'env' | 'close' | 'hello'>
+  remote?: RemotePool & Pick<TargetPool, 'env' | 'close' | 'hello'> & Partial<Pick<TargetPool, 'configure'>>
   extraExtensions?: readonly Extension[]
+  /** `config.apply` 改了哪些设置；worker 据此刷新启动时缓存的部分（代理、skills / MCP 来源）。 */
+  onSettings?: (changed: ReadonlySet<WorkerSettingKey>) => void
   /** 会话自动命名（默认开）；测试关掉它，免得命名请求吃掉 faux 的脚本响应。 */
   autoName?: boolean
   /** 以下三项是测试接缝。 */
@@ -110,7 +115,7 @@ export class DurableRuntime {
   /** 公开给测试与基准脚本取已打开的会话；命令一律走 handle()。 */
   readonly host: SessionHost
   private readonly role: Extension
-  private readonly handoff: readonly Extension[]
+  private handoff: readonly Extension[]
   private readonly sessionLanes = new KeyedLanes()
   private readonly globalLane = new Lane()
   private readonly memoryJobs = new Set<Promise<unknown>>()
@@ -136,15 +141,7 @@ export class DurableRuntime {
     this.ledger = new WorkLedger(options.sessionsDir, error => this.log('work ledger write failed', error))
     this.role = createRoleExtension(options.agentDir)
     this.memoryDir = options.memoryDir ?? path.join(path.dirname(options.sessionsDir), 'memory')
-    // 拒绝根由宿主显式给出，不靠守卫去读 process.env：环境变量名一旦与主进程设置的对不上，userData 就悄悄失去保护。
-    const guard = options.handoff?.guard
-    this.handoff = createHandoffExtensions({
-      ...options.handoff,
-      ...(options.remote ? { remote: options.remote } : {}),
-      // 设置页的委托模型经环境变量进 worker（变化时 worker 重载），所以读一次就够。
-      delegationModel: options.handoff?.delegationModel ?? delegationModelFromEnv(process.env),
-      guard: { ...guard, deny: [...(guard?.deny ?? []), path.dirname(options.sessionsDir), options.sessionsDir, this.memoryDir, options.agentDir] },
-    })
+    this.handoff = this.assembleHandoff()
     for (const extension of [this.role, ...this.handoff, ...(options.extraExtensions ?? [])]) this.registry.install(extension)
     const settings: HarnessSettings = {
       // 不依赖"默认全选"：每个对话显式选择扩展，子代理才不会意外拿到主对话的工具。
@@ -174,6 +171,37 @@ export class DurableRuntime {
       now: this.now,
       log: this.log,
     })
+  }
+
+  /** 远程机器的增减会改变 handoff 的 schema（是否有 remote、target 的取值），所以随之重建；registry 按名字原地替换。 */
+  private assembleHandoff(): readonly Extension[] {
+    const { options } = this
+    // 拒绝根由宿主显式给出，不靠守卫去读 process.env：环境变量名一旦与主进程设置的对不上，userData 就悄悄失去保护。
+    const guard = options.handoff?.guard
+    return createHandoffExtensions({
+      ...options.handoff,
+      ...(options.remote ? { remote: options.remote } : {}),
+      // 设置页的委托模型可以热更新，每次受理现读。
+      delegationModel: options.handoff?.delegationModel ?? (() => delegationModelFromEnv(process.env)),
+      guard: { ...guard, deny: [...(guard?.deny ?? []), path.dirname(options.sessionsDir), options.sessionsDir, this.memoryDir, options.agentDir] },
+    })
+  }
+
+  /**
+   * 设置页的改动：写进 process.env（多数读取方每次使用时现读），再刷新启动时缓存的部分。
+   * 远程机器变了要重建委托扩展；已打开会话的下一次请求就带上新的 handoff schema。
+   */
+  private applySettings(params: Json): Json {
+    const values = params.env && typeof params.env === 'object' && !Array.isArray(params.env) ? params.env as Record<string, unknown> : {}
+    const changed = applySettingsEnv(process.env, values)
+    if (!changed.size) return { changed: [] }
+    this.options.onSettings?.(changed)
+    if (changed.has('AMADEUS_REMOTE_TARGETS') && this.options.remote?.configure) {
+      this.options.remote.configure(targetsFromEnv(process.env, message => this.log(message)))
+      this.handoff = this.assembleHandoff()
+      for (const extension of this.handoff) this.registry.install(extension)
+    }
+    return { changed: [...changed] }
   }
 
   /**
@@ -270,6 +298,10 @@ export class DurableRuntime {
     if (command.startsWith('memory.')) return reply(() => this.forwardMemory(command, params))
     // 只读、跨会话：不进全局道，免得排在 model.list（可能十几秒）后面。
     if (command === 'task.all') return reply(() => this.allTasks())
+    // 改设置是同步的进程内操作，不必排在 model.list 之类的慢命令后面。
+    if (command === 'config.apply') return reply(async () => this.applySettings(params))
+    // 配音在开口的关键路径上，与会话无关：不进任何道，免得排在别的命令后面。
+    if (command === 'voice.direct') return reply(() => this.direct(params))
     // 连接要等 ssh，可能十几秒；与会话无关，也不进全局道。
     if (command === 'remote.check') return reply(() => this.checkRemote(params))
     if (GLOBAL_COMMANDS.has(command)) return this.globalLane.run(() => reply(() => this.global(command, params)))
@@ -311,6 +343,14 @@ export class DurableRuntime {
   }
 
   private stale(sessionId: string, epoch: number): boolean { return (this.epochs.get(sessionId) ?? 0) !== epoch }
+
+  private async direct(params: Json): Promise<Json> {
+    const request = normalizeRequest(params)
+    if (!request.lines.length) return { lines: [] }
+    const model = await voiceModel(this.options.models, this.options.agentDir)
+    if (!model) throw new CommandError('no_model', 'No model is available for voice direction')
+    return { lines: await direct(this.options.models, model, directorPrompt(this.options.agentDir), request) }
+  }
 
   /** 设置页的"测试连接"：连上、部署 runner、确认工作目录可用。失败是业务结果（ok: false），不是命令错误。 */
   private async checkRemote(params: Json): Promise<Json> {

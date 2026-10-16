@@ -706,9 +706,9 @@ src/main/durable/memory/
 worker → 主进程：事件消息 `memory.changed { reason: "manual" \| "tool" \| "extract" \| "external" \| "clear", ids? }`，主进程转成 `next.event` 发给渲染进程，设置页据此刷新。
 
 配置：
-- 记忆开关（默认开启）和 M3 的召回模式（`off` / `log` / `on`，默认 `log`）**不经 `piEnv()`**——环境变量只在启动时读取，改一次就要重建 worker；一律走 `memory.configure`；
+- 记忆开关（默认开启）和 M3 的召回模式（`off` / `log` / `on`，默认 `log`）**不经 `piEnv()`**，一律走 `memory.configure`；
 - `AMADEUS_MEMORY_DIR` = `<userData>/memory`，启动时固定，随 fork 的环境变量传入；路径守卫（子代理）也据此拒绝记忆目录；
-- M3 起用已有的 Jev 三项（`AMADEUS_JEV_URL`、`AMADEUS_JEV_MODEL`、`AMADEUS_JEV_API_KEY`），网络走 `piEnv()` 已有的代理变量；这三项变更仍按现有逻辑重建 worker。
+- M3 起用已有的 Jev 三项（`AMADEUS_JEV_URL`、`AMADEUS_JEV_MODEL`、`AMADEUS_JEV_API_KEY`），网络走 `piEnv()` 已有的代理变量；这三项每次打分时现读，变更经 `config.apply` 热更新。
 
 设置页"长期记忆"标签：
 - 开关（默认开）；

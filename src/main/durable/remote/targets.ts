@@ -12,7 +12,7 @@ export type RemoteTarget = {
   node: string
 }
 
-/** 设置页的 remote_targets 经这个环境变量（JSON）传给 worker；变化触发 worker 重载，目标名进 handoff 的 schema。 */
+/** 设置页的 remote_targets 经这个环境变量（JSON）传给 worker；变化经 config.apply 热更新，目标名进 handoff 的 schema。 */
 export const REMOTE_TARGETS_ENV = 'AMADEUS_REMOTE_TARGETS'
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/
