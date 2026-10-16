@@ -149,6 +149,10 @@ export default function ScenePage({
       attachment={pendingAttachment}
       onClearAttachment={() => setPendingAttachment(null)}
       onPickAttachment={file => {
+        if (!supportsDirectImage(session.provider)) {
+          session.reportProblem(t('scene.attach_needs_visual_provider'))
+          return
+        }
         void (async () => {
           try {
             setPendingAttachment(await prepareImageAttachment(file))

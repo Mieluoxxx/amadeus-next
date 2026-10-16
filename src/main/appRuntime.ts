@@ -17,6 +17,7 @@ import { PROXY_KEYS, WORKER_SETTING_KEYS } from '../shared/workerSettings.ts'
 import { TRANSLATION_MODEL_ENV, type DirectedLine, type DirectionRequest } from '../shared/direction.ts'
 import { VoiceDirector, type Spoken } from './voice/director.ts'
 import { ScriptSplitter, plainText } from './voice/splitter.ts'
+import { TurnLatency, type LatencyStage } from './latency.ts'
 import { isTurnKey, SCENE_FRAME_RATES, sameTurn, type Calibration, type PlaybackEvent, type SceneFrameRate, type TurnKey, type VoiceEvent } from '../shared/voice.ts'
 
 type Json = Record<string, unknown>
@@ -34,6 +35,7 @@ type ActiveTurn = TurnKey & {
   /** 已送进 TTS 的日语长度，字幕与表情的偏移以它为准。 */
   spoken: number
   emotion?: Emotion
+  latency: TurnLatency
   receivedText: boolean
   synthesisStarted: boolean
   /** 最近一次收到本回合 turn.* 事件（或回合开始）的时刻，看门狗据此判断是否沉默太久。 */
@@ -113,6 +115,10 @@ export class AppRuntime {
   private readonly pendingTitles = new Map<string, string>()
   private generation = 0
   private activeTurn: ActiveTurn | null = null
+  /** 最近一次识别出新文字的时刻，约等于主人说完的时刻（之后要等满停顿阈值才收尾）。 */
+  private heardAt: number | undefined
+  /** 由识别结果直接起的回合：beginTurn 把识别阶段的两个点并进它的延迟记录。 */
+  private recognition: Partial<Record<LatencyStage, number>> | undefined
   private turnWatchdog: ReturnType<typeof setTimeout> | null = null
   private sceneReady = false
   private sceneToken = ''
@@ -183,6 +189,7 @@ export class AppRuntime {
     this.speech = deps.createSpeech((method, params) => this.onSpeech(method, params))
     this.tts = deps.createTts(() => this.config, event => {
       if (!this.activeTurn || !sameTurn(this.activeTurn, event)) return
+      if (event.type === 'audio') this.activeTurn.latency.mark('audio')
       this.voice(event)
       if (event.type === 'error') {
         this.activeTurn.drained = true
@@ -1078,11 +1085,14 @@ export class AppRuntime {
     const turn: ActiveTurn = {
       sessionId, turnId, generation: ++this.generation, kind, piDone: false, drained: !speech,
       speech, text: '', script: new ScriptSplitter(), director: null, spoken: 0, receivedText: false, synthesisStarted: false,
+      latency: new TurnLatency(() => this.deps.clock.now(), this.recognition),
       lastEventAt: this.deps.clock.now(),
     }
+    this.recognition = undefined
+    turn.latency.mark('begin')
     if (speech) {
       turn.director = new VoiceDirector({
-        direct: request => this.direct(request),
+        direct: request => this.directLines(request),
         release: lines => this.speak(turn, lines),
         drained: () => this.endSpeech(turn),
         ...(heard ? { heard } : {}),
@@ -1094,6 +1104,11 @@ export class AppRuntime {
     this.markActivity()
     this.voice({ ...this.key(turn), type: 'begin', speech: turn.speech, calibration: this.calibration() })
     this.voice({ ...this.key(turn), type: 'activity', activity: 'thinking' })
+    // 回合一开始就连 Fish：握手与主模型的思考并行，不压在开口前的关键路径上。
+    if (turn.speech) {
+      this.tts.start(this.key(turn), { open: () => turn.latency.mark('fish') })
+      turn.synthesisStarted = true
+    }
     return turn
   }
 
@@ -1108,17 +1123,23 @@ export class AppRuntime {
       if (delta) this.voice({ ...this.key(turn), type: 'text', value: { text: '', speech: '', cues: [], subtitles: [], display: delta } })
       return
     }
-    for (const segment of turn.script.push(delta, final)) if (segment.speak) turn.director.push(segment.text)
+    for (const segment of turn.script.push(delta, final)) if (segment.speak) this.direct(turn, segment.text)
     if (final) turn.director.finish()
   }
 
-  private async direct(request: DirectionRequest): Promise<DirectedLine[]> {
+  private direct(turn: ActiveTurn, line: string): void {
+    turn.latency.mark('line')
+    turn.director?.push(line)
+  }
+
+  private async directLines(request: DirectionRequest): Promise<DirectedLine[]> {
     const reply = await this.pi.request('voice.direct', request as unknown as Json)
     return Array.isArray(reply.lines) ? reply.lines as DirectedLine[] : []
   }
 
   private speak(turn: ActiveTurn, lines: Spoken[]): void {
     if (this.activeTurn !== turn) return
+    turn.latency.mark('directed')
     for (const line of lines) {
       const subtitle = plainText(line.zh)
       // 导演没配出来的句子用中文念：字幕和声音仍然对得上，总比整句沉默、字幕跳过去好。
@@ -1135,16 +1156,17 @@ export class AppRuntime {
         subtitles: [{ offset, text: subtitle }],
       }
       this.voice({ ...this.key(turn), type: 'text', value })
-      if (!turn.speech) continue
-      if (!turn.synthesisStarted) { this.tts.start(this.key(turn)); turn.synthesisStarted = true }
-      this.tts.push(value.speech)
+      if (turn.speech) this.tts.push(value.speech)
     }
+    if (turn.speech && lines.length) this.tts.flush()
   }
 
   /** 导演放行完最后一句，TTS 才能收尾；在这之前收尾会截掉还没配好的台词。 */
   private endSpeech(turn: ActiveTurn): void {
     if (this.activeTurn !== turn || !turn.speech) return
-    if (turn.synthesisStarted) this.tts.finish()
+    // 整段都是代码之类不配音的内容：提前连上的会话一个字也没收到，关掉它，不发空的合成请求。
+    if (turn.spoken === 0) this.tts.abort()
+    if (turn.synthesisStarted && turn.spoken > 0) this.tts.finish()
     else this.voice({ ...this.key(turn), type: 'input-ended' })
   }
 
@@ -1186,6 +1208,7 @@ export class AppRuntime {
   private async submit(turn: ActiveTurn, text: string): Promise<void> {
     try {
       await this.pi.request('chat.submit', { sessionId: turn.sessionId, turnId: turn.turnId, text })
+      turn.latency.mark('submitted')
     } catch (error) {
       this.failTurn(turn, codeOf(error), message(error))
     }
@@ -1247,11 +1270,12 @@ export class AppRuntime {
     switch (event.name) {
       case 'turn.text':
         turn.receivedText = true
+        if (event.delta) turn.latency.mark('text')
         this.present(turn, String(event.delta || ''))
         return
       case 'turn.tool':
         if (event.done !== true && turn.director) {
-          for (const segment of turn.script.flush()) turn.director.push(segment.text)
+          for (const segment of turn.script.flush()) this.direct(turn, segment.text)
           turn.director.pause()
         }
         this.voice({ ...this.key(turn), type: 'activity', activity: event.done === true ? 'thinking' : 'tool' })
@@ -1277,6 +1301,7 @@ export class AppRuntime {
     this.disarmWatchdog()
     this.markActivity()
     this.emit('chat.complete', { session_id: turn.sessionId, turn_id: turn.turnId, kind: turn.kind, full_text: turn.text })
+    if (!turn.speech) this.logLatency(turn)
     this.voice({ ...this.key(turn), type: 'activity', activity: 'idle' })
     this.floor.pump()
   }
@@ -1320,6 +1345,13 @@ export class AppRuntime {
     return { ok: true }
   }
 
+  /** 设了 AMADEUS_LATENCY_LOG=1 才输出：每个回合一行，从主人说完到开口的分段耗时。 */
+  private logLatency(turn: ActiveTurn): void {
+    if (this.deps.env.AMADEUS_LATENCY_LOG !== '1') return
+    const summary = turn.latency.summary()
+    if (summary) console.info(`[amadeus-next] latency ${turn.kind} ${turn.turnId.slice(0, 8)}: ${summary}`)
+  }
+
   private idleKey(): TurnKey { return { sessionId: this.currentSessionId, turnId: '', generation: this.generation } }
   private voice(event: VoiceEvent): void { this.emit('voice.event', event as unknown as Json) }
   private calibration(): Calibration {
@@ -1351,6 +1383,10 @@ export class AppRuntime {
   private onPlayback(event: PlaybackEvent): void {
     const turn = this.activeTurn
     if (!turn) return
+    if (event.type === 'playing' && !turn.latency.has('playing')) {
+      turn.latency.mark('playing')
+      this.logLatency(turn)
+    }
     if (event.type === 'ended' || event.type === 'error') {
       // 播放排空后保留 1 秒自然停顿缓冲，并防止过早开启监听引入麦克风回音。
       if (event.type === 'ended' && !turn.drained) this.floor.playbackEnded()
@@ -1368,12 +1404,17 @@ export class AppRuntime {
     if (this.disposed) return
     if (method === 'asr.recognized') {
       const text = String(params.text || '').trim()
+      if (params.is_final !== true && text) this.heardAt = this.deps.clock.now()
       const verdict = this.floor.recognized(text, params.is_final === true, params.source === 'manual')
       if (verdict === 'drop') return
       if (verdict === 'turn') {
         const turnId = randomUUID()
         this.emit(method, { ...params, source: 'wake', turn_id: turnId })
-        if (!this.sendChat({ text, turn_id: turnId }).ok) this.floor.pump()
+        this.recognition = { ...(this.heardAt !== undefined ? { heard: this.heardAt } : {}), final: this.deps.clock.now() }
+        this.heardAt = undefined
+        const sent = this.sendChat({ text, turn_id: turnId })
+        this.recognition = undefined
+        if (!sent.ok) this.floor.pump()
         return
       }
       this.emit(method, params)

@@ -6,7 +6,7 @@ const ENDS = '。！？!?…；;'
 const CLOSERS = '」』”’"\'）)】》'
 const SOFT = '，、,：:'
 // 第一句在开口的关键路径上：攒够这么多字遇到逗号就先送，不等句号。
-const FIRST_MIN = 12
+const FIRST_MIN = 8
 // 没有句号的长句在逗号处切，再长就硬切，免得一整段等到最后才配音。
 const SOFT_MAX = 60
 const HARD_MAX = 160

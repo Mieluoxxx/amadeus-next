@@ -209,6 +209,27 @@ HTTP bodies/headers and raw network exception messages are never forwarded.
 Remote Fish failures stop speech but do not destroy a healthy local AudioWorklet
 or get echoed back as an unrelated playback failure. Text chat remains available.
 
+## Measuring reply latency
+
+Start the app with `AMADEUS_LATENCY_LOG=1` to log one line per turn when playback starts, breaking the path from "the owner stopped speaking" to "the character is heard" into stages, each shown as the time since the previous one. For example (illustrative numbers):
+
+```text
+[amadeus-next] latency user 3f2a9c1e: heard +1502ms final +2ms begin +41ms submitted +180ms fish +1020ms text +160ms line +840ms directed +610ms audio +18ms playing  total 4373ms
+```
+
+| Stage | Meaning |
+| --- | --- |
+| `heard` | last new partial transcript, roughly when the owner stopped speaking |
+| `final` | Apple Speech final transcript; the gap is the pause threshold (`AMADEUS_SPEECH_PAUSE_MS`, default 1500) |
+| `begin` / `submitted` | turn created / worker accepted it |
+| `fish` | Fish WebSocket open; it is opened at `begin`, in parallel with the model |
+| `text` | first reply text from the chat model |
+| `line` | first sentence cut and sent to the translation model |
+| `directed` | first Japanese line released (pushed to Fish and flushed) |
+| `audio` / `playing` | first Fish audio received / heard in the scene |
+
+Stages that do not apply (typed input, reports, text-only turns) are left out.
+
 ## Verification
 
 ```bash

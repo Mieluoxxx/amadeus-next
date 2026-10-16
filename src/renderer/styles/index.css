@@ -320,13 +320,47 @@ html, body, #root {
 .scene-composer-mic[aria-pressed='true'] { border-color: #e4b4a34d; background: #e4b4a318; color: #e4b4a3; }
 .scene-conversation :is(button, select):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-.scene-composer-context { display: flex; flex: 0 0 24px; min-width: 0; gap: 6px; }
-.scene-context-chip { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 220px; padding: 0 4px 0 6px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); background: #9bc7b809; font-size: 10px; }
-.scene-context-chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.scene-context-chip > img { width: 18px; height: 18px; border-radius: 3px; object-fit: cover; }
-.scene-context-chip > button { display: grid; place-items: center; flex: 0 0 22px; height: 22px; border-radius: 4px; color: var(--muted); cursor: pointer; }
-.scene-context-chip > button:hover { color: var(--text); background: #9bc7b818; }
-.scene-context-chip svg { width: 12px; height: 12px; }
+/* 缩略图尺寸跟随 dock 高度：156px 的 dock 扣掉工具栏后只剩约 74px，需给单行输入留出 22px。 */
+.scene-composer-context { --scene-tile: 48px; display: flex; flex: 0 0 var(--scene-tile); min-width: 0; gap: 6px; }
+.scene-attachment-tile {
+  position: relative;
+  flex: 0 0 var(--scene-tile);
+  height: var(--scene-tile);
+  overflow: hidden;
+  border: 1px solid rgba(143, 240, 214, 0.22);
+  border-radius: 10px;
+  background: #02090b;
+  box-shadow: 0 0 10px rgba(143, 240, 214, 0.08);
+  animation: scene-tile-in 160ms ease-out;
+}
+.scene-attachment-tile > img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.scene-attachment-tile > button {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  color: #e8fff7;
+  background: rgba(2, 9, 11, 0.78);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms, background 120ms;
+}
+.scene-attachment-tile:is(:hover, :focus-within) > button { opacity: 1; }
+.scene-attachment-tile > button:hover { background: rgba(228, 180, 163, 0.85); color: #02090b; }
+.scene-attachment-tile svg { width: 11px; height: 11px; }
+@keyframes scene-tile-in { from { opacity: 0; transform: scale(0.92); } }
+/* 小 tile 上悬浮按钮会盖住整张图，退化为常显的角标。 */
+@container scene-dock (max-height: 150px) {
+  .scene-composer-context { --scene-tile: 20px; }
+  .scene-attachment-tile { border-radius: 5px; }
+  .scene-attachment-tile > button { top: -1px; right: -1px; width: 12px; height: 12px; opacity: 1; border: 0; }
+  .scene-attachment-tile svg { width: 8px; height: 8px; }
+}
 
 @container scene-dock (max-width: 640px) {
   .scene-session-title { display: none; }
@@ -343,19 +377,18 @@ html, body, #root {
   .scene-composer-toolbar { flex-basis: 28px; }
   .scene-composer-icon { height: 28px; flex-basis: 28px; }
   .scene-composer-send, .scene-provider-control > button { height: 28px; }
-  .scene-composer-context { flex-basis: 22px; }
-  .scene-context-chip > button { height: 20px; }
+  .scene-composer-context { --scene-tile: 20px; }
 }
 @container scene-dock (max-height: 96px) {
   .scene-conversation { padding: 2px; gap: 2px; }
   .scene-composer { padding: 2px 4px; }
   .scene-composer-toolbar { flex-basis: 26px; }
   .scene-composer-icon, .scene-composer-send, .scene-provider-control > button { height: 26px; }
-  .scene-composer-context { flex-basis: 20px; }
-  .scene-context-chip > button { height: 18px; }
+  .scene-composer-context { --scene-tile: 18px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .scene-composer, .scene-composer-send { transition: none; }
+  .scene-attachment-tile { animation: none; }
   .scene-composer::after, .scene-composer-prompt { animation: none !important; }
 }
 

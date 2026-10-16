@@ -11,7 +11,7 @@ export type FishDiagnostic = {
   networkCode?: string
   closeCode?: number
   retryAfterSeconds?: number
-  event?: 'start' | 'text' | 'stop' | 'audio' | 'finish' | 'error'
+  event?: 'start' | 'text' | 'flush' | 'stop' | 'audio' | 'finish' | 'error'
   detail?: string
 }
 export type VoiceEvent = TurnKey & (

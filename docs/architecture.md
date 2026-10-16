@@ -524,6 +524,8 @@ watchEvents（worker） ─ 文本差量 ─► 清洗器（scrub 记忆和结�
 - 调度（`src/main/voice/director.ts`）：没有请求在跑时来一句送一句，有请求在跑时攒批（3 句或 60 字），最多两批并发，结果按序放行；主模型调工具时手头半句立即送出。导演放行完最后一句，TTS 才收尾。
 - 导演（`src/main/durable/voice.ts`）：默认用对话模型、不开思考；设置页的翻译模型（`translation_model`）可以换成更快的模型。回复是 JSON，按 id 一一对应，表情与语气只认枚举。
 - 降级：导演失败或漏句时，那几句直接用中文念，字幕与声音仍然对得上；一个回合只记一次日志。
+- Fish：回合一开始就建连接，握手与主模型并行；连上后还没送文本就被断开（多半是工具调用久了的空闲超时）不算失败，下一句时重连。服务端按 `chunk_length` 攒字，所以每放行一批台词就发 `flush`，否则第一句要等后面的台词凑够或回合结束才合成。整段没有可念内容时关掉会话，不发空的 `stop`。
+- 延迟分解：`AMADEUS_LATENCY_LOG=1` 时每个回合在开口时输出一行关键路径耗时（`src/main/latency.ts`，各阶段含义见 `development.md`）。
 - 旧会话：带双语标签的旧回答在发请求前（`toolText.ts` 的 beforeRequest）和界面历史里都还原成中文，免得模型照着旧格式写；旧的 PRESENTATION.md 不再读取。
 
 - 事件桥在 worker 内长期订阅已打开会话的主对话；用 `submission` 事件里的 `requestId`（`turn:` / `report:` 前缀）把 durable 的 run 对应到主进程的 `TurnKey`。

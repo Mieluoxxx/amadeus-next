@@ -86,7 +86,7 @@ function runtime(env = {}, clock = { value: Date.now() }, emote = {}, state = {}
       dispose() {}
     },
     SpeechBridge: class { start(locale) { calls.push(['listen', locale]); return { ok: true } }; stop() { calls.push(['stop-listening']) }; finish(manual) { calls.push(['finish-listening', manual]); return { ok: true } }; dispose() { calls.push(['dispose-speech']) } },
-    FishTts: class { configured = true; constructor(_config, emit) { emitFish = emit }; start() { tts.push('<start>') }; push(text) { tts.push(text) }; finish() { tts.push('<finish>') }; abort() {} },
+    FishTts: class { configured = true; constructor(_config, emit) { emitFish = emit }; start() { tts.push('<start>') }; push(text) { tts.push(text) }; flush() { tts.push('<flush>') }; finish() { tts.push('<finish>') }; abort() {} },
   }
   const settings = state.settings ?? {}
   const app = new AppRuntime({
@@ -935,8 +935,8 @@ test('with speech, the Chinese reply is directed line by line into Japanese spee
   assert.deepEqual(directs.map(request => request.lines.map(line => line.zh)), [['在的。'], ['你又熬夜了？']], 'the code block is never sent to the director')
   assert.equal(directs[0].heard, '你在吗')
   assert.equal(calls.findLast(([type]) => type === 'chat.token')[1].token, '在的。你又熬夜了？\n```sh\nls\n```\n', 'the chat bubble keeps the original Chinese')
-  // 表情没变时不再补语气标签，否则整段都会被压成同一种语调。
-  assert.deepEqual(tts, ['<start>', '[happy]JP:在的。', 'JP:你又熬夜了？', '<finish>'])
+  // 回合一开始就连上；每批台词放行后 flush。表情没变时不再补语气标签，否则整段都会被压成同一种语调。
+  assert.deepEqual(tts, ['<start>', '[happy]JP:在的。', '<flush>', 'JP:你又熬夜了？', '<flush>', '<finish>'])
   const texts = calls.filter(([type, value]) => type === 'voice.event' && value.type === 'text').map(([, value]) => value.value)
   assert.deepEqual(texts.map(value => value.subtitles), [[{ offset: 0, text: '在的。' }], [{ offset: 6, text: '你又熬夜了？' }]])
   assert.deepEqual(texts.map(value => value.cues), [[{ offset: 0, emotion: 'smile' }], []])
@@ -952,10 +952,41 @@ test('lines the director cannot voice are spoken in Chinese, and speech ends onl
   piTurn().text('**在**。')
   piTurn().done()
   await flush()
-  assert.deepEqual(tts, [], 'nothing is finished while a line is still being directed')
+  assert.deepEqual(tts, ['<start>'], 'connected at once, but nothing is finished while a line is still being directed')
   release()
   await flush()
-  assert.deepEqual(tts, ['<start>', '在。', '<finish>'])
+  assert.deepEqual(tts, ['<start>', '在。', '<flush>', '<finish>'])
+})
+
+test('a reply with nothing to voice closes the early Fish session instead of finishing an empty one', async () => {
+  const { app, calls, tts, piTurn } = runtime()
+  await app.init()
+  await app.request('scene.ready')
+  await app.request('chat.send', { text: '给我代码' })
+  piTurn().text('```sh\nls\n```\n')
+  piTurn().done()
+  await flush()
+  assert.deepEqual(tts, ['<start>'], 'no text, no stop')
+  assert.ok(calls.some(([type, value]) => type === 'voice.event' && value.type === 'input-ended'))
+})
+
+test('with AMADEUS_LATENCY_LOG=1 a voiced turn logs its critical path once, when playback starts', async t => {
+  const logged = []
+  t.mock.method(console, 'info', line => logged.push(line))
+  const clock = { value: 1000 }
+  const { app, calls, piTurn, advance } = runtime({ AMADEUS_LATENCY_LOG: '1' }, clock)
+  await app.init()
+  await app.request('scene.ready')
+  await app.request('chat.send', { text: '在吗', turn_id: 'lat' })
+  advance(400)
+  piTurn().text('在的。')
+  piTurn().done()
+  await flush()
+  const begin = calls.find(([method, value]) => method === 'voice.event' && value.type === 'begin')[1]
+  await app.request('voice.playback', { ...begin, type: 'playing' })
+  await app.request('voice.playback', { ...begin, type: 'playing' })
+  assert.equal(logged.length, 1)
+  assert.match(logged[0], /latency user lat: begin .*\+400ms text .*line .*directed .*playing  total \d+ms/)
 })
 
 test('turn.done carries the whole reply only as a fallback when no text event arrived', async () => {

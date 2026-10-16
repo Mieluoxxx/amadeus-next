@@ -5,10 +5,15 @@ import type { VoiceEvent, TurnKey, FishDiagnostic } from '../shared/voice.ts'
 import type { AlignmentChunk } from '../shared/presentation.ts'
 import { fishFailure, fishHttpFailure, fishNetworkFailure, fishCloseFailure, fishServerDetail, type FishFailure } from './fishErrors.ts'
 
+type StartHooks = { open?: () => void }
 type Config = { FISH_API_KEY?: unknown; FISH_API_MODEL?: unknown; FISH_VOICE_ID?: unknown; network_proxy?: unknown }
 export class FishTts {
   private socket: WebSocket | null = null
-  private queue: string[] = []
+  private queue: Array<{ event: 'text'; text: string } | { event: 'flush' }> = []
+  /** 已经送出过文本：之后的断开才算合成失败。 */
+  private spoke = false
+  /** 连接提前建好、还没送文本就被服务端按空闲断开时，记下回合，下次推文本时重连。 */
+  private idle: { key: TurnKey; hooks: StartHooks } | null = null
   private ended = false
   private timeout: ReturnType<typeof setTimeout> | null = null
   private failure: ((failure: FishFailure) => void) | null = null
@@ -34,13 +39,21 @@ export class FishTts {
     return this.proxy.agent
   }
 
-  start(key: TurnKey): void {
+  /**
+   * 回合一开始就连上，握手与主模型的思考并行，不压在开口前的关键路径上。
+   * 连上之后、送出文本之前断开，多半是服务端的空闲超时（主模型调工具很久）：不报错，下次推文本时重连。
+   */
+  start(key: TurnKey, hooks: StartHooks = {}): void {
     key = { sessionId: key.sessionId, turnId: key.turnId, generation: key.generation }
     this.abort()
     const config = { ...this.config() }
-    const fail = (failure: FishFailure) => {
+    let opened = false
+    // 只有连接层面的断开（close、网络错误）可能是空闲超时；服务端明确报的错照常立即上报。
+    const fail = (failure: FishFailure, dropped = false) => {
       if (this.failure !== fail) return
+      const idle = dropped && opened && !this.spoke && !this.ended
       this.abort()
+      if (idle) { this.idle = { key, hooks: {} }; return }
       this.emit({ ...key, type: 'error', ...failure })
     }
     this.failure = fail
@@ -67,12 +80,14 @@ export class FishTts {
     this.socket = socket
     socket.once('open', () => {
       if (this.failure !== fail) { socket.close(); return }
+      opened = true
+      hooks.open?.()
       this.phase = 'synthesis'
       if (!this.send({ event: 'start', request: {
         text: '', format: 'pcm', sample_rate: 24000, latency: 'balanced', chunk_length: 100, min_chunk_length: 100,
         ...(config.FISH_VOICE_ID ? { reference_id: String(config.FISH_VOICE_ID) } : {}),
       } })) return
-      for (const text of this.queue.splice(0)) if (!this.send({ event: 'text', text })) return
+      for (const message of this.queue.splice(0)) if (!this.send(message)) return
       if (this.ended) this.sendStop()
     })
     socket.on('message', raw => {
@@ -110,17 +125,44 @@ export class FishTts {
       fail(fishHttpFailure(response.statusCode, response.headers['retry-after']))
     })
     socket.on('error', error => {
-      fail(fishNetworkFailure(error, this.phase))
+      fail(fishNetworkFailure(error, this.phase), true)
     })
-    socket.on('close', (code, reason) => fail(fishCloseFailure(code, this.phase, fishServerDetail(reason?.toString('utf8'), apiKey))))
+    socket.on('close', (code, reason) => fail(fishCloseFailure(code, this.phase, fishServerDetail(reason?.toString('utf8'), apiKey)), true))
   }
   push(text: string): void {
-    if (!text || !this.socket || this.ended) return
+    if (!text) return
+    this.resume()
+    if (!this.socket || this.ended) return
+    this.spoke = true
     // 保持长连接开启以容忍模型推理或工具调用的间歇停顿。
     if (this.socket.readyState === WebSocket.OPEN) this.send({ event: 'text', text })
-    else if (this.socket.readyState === WebSocket.CONNECTING) this.queue.push(text)
+    else if (this.socket.readyState === WebSocket.CONNECTING) this.queue.push({ event: 'text', text })
+  }
+
+  /**
+   * 服务端按 chunk_length 攒字，攒不够就不合成；一句短台词会一直等到后面的台词或回合结束。
+   * 每放行一批台词就 flush，让已经送到的这句立刻开始合成。只在刚推过文本之后调用，免得对空缓冲 flush。
+   */
+  flush(): void {
+    if (!this.socket || this.ended || !this.spoke) return
+    if (this.socket.readyState === WebSocket.OPEN) this.send({ event: 'flush' })
+    else if (this.socket.readyState === WebSocket.CONNECTING) this.queue.push({ event: 'flush' })
+  }
+
+  private resume(): void {
+    const idle = this.idle
+    if (!idle || this.socket) return
+    this.idle = null
+    this.start(idle.key, idle.hooks)
   }
   finish(): void {
+    // 空闲断开后再没送过文本：没有要合成的东西，直接告诉场景输入结束。
+    if (this.idle && !this.socket) {
+      const { key } = this.idle
+      this.idle = null
+      this.emit({ ...key, type: 'input-ended' })
+      return
+    }
     if (!this.socket || this.ended) return
     this.ended = true
     if (this.socket.readyState === WebSocket.OPEN) this.sendStop()
@@ -131,13 +173,15 @@ export class FishTts {
     this.failure = null
     this.queue = []
     this.ended = false
+    this.spoke = false
+    this.idle = null
     this.receivedAudio = false
     if (this.timeout) clearTimeout(this.timeout)
     this.timeout = null
     if (socket?.readyState === WebSocket.CONNECTING) socket.terminate()
     else socket?.close()
   }
-  private send(message: { event: 'start' | 'text' | 'stop'; [key: string]: unknown }): boolean {
+  private send(message: { event: 'start' | 'text' | 'flush' | 'stop'; [key: string]: unknown }): boolean {
     const socket = this.socket, fail = this.failure, phase = this.phase
     if (!socket || !fail) return false
     const reject = (error: unknown) => {

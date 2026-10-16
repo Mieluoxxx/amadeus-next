@@ -72,9 +72,8 @@ export default function SceneDock({
       }}>
         {attachment && (
           <div className="scene-composer-context">
-            <div className="scene-context-chip" data-testid="scene-attachment-chip">
-              <img src={attachment.dataUrl} alt="" />
-              <span title={attachment.name}>{attachment.name}</span>
+            <div className="scene-attachment-tile" data-testid="scene-attachment-chip" title={`${attachment.name} · ${attachment.width}×${attachment.height}`}>
+              <img src={attachment.dataUrl} alt={attachment.name} draggable={false} />
               <button type="button" onClick={onClearAttachment} aria-label={t('chat.remove_image')} title={t('chat.remove_image')}><X /></button>
             </div>
           </div>
@@ -85,6 +84,14 @@ export default function SceneDock({
             rows={2}
             value={draft}
             onChange={event => onDraftChange(event.target.value)}
+            onPaste={event => {
+              const file = Array.from(event.clipboardData.files).find(item => item.type.startsWith('image/'))
+              if (!file) return
+              // Copying from a browser puts both the image and its URL/HTML on the clipboard; only the image should land.
+              event.preventDefault()
+              // Unlike the disabled attach button, a paste has no visible state, so a refusal must be reported, not swallowed.
+              onPickAttachment(file)
+            }}
             onKeyDown={event => {
               // Keep native multiline editing and IME confirmation. Every actual
               // submission uses the form's connected/empty guard, including Enter.

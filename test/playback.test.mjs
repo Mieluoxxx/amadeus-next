@@ -80,9 +80,16 @@ test('Fish flushes text and stop after a late open, forwards empty alignment cor
     const count = events.length
     sockets[0].emit('message', encode({ event: 'finish', reason: 'error' }))
     assert.equal(events.length, count)
+    // 连上之后、送文本之前断开是服务端的空闲超时：不报错，下次推文本时重连。
     sockets[1].open()
     sockets[1].close()
-    assert.equal(events.at(-1).type, 'error')
+    assert.equal(events.length, count)
+    fish.push('again')
+    assert.equal(sockets.length, 3, 'the next line reconnects')
+    sockets[2].open()
+    assert.deepEqual(sockets[2].sent.map(value => value.event), ['start', 'text'])
+    sockets[2].close()
+    assert.equal(events.at(-1).type, 'error', 'a drop after text was sent is a real failure')
     assert.equal(events.at(-1).generation, 2)
   } finally { fish.abort() }
 })
@@ -241,6 +248,34 @@ test('Fish classifies start/text/stop send failures, including async writes, wit
       fish.abort()
     }
   }
+})
+
+test('Fish flush is sent only after text, and queued in order while connecting', () => {
+  const sockets = []
+  const fish = new FishTts(() => ({ FISH_API_KEY: 'fixture' }), () => {}, () => { const socket = new Socket(); sockets.push(socket); return socket })
+  try {
+    fish.start({ sessionId: 'session', turnId: 'turn', generation: 1 })
+    fish.flush()
+    fish.push('一')
+    fish.flush()
+    sockets[0].open()
+    fish.push('二')
+    fish.flush()
+    assert.deepEqual(sockets[0].sent.map(value => value.event), ['start', 'text', 'flush', 'text', 'flush'], 'no flush before any text')
+  } finally { fish.abort() }
+})
+
+test('Fish finishing a session that idled out without text ends the input instead of reconnecting', () => {
+  const sockets = [], events = []
+  const fish = new FishTts(() => ({ FISH_API_KEY: 'fixture' }), event => events.push(event), () => { const socket = new Socket(); sockets.push(socket); return socket })
+  try {
+    fish.start({ sessionId: 'session', turnId: 'turn', generation: 1 })
+    sockets[0].open()
+    sockets[0].close()
+    fish.finish()
+    assert.deepEqual(events.map(event => event.type), ['input-ended'])
+    assert.equal(sockets.length, 1)
+  } finally { fish.abort() }
 })
 
 test('Fish late write callbacks cannot fail a replacement stream', async t => {
